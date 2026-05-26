@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Bunos Terminal - AI Agent chat for wallet operations." />
+    <title>Bunos Terminal</title>
+    <link rel="icon" href="/bunOS.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #080810;
+        --surface: #111118;
+        --surface-2: #18181f;
+        --border: rgba(255,59,28,0.08);
+        --ink: #f5f0ec;
+        --ink-muted: #9a8e85;
+        --accent: #FF3B1C;
+        --accent-light: #ff9977;
+        --accent-glow: rgba(255,59,28,0.15);
+        --green: #4ade80;
+        --red: #f87171;
+        --blue: #60a5fa;
+        --yellow: #fbbf24;
+        --mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+        --sans: "Space Grotesk", system-ui, sans-serif;
+        --radius: 12px;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      html, body {
+        height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
+        max-width: 900px;
+        margin: 0 auto;
+      }
+
+      /* ─── Header ─────────────────────────────────── */
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(10,10,15,0.9);
+        backdrop-filter: blur(20px);
+        flex-shrink: 0;
+      }
+
+      .header-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-decoration: none;
+        color: var(--ink);
+      }
+
+      .brand-logo {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        object-fit: contain;
+        background: #111111;
+      }
+
+      .header-title {
+        font-family: var(--sans);
+        font-weight: 800;
+        font-size: 16px;
+        letter-spacing: -0.02em;
+      }
+
+      .header-tag {
+        font-size: 11px;
+        color: var(--accent);
+        background: var(--accent-glow);
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-weight: 600;
+      }
+
+      .header-spacer { flex: 1; }
+
+      .header-link {
+        font-family: var(--sans);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink-muted);
+        text-decoration: none;
+        padding: 6px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        transition: all 200ms;
+      }
+
+      .header-link:hover {
+        color: var(--ink);
+        border-color: rgba(255,59,28,0.18);
+        background: rgba(255,59,28,0.04);
+      }
+
+      .logout-button {
+        font-family: var(--sans);
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--ink-muted);
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 12px;
+      }
+
+      .logout-button:hover {
+        color: var(--red);
+        border-color: rgba(248,113,113,0.35);
+        background: rgba(248,113,113,0.08);
+      }
+
+      .wallet-pill {
+        font-family: var(--sans);
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--ink);
+        background: rgba(255,255,255,0.04);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 12px;
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* ─── Chat area ──────────────────────────────── */
+      .chat {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        scroll-behavior: smooth;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255,255,255,0.08) transparent;
+      }
+
+      .chat::-webkit-scrollbar { width: 6px; }
+      .chat::-webkit-scrollbar-track { background: transparent; }
+      .chat::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+
+      /* Welcome screen */
+      .welcome {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        text-align: center;
+        gap: 20px;
+        padding: 40px;
+        opacity: 1;
+        transition: opacity 400ms;
+      }
+
+      .welcome.hidden { display: none; }
+
+      .welcome-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 16px;
+        overflow: hidden;
+      }
+
+      .welcome-icon img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .welcome-icon svg {
+        width: 28px;
+        height: 28px;
+        stroke: #fff;
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .welcome h2 {
+        font-family: var(--sans);
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+      }
+
+      .welcome p {
+        color: var(--ink-muted);
+        font-size: 13px;
+        max-width: 420px;
+        line-height: 1.7;
+      }
+
+      .suggestions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+        margin-top: 8px;
+      }
+
+      .suggestion-chip {
+        font-family: var(--mono);
+        font-size: 12px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--ink-muted);
+        cursor: pointer;
+        transition: all 200ms;
+      }
+
+      .suggestion-chip:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: var(--accent-glow);
+      }
+
+      /* Message bubbles */
+      .msg {
+        display: flex;
+        gap: 12px;
+        max-width: 100%;
+        animation: fadeIn 300ms ease;
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .msg-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        font-weight: 800;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+
+      .msg.user .msg-avatar {
+        background: rgba(255,255,255,0.07);
+        color: var(--ink-muted);
+      }
+
+      .msg.agent .msg-avatar {
+        background: var(--accent);
+        color: #fff;
+        font-family: var(--sans);
+      }
+
+      .msg-body {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .msg-role {
+        font-family: var(--sans);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 4px;
+      }
+
+      .msg.user .msg-role { color: var(--ink-muted); }
+      .msg.agent .msg-role { color: var(--accent); }
+
+      .msg-content {
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--ink);
+        word-break: break-word;
+      }
+
+      .msg-content code {
+        background: rgba(255,255,255,0.06);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+
+      .msg-result {
+        margin-top: 10px;
+        padding: 12px 14px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        font-size: 12px;
+        overflow-x: auto;
+      }
+
+      .msg-result .label {
+        font-family: var(--sans);
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--ink-muted);
+        margin-bottom: 6px;
+      }
+
+      .msg-result .status-ok { color: var(--green); }
+      .msg-result .status-fail { color: var(--red); }
+      .msg-result .status-warn { color: var(--yellow); }
+
+      .action-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .action-button {
+        font-family: var(--sans);
+        font-size: 12px;
+        font-weight: 800;
+        color: #fff;
+        background: var(--accent);
+        border: none;
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      .action-button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .result-grid {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 4px 12px;
+      }
+
+      .result-grid dt {
+        color: var(--ink-muted);
+        font-size: 12px;
+      }
+
+      .result-grid dd {
+        color: var(--ink);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      /* Typing indicator */
+      .typing {
+        display: flex;
+        gap: 4px;
+        padding: 4px 0;
+      }
+
+      .typing span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: bounce 1.4s ease-in-out infinite;
+      }
+
+      .typing span:nth-child(2) { animation-delay: 0.2s; }
+      .typing span:nth-child(3) { animation-delay: 0.4s; }
+
+      @keyframes bounce {
+        0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+        40% { transform: scale(1); opacity: 1; }
+      }
+
+      /* ─── Input area ─────────────────────────────── */
+      .input-area {
+        padding: 16px 20px 20px;
+        border-top: 1px solid var(--border);
+        background: rgba(10,10,15,0.9);
+        backdrop-filter: blur(20px);
+        flex-shrink: 0;
+      }
+
+      .input-wrap {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 6px 6px 6px 16px;
+        transition: border-color 200ms;
+      }
+
+      .input-wrap:focus-within {
+        border-color: var(--accent);
+      }
+
+      .input-wrap input {
+        flex: 1;
+        background: none;
+        border: none;
+        outline: none;
+        color: var(--ink);
+        font-family: var(--mono);
+        font-size: 13px;
+        padding: 8px 0;
+      }
+
+      .input-wrap input::placeholder {
+        color: var(--ink-muted);
+      }
+
+      .send-btn {
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        border: none;
+        background: var(--accent);
+        color: #fff;
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+        transition: all 200ms;
+        flex-shrink: 0;
+      }
+
+      .send-btn:hover {
+        transform: translateY(-1px);
+        background: #ff5533;
+      }
+
+      .send-btn:active {
+        transform: scale(0.95);
+      }
+
+      .send-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      .send-btn svg {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .input-hint {
+        font-size: 11px;
+        color: var(--ink-muted);
+        margin-top: 8px;
+        text-align: center;
+        font-family: var(--sans);
+      }
+
+      .input-hint kbd {
+        background: rgba(255,255,255,0.06);
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-family: var(--mono);
+        font-size: 10px;
+      }
+
+      /* ─── Responsive ─────────────────────────────── */
+      @media (max-width: 680px) {
+        .header { padding: 12px 14px; }
+        .chat { padding: 16px 14px; }
+        .input-area { padding: 12px 14px 16px; }
+        .welcome { padding: 24px; }
+        .welcome h2 { font-size: 18px; }
+        .suggestions { gap: 6px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <a href="/" class="header-brand">
+          <svg class="brand-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <path fill="#FB3315" d="m52.5 37.4-11.9-27.5c-0.2-0.5-0.7-1-1.3-1.3l-21.7-7.4c-2.4-0.8-4.6 1.2-4 3.4l13.1 28.9c0.3 0.7 0.8 1.3 1.6 1.7l12.1 4.4c0.1 0.1 0.4 0.1 0.5 0 2.2-0.8 5.9-2.2 11.6-2.1v-0.1z"/>
+            <path fill="#FB3315" d="m62.1 7.4v32.8c0 0.7 0.4 1.5 0.9 2l16.1 15.7c1.6 1.5 5 1 5-1.9v-32.4c0-0.7-0.4-1.5-0.8-1.9l-16.5-16.2c-1.5-1.5-4.7-0.6-4.7 1.9z"/>
+            <path fill="#FB3315" d="m86.2 58.9c0-0.4-0.2-1.5-0.1-1.2v-1.1h-0.1c-0.4 1.8-1.7 3.9-5 3.9-1 0-2.1-0.4-3.1-1.2l-16.4-15.7c-0.6-0.6-1.2-1.4-1.5-2.4-2.4-0.8-5.2-1.6-9-1.6-3.3 0-7.3 0.7-11.2 2.6l-20.6 11.6c-1.7 1.1-3 2.9-3 5.5v5.7c2.8 1.5 5.5 5.5 5.7 10.1 0 0.3-0.2 0.6-0.4 0.5l-1.8-1c-0.5-2.2-2-5.2-3.5-6.7v12.1c0.2 2 1.1 3.9 3 5.1l19.2 10.6c3.3 1.9 7.5 3.4 13 3.5 4.4 0 8.8-0.8 12.8-2.8l19.4-11c1.8-1 3.1-3 3.1-5.8v-20.7zm-51.7 26.9-4.4-2.4-0.5 0.2v4l-0.2 0.2-2-1.1v-3.8c0-0.8-0.5-1.5-1.2-1.9l-3.5-1.9-0.1-0.2v-1.5l0.3-0.2 4.1 2.2 0.4-0.2v-3.6l0.3-0.2 1.9 1v3.8c0 0.5 0.3 0.9 0.8 1.2l4 2.2 0.1 0.2v1.8 0.2zm22.1-1-2 1.2c-4.2-4.1-7-5.1-9-5.1-2.7 0-4.9 1.3-7 4.4l-2-1-0.1-0.2c0-0.5 3.4-5.6 9.1-5.6 5.8-0.1 11 5.6 11.1 5.9l-0.1 0.4z"/>
+          </svg>
+          <span class="header-title">Bunos</span>
+        </a>
+        <span class="header-tag">Terminal</span>
+        <div class="header-spacer"></div>
+        <span class="wallet-pill" id="walletPill">Connecting wallet...</span>
+        <a href="/" class="header-link">&larr; Wallet</a>
+        <button id="logoutButton" type="button" class="logout-button">Logout</button>
+      </header>
+
+      <div class="chat" id="chat">
+        <div class="welcome" id="welcome">
+          <div class="welcome-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width:100%;height:100%">
+              <path fill="#FB3315" d="m52.5 37.4-11.9-27.5c-0.2-0.5-0.7-1-1.3-1.3l-21.7-7.4c-2.4-0.8-4.6 1.2-4 3.4l13.1 28.9c0.3 0.7 0.8 1.3 1.6 1.7l12.1 4.4c0.1 0.1 0.4 0.1 0.5 0 2.2-0.8 5.9-2.2 11.6-2.1v-0.1z"/>
+              <path fill="#FB3315" d="m62.1 7.4v32.8c0 0.7 0.4 1.5 0.9 2l16.1 15.7c1.6 1.5 5 1 5-1.9v-32.4c0-0.7-0.4-1.5-0.8-1.9l-16.5-16.2c-1.5-1.5-4.7-0.6-4.7 1.9z"/>
+              <path fill="#FB3315" d="m86.2 58.9c0-0.4-0.2-1.5-0.1-1.2v-1.1h-0.1c-0.4 1.8-1.7 3.9-5 3.9-1 0-2.1-0.4-3.1-1.2l-16.4-15.7c-0.6-0.6-1.2-1.4-1.5-2.4-2.4-0.8-5.2-1.6-9-1.6-3.3 0-7.3 0.7-11.2 2.6l-20.6 11.6c-1.7 1.1-3 2.9-3 5.5v5.7c2.8 1.5 5.5 5.5 5.7 10.1 0 0.3-0.2 0.6-0.4 0.5l-1.8-1c-0.5-2.2-2-5.2-3.5-6.7v12.1c0.2 2 1.1 3.9 3 5.1l19.2 10.6c3.3 1.9 7.5 3.4 13 3.5 4.4 0 8.8-0.8 12.8-2.8l19.4-11c1.8-1 3.1-3 3.1-5.8v-20.7zm-51.7 26.9-4.4-2.4-0.5 0.2v4l-0.2 0.2-2-1.1v-3.8c0-0.8-0.5-1.5-1.2-1.9l-3.5-1.9-0.1-0.2v-1.5l0.3-0.2 4.1 2.2 0.4-0.2v-3.6l0.3-0.2 1.9 1v3.8c0 0.5 0.3 0.9 0.8 1.2l4 2.2 0.1 0.2v1.8 0.2zm22.1-1-2 1.2c-4.2-4.1-7-5.1-9-5.1-2.7 0-4.9 1.3-7 4.4l-2-1-0.1-0.2c0-0.5 3.4-5.6 9.1-5.6 5.8-0.1 11 5.6 11.1 5.9l-0.1 0.4z"/>
+            </svg>
+          </div>
+          <h2>Bunos Agent Terminal</h2>
+          <p>Talk to the Bunos agent in natural language. Send USDC, bridge tokens, swap assets, and manage your wallet through chat.</p>
+          <div class="suggestions">
+            <button class="suggestion-chip" data-cmd="send $10 to @alice">send $10 to @alice</button>
+            <button class="suggestion-chip" data-cmd="bridge $1 USDC from arc to base">bridge USDC</button>
+            <button class="suggestion-chip" data-cmd="swap $1 EURC to USDC on arc">swap EURC</button>
+            <button class="suggestion-chip" data-cmd="swap $1 USDC to cirBTC on arc">swap cirBTC</button>
+            <button class="suggestion-chip" data-cmd="long BTC 2x with $1">long BTC 2x with $1</button>
+            <button class="suggestion-chip" data-cmd="show my balance">show balance</button>
+            <button class="suggestion-chip" data-cmd="appkit readiness">appkit readiness</button>
+            <button class="suggestion-chip" data-cmd="what can you do?">what can you do?</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="input-area">
+        <form id="chatForm" class="input-wrap">
+          <input id="chatInput" type="text" placeholder="Type a command..." autocomplete="off" autofocus />
+          <button type="submit" class="send-btn" id="sendBtn">
+            <svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4z"/><path d="m22 2-11 11"/></svg>
+          </button>
+        </form>
+        <div class="input-hint">Try <kbd>send $5 to @bob</kbd>, <kbd>swap $10 EURC to USDC</kbd>, <kbd>swap $1 USDC to cirBTC</kbd>, or <kbd>bridge $1 USDC from arc to base</kbd></div>
+      </div>
+    </div>
+
+    <script>
+      const chat = document.getElementById("chat");
+      const form = document.getElementById("chatForm");
+      const input = document.getElementById("chatInput");
+      const sendBtn = document.getElementById("sendBtn");
+      const welcome = document.getElementById("welcome");
+      const walletPill = document.getElementById("walletPill");
+      const logoutButton = document.getElementById("logoutButton");
+      const queryParams = new URLSearchParams(location.search);
+      let currentHandle = queryParams.get("handle") || localStorage.getItem("arcpay:handle") || "";
+      let busy = false;
+      let latestApprovalId = null;
+      let walletReady = hydrateWalletContext();
+
+      logoutButton?.addEventListener("click", logout);
+
+      // Suggestion chips
+      document.querySelectorAll("[data-cmd]").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          input.value = chip.dataset.cmd;
+          form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        });
+      });
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const text = input.value.trim();
+        if (!text || busy) return;
+
+        welcome.classList.add("hidden");
+        addMessage("user", text);
+        input.value = "";
+        busy = true;
+        sendBtn.disabled = true;
+
+        const typingEl = addTyping();
+
+        try {
+          if (isHelpIntent(text)) {
+            typingEl.remove();
+            addAgentMessage(formatHelp());
+            return;
+          }
+
+          await walletReady;
+          if (!currentHandle) {
+            typingEl.remove();
+            addAgentMessage(formatError({ error: "Connect X from the wallet page before asking the agent to trade." }));
+            return;
+          }
+
+          if (isApprovalIntent(text) && latestApprovalId) {
+            const data = await confirmApproval(latestApprovalId);
+            typingEl.remove();
+            addAgentMessage(formatApprovalResult(data));
+            return;
+          }
+
+          // Try running the agent command
+          const res = await fetch("/api/agent/run", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              handle: currentHandle,
+              text,
+              defaultSettlementRail: localStorage.getItem("arcpay:rail") || "arc-testnet",
+              source: "terminal"
+            })
+          });
+
+          const data = await res.json();
+          typingEl.remove();
+
+          if (!res.ok || data.ok === false) {
+            // Check if it's a clarification or general question
+            if (data.planned?.plan?.reason) {
+              addAgentMessage(formatClarification(data));
+            } else if (text.toLowerCase().includes("what can") || text.toLowerCase().includes("help")) {
+              addAgentMessage(formatHelp());
+            } else {
+              addAgentMessage(formatError(data));
+            }
+          } else {
+            addAgentMessage(formatResult(data));
+            trackDefiSettlement(data);
+          }
+        } catch (err) {
+          typingEl.remove();
+          if (text.toLowerCase().includes("what can") || text.toLowerCase().includes("help")) {
+            addAgentMessage(formatHelp());
+          } else {
+            addAgentMessage(formatError({ error: err.message }));
+          }
+        }
+
+        finally {
+          busy = false;
+          sendBtn.disabled = false;
+          input.focus();
+        }
+      });
+
+      chat.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-approval-id]");
+        if (!button || busy) return;
+
+        busy = true;
+        button.disabled = true;
+        const label = button.textContent;
+        button.textContent = "Approving...";
+        const typingEl = addTyping();
+
+        try {
+          const data = await confirmApproval(button.dataset.approvalId);
+          typingEl.remove();
+          addAgentMessage(formatApprovalResult(data));
+        } catch (err) {
+          typingEl.remove();
+          button.disabled = false;
+          button.textContent = label;
+          addAgentMessage(formatError({ error: err.message }));
+        } finally {
+          busy = false;
+          input.focus();
+        }
+      });
+
+      function addMessage(role, text) {
+        const div = document.createElement("div");
+        div.className = `msg ${role}`;
+        div.innerHTML = `
+          <div class="msg-avatar">${role === "user" ? "Y" : "A"}</div>
+          <div class="msg-body">
+            <div class="msg-role">${role === "user" ? "You" : "Bunos Agent"}</div>
+            <div class="msg-content">${escapeHtml(text)}</div>
+          </div>
+        `;
+        chat.appendChild(div);
+        scrollToBottom();
+      }
+
+      function addAgentMessage(html) {
+        const div = document.createElement("div");
+        div.className = "msg agent";
+        div.innerHTML = `
+          <div class="msg-avatar">A</div>
+          <div class="msg-body">
+            <div class="msg-role">Bunos Agent</div>
+            <div class="msg-content">${html}</div>
+          </div>
+        `;
+        chat.appendChild(div);
+        scrollToBottom();
+      }
+
+      function addTyping() {
+        const div = document.createElement("div");
+        div.className = "msg agent";
+        div.innerHTML = `
+          <div class="msg-avatar">A</div>
+          <div class="msg-body">
+            <div class="msg-role">Bunos Agent</div>
+            <div class="typing"><span></span><span></span><span></span></div>
+          </div>
+        `;
+        chat.appendChild(div);
+        scrollToBottom();
+        return div;
+      }
+
+      function scrollToBottom() {
+        requestAnimationFrame(() => {
+          chat.scrollTop = chat.scrollHeight;
+        });
+      }
+
+      function formatResult(data) {
+        const plan = data.planned;
+        const result = data.result || {};
+        const intent = plan?.intent || {};
+        const tool = plan?.plan?.tool || "unknown";
+        const status = data.ok ? "ok" : "failed";
+
+        let summary = "";
+
+        if (intent.action === "send_payment") {
+          const payment = result.payment || {};
+          summary = `Payment of <code>${payment.amount || intent.amount} USDC</code> to <code>${escapeHtml(intent.recipientHandle)}</code> has been created.`;
+          summary += renderResultCard([
+            ["Status", statusBadge(payment.status || "queued", "ok")],
+            ["Amount", `${payment.amount || intent.amount} USDC`],
+            ["To", escapeHtml(intent.recipientHandle || "—")],
+            ["Rail", escapeHtml(payment.settlementRail || "arc-testnet")],
+            ["Next", escapeHtml(data.nextAction || "—")]
+          ]);
+          summary += renderApprovalButton(payment.approvalId, "Approve payment");
+        } else if (intent.action === "quote_bridge") {
+          const action = result.action || {};
+          const bridgeToken = intent.fromToken || intent.asset || "USDC";
+          summary = `Bridge quote for <code>${intent.amount} ${escapeHtml(bridgeToken)}</code> from <code>${escapeHtml(intent.fromRail)}</code> to <code>${escapeHtml(intent.toRail)}</code>.`;
+          summary += renderResultCard([
+            ["Status", statusBadge(action.status || "quoted", "warn")],
+            ["Amount", `${intent.amount} ${escapeHtml(bridgeToken)}`],
+            ["Route", `${escapeHtml(intent.fromRail)} → ${escapeHtml(intent.toRail)}`],
+            ["Protocol", escapeHtml(action.protocol || "lifi")],
+            ["Tx", renderTxLink(action.txHash || action.execution?.txHash, action.explorerUrl)],
+            ["Next", escapeHtml(data.nextAction || "—")]
+          ]);
+          summary += renderApprovalButton(action.approvalId, "Approve bridge");
+        } else if (intent.action === "quote_swap") {
+          const action = result.action || {};
+          summary = `Swap quote for <code>${intent.amount} ${escapeHtml(intent.fromToken || "USDC")}</code> → <code>${escapeHtml(intent.toToken)}</code>.`;
+          summary += renderResultCard([
+            ["Status", statusBadge(action.status || "quoted", "warn")],
+            ["Amount", `${intent.amount} ${escapeHtml(intent.fromToken || "USDC")}`],
+            ["To token", escapeHtml(intent.toToken || "—")],
+            ["Protocol", escapeHtml(action.protocol || "lifi")],
+            ["Tx", renderTxLink(action.txHash || action.execution?.txHash, action.explorerUrl)],
+            ["Next", escapeHtml(data.nextAction || "—")]
+          ]);
+          summary += renderApprovalButton(action.approvalId, "Approve swap");
+        } else if (intent.action === "propose_perp_trade") {
+          const proposal = result.proposal || {};
+          summary = `Perp proposal prepared for <code>${escapeHtml(intent.side)} ${escapeHtml(intent.symbol)}</code>.`;
+          summary += renderResultCard([
+            ["Status", statusBadge(proposal.status || "requires_confirmation", "warn")],
+            ["Collateral", `${proposal.collateralUsd || intent.collateralUsd} USDC`],
+            ["Leverage", `${proposal.leverage || intent.leverage}x`],
+            ["Notional", `${proposal.notionalUsd || "n/a"} USDC`],
+            ["Next", escapeHtml(data.nextAction || "approval_required")]
+          ]);
+          summary += renderApprovalButton(proposal.approvalId, "Approve perp proposal");
+        } else {
+          summary = summarizeToolResult(tool, result, data);
+        }
+
+        if (plan?.policy) {
+          const p = plan.policy;
+          summary += `<div style="margin-top:8px;font-size:11px;color:var(--ink-muted)">Risk: ${escapeHtml(plan.plan?.risk || "—")} · Confirmation: ${p.requiresConfirmation ? "required" : "none"}</div>`;
+        }
+
+        return summary;
+      }
+
+      function formatApprovalResult(data) {
+        const result = data.result || {};
+        const job = result.job || result.result?.job || {};
+        return `Approved <code>${escapeHtml(data.approval?.kind || "action")}</code>. I kicked the worker once for execution.
+${renderResultCard([
+  ["Approval", statusBadge(data.approval?.status || "approved", "ok")],
+  ["Job", escapeHtml(job.id || "queued")],
+  ["Next", escapeHtml(result.nextAction || "check activity/receipt")]
+])}`;
+      }
+
+      function formatClarification(data) {
+        const reason = data.planned?.plan?.reason || data.clarification || data.error || "I didn't understand that.";
+        return `${escapeHtml(reason)}
+
+<div style="margin-top:12px;font-size:12px;color:var(--ink-muted)">Try commands like:</div>
+<div style="margin-top:4px;font-size:12px;color:var(--accent)">
+  • <code>send $10 to @alice</code><br>
+  • <code>bridge $5 USDC from arc to base</code><br>
+  • <code>swap $20 EURC to USDC</code><br>
+  • <code>swap $1 USDC to cirBTC</code>
+</div>`;
+      }
+
+      function formatHelp() {
+        return `I'm the Bunos agent. Here's what I can do:
+
+<div class="msg-result">
+  <div class="label">Available commands</div>
+  <div style="display:grid;gap:8px;margin-top:6px">
+    <div><code>send $10 to @alice</code> - Send USDC to another user</div>
+    <div><code>bridge $1 USDC from arc to base</code> - Bridge a provider-supported token between chains</div>
+    <div><code>swap $1 EURC to USDC on arc</code> - Ask AppKit or LI.FI for a live swap route</div>
+    <div><code>swap $1 USDC to cirBTC on arc</code> - Use Arc Testnet's Circle wrapped BTC alias</div>
+    <div><code>show my balance</code> - Read the active Circle wallet balances</div>
+    <div><code>sync balances</code> - Refresh real Circle balances into the app</div>
+    <div><code>list approvals</code> - See pending approvals and proposals</div>
+    <div><code>appkit readiness</code> - Check Arc AppKit execution readiness</div>
+    <div><code>perp markets</code> - Read Hyperliquid market data</div>
+    <div><code>copy trade @alice with $50</code> - Prepare a copy-trading proposal</div>
+    <div><code>long BTC 2x with $1</code> - Prepare a perp proposal</div>
+  </div>
+</div>
+<div style="margin-top:8px;font-size:12px;color:var(--ink-muted)">The terminal uses the agent planner. Wallet creation stays on the wallet page; money movement uses the user-wallet execution path, not the backend settlement signer.</div>`;
+      }
+
+      function formatError(data) {
+        const msg = data.error || data.clarification || "Something went wrong.";
+        return `<span style="color:var(--red)">⚠</span> ${escapeHtml(msg)}`;
+      }
+
+      function statusBadge(text, type) {
+        const cls = type === "ok" ? "status-ok" : type === "fail" ? "status-fail" : "status-warn";
+        return `<span class="${cls}">${escapeHtml(text)}</span>`;
+      }
+
+      function renderResultCard(rows) {
+        const inner = rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${v}</dd>`).join("");
+        return `<div class="msg-result"><dl class="result-grid">${inner}</dl></div>`;
+      }
+
+      function renderApprovalButton(approvalId, label) {
+        if (!approvalId) return "";
+        latestApprovalId = approvalId;
+        return `<div class="action-row"><button class="action-button" type="button" data-approval-id="${escapeHtml(approvalId)}">${escapeHtml(label)}</button></div>`;
+      }
+
+      function renderTxLink(txHash, explorerUrl) {
+        if (!txHash) return `<span style="color:var(--ink-muted)">pending</span>`;
+        const compact = compactHash(txHash);
+        if (!explorerUrl) return `<code>${escapeHtml(compact)}</code>`;
+        return `<a href="${escapeHtml(explorerUrl)}" target="_blank" rel="noreferrer" style="color:var(--green);font-weight:800">${escapeHtml(compact)}</a>`;
+      }
+
+      function summarizeToolResult(tool, result, data) {
+        if (tool === "get_balance" || tool === "sync_circle_balances") {
+          const wallet = result.wallet || {};
+          const rows = [
+            ["Tool", `<code>${escapeHtml(tool)}</code>`],
+            ["Handle", escapeHtml(wallet.handle || currentHandle || "n/a")],
+            ["Total", `${escapeHtml(wallet.balance ?? "0")} USDC`],
+            ["Arc", escapeHtml(formatTokenLine(wallet, "arc-testnet"))],
+            ["Base", escapeHtml(formatTokenLine(wallet, "base-sepolia"))]
+          ];
+          if (Array.isArray(result.synced)) rows.push(["Synced rails", escapeHtml(result.synced.map((item) => item.rail).join(", ") || "none")]);
+          return `${tool === "sync_circle_balances" ? "Balances synced." : "Wallet balance."}${renderResultCard(rows)}`;
+        }
+
+        if (tool === "list_approvals") {
+          const approvals = result.approvals || [];
+          const pending = approvals.find((item) => item.status === "pending");
+          return `Found <code>${approvals.length}</code> approvals.${renderResultCard([
+            ["Tool", `<code>${escapeHtml(tool)}</code>`],
+            ["Latest", escapeHtml(approvals[0]?.id || "none")],
+            ["Status", escapeHtml(approvals[0]?.status || "n/a")],
+            ["Kind", escapeHtml(approvals[0]?.kind || "n/a")]
+          ])}${renderApprovalButton(pending?.id, "Approve latest")}`;
+        }
+
+        if (tool === "appkit_readiness") {
+          return `AppKit readiness checked.${renderResultCard([
+            ["Installed", statusBadge(String(Boolean(result.ok)), result.ok ? "ok" : "fail")],
+            ["Mode", escapeHtml(result.mode || "n/a")],
+            ["Execution", statusBadge(result.executionEnabled ? "enabled" : "not enabled", result.executionEnabled ? "ok" : "warn")],
+            ["Backend signer", result.backendSignerAllowed ? "allowed" : "blocked"]
+          ])}`;
+        }
+
+        if (tool === "list_appkit_capabilities" || tool === "list_defi_tools") {
+          const count = result.capabilities?.length || result.protocols?.length || result.adapters?.length || 0;
+          return `Capabilities loaded.${renderResultCard([
+            ["Tool", `<code>${escapeHtml(tool)}</code>`],
+            ["Count", escapeHtml(count || "available")],
+            ["Execution", escapeHtml(result.executionEnabled ?? result.execution?.ready ?? "see details")]
+          ])}${renderJsonPreview(result)}`;
+        }
+
+        if (tool.includes("receipt")) {
+          const receipt = result.receipt || {};
+          const action = receipt.action || receipt.payment || {};
+          return `Receipt loaded.${renderResultCard([
+            ["Tool", `<code>${escapeHtml(tool)}</code>`],
+            ["ID", escapeHtml(action.id || "n/a")],
+            ["Status", statusBadge(action.status || "unknown", action.status === "settled" ? "ok" : "warn")],
+            ["Tx", renderTxLink(receipt.txHash || action.txHash || action.transfer?.txHash, receipt.explorerUrl)],
+            ["Next", escapeHtml(receipt.nextAction || data.nextAction || "n/a")]
+          ])}`;
+        }
+
+        if (tool.includes("perp") || tool.includes("copy_trade")) {
+          const proposal = result.proposal || {};
+          const quote = result.quote || {};
+          return `Agent analysis ready.${renderResultCard([
+            ["Tool", `<code>${escapeHtml(tool)}</code>`],
+            ["Status", statusBadge(proposal.status || result.status || "ok", "warn")],
+            ["Symbol", escapeHtml(proposal.symbol || quote.symbol || result.symbol || "n/a")],
+            ["Next", escapeHtml(result.nextAction || data.nextAction || "n/a")]
+          ])}${renderApprovalButton(proposal.approvalId, "Approve proposal")}`;
+        }
+
+        return `Agent action completed.${renderResultCard([
+          ["Tool", `<code>${escapeHtml(tool)}</code>`],
+          ["Status", statusBadge(data.ok ? "ok" : "failed", data.ok ? "ok" : "fail")],
+          ["Next", escapeHtml(data.nextAction || "n/a")]
+        ])}${renderJsonPreview(result)}`;
+      }
+
+      function renderJsonPreview(value) {
+        const json = JSON.stringify(value, null, 2);
+        if (!json || json.length > 2400) return "";
+        return `<pre class="msg-result" style="white-space:pre-wrap;color:var(--ink-muted);max-height:260px">${escapeHtml(json)}</pre>`;
+      }
+
+      function formatTokenLine(wallet, railId) {
+        const tokens = Array.isArray(wallet.tokenBalances?.[railId]) && wallet.tokenBalances[railId].length
+          ? wallet.tokenBalances[railId]
+          : [{ symbol: "USDC", amount: wallet.balances?.[railId] || 0 }];
+        return tokens
+          .filter((token) => Number(token.amount || 0) > 0)
+          .map((token) => `${formatAmount(token.amount)} ${token.symbol}`)
+          .join(" + ") || "0 USDC";
+      }
+
+      function formatAmount(value) {
+        return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 6 });
+      }
+
+      function trackDefiSettlement(data) {
+        const intent = data.planned?.intent || {};
+        if (!["quote_bridge", "quote_swap"].includes(intent.action)) return;
+
+        const actionId = data.result?.action?.id;
+        if (!actionId) return;
+
+        const initialJobId = extractReconcileJobId(data);
+        window.setTimeout(() => {
+          pollDefiSettlement({ actionId, reconcileJobId: initialJobId, attempts: 6 })
+            .catch((error) => addAgentMessage(formatError({ error: error.message })));
+        }, 15_000);
+      }
+
+      async function pollDefiSettlement({ actionId, reconcileJobId, attempts }) {
+        let jobId = reconcileJobId;
+        for (let attempt = 0; attempt < attempts; attempt += 1) {
+          if (jobId) {
+            await runJobOnce(jobId);
+          } else {
+            await runWorkerOnce();
+          }
+
+          const receipt = await fetchJson(`/api/defi/actions/${encodeURIComponent(actionId)}`);
+          const action = receipt.receipt?.action || {};
+          jobId = action.reconcileJobId || jobId;
+
+          if (["settled", "failed"].includes(action.status)) {
+            await syncCurrentWallet();
+            addAgentMessage(formatDefiSettlement(receipt.receipt));
+            return;
+          }
+
+          await sleep(18_000);
+        }
+
+        const receipt = await fetchJson(`/api/defi/actions/${encodeURIComponent(actionId)}`);
+        addAgentMessage(formatDefiStillPending(receipt.receipt));
+      }
+
+      function formatDefiSettlement(receipt) {
+        const action = receipt.action || {};
+        const request = action.request || {};
+        const ok = action.status === "settled";
+        const txHash = receipt.txHash || action.txHash || action.execution?.txHash;
+        const reason = action.failureReason
+          ? `<div style="margin-top:8px;color:var(--red);font-size:12px">${escapeHtml(action.failureReason)}</div>`
+          : "";
+        return `${ok ? "Execution settled on-chain." : "Execution failed."}${renderResultCard([
+          ["Status", statusBadge(action.status || "unknown", ok ? "ok" : "fail")],
+          ["Action", escapeHtml(action.type || "defi")],
+          ["Amount", `${escapeHtml(request.amount || request.amountUsd || "n/a")} ${escapeHtml(request.fromToken || "USDC")}`],
+          ["Route", `${escapeHtml(request.fromRail || "n/a")} -> ${escapeHtml(request.toRail || "n/a")}`],
+          ["Tx", renderTxLink(txHash, receipt.explorerUrl)],
+          ["Receipt", receipt.publicUrl ? `<a href="${escapeHtml(receipt.publicUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"]
+        ])}${reason}`;
+      }
+
+      function formatDefiStillPending(receipt) {
+        const action = receipt.action || {};
+        return `Still waiting for settlement.${renderResultCard([
+          ["Status", statusBadge(action.status || "submitted", "warn")],
+          ["Action", escapeHtml(action.id || "n/a")],
+          ["Next", escapeHtml(receipt.nextAction || "reconcile_defi_action")],
+          ["Receipt", receipt.publicUrl ? `<a href="${escapeHtml(receipt.publicUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"]
+        ])}`;
+      }
+
+      function extractReconcileJobId(data) {
+        return data.result?.execution?.result?.reconcileJobId
+          || data.result?.execution?.job?.result?.reconcileJobId
+          || data.result?.action?.reconcileJobId
+          || null;
+      }
+
+      async function confirmApproval(approvalId) {
+        const res = await fetch("/api/actions/confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            approvalId,
+            handle: currentHandle
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "Approval failed");
+        await runWorkerOnce();
+        latestApprovalId = null;
+        return data;
+      }
+
+      function isApprovalIntent(text) {
+        return /^(approve|confirm|execute|yes|go|do it)$/i.test(String(text || "").trim());
+      }
+
+      function isHelpIntent(text) {
+        return /^(help|what can you do|commands|examples|what can you do\?)$/i.test(String(text || "").trim());
+      }
+
+      async function logout() {
+        await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+        localStorage.removeItem("arcpay:handle");
+        localStorage.setItem("arcpay:loggedOut", "1");
+        currentHandle = "";
+        latestApprovalId = null;
+        walletPill.textContent = "Not connected";
+        addAgentMessage("Logged out. Connect X from the wallet page to use wallet actions again.");
+      }
+
+      async function hydrateWalletContext() {
+        try {
+          const [sessionData, walletData, configData] = await Promise.all([
+            fetchJson("/api/session"),
+            fetchJson("/api/wallets"),
+            fetchJson("/api/config")
+          ]);
+          const wallets = walletData.wallets || [];
+          const sessionHandle = sessionData.session?.handle;
+          const liveWallet = wallets.find(isLiveWallet);
+          const selectedWallet = wallets.find((wallet) => wallet.handle === currentHandle);
+          const loggedOut = localStorage.getItem("arcpay:loggedOut") === "1" && !queryParams.has("handle") && !sessionHandle;
+
+          if (loggedOut) {
+            currentHandle = "";
+            walletPill.textContent = "Not connected";
+            return;
+          }
+
+          if (!currentHandle || !selectedWallet) {
+            currentHandle = sessionHandle || liveWallet?.handle || wallets.find((wallet) => wallet.onboarded)?.handle || "@sara";
+          } else if (!queryParams.has("handle") && configData.providerMode === "real" && !isLiveWallet(selectedWallet) && liveWallet) {
+            currentHandle = liveWallet.handle;
+          }
+
+          localStorage.setItem("arcpay:handle", currentHandle);
+          localStorage.removeItem("arcpay:loggedOut");
+          const wallet = wallets.find((item) => item.handle === currentHandle);
+          walletPill.textContent = wallet?.walletAddress
+            ? `${currentHandle} · ${compactAddress(wallet.walletAddress)}`
+            : `${currentHandle} · connect wallet`;
+        } catch {
+          walletPill.textContent = currentHandle || "wallet unavailable";
+        }
+      }
+
+      async function runWorkerOnce() {
+        await fetch("/api/jobs/run-due", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ limit: 10 })
+        });
+      }
+
+      async function runJobOnce(jobId) {
+        if (!jobId) return null;
+        const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/run`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}"
+        });
+        return res.json().catch(() => null);
+      }
+
+      async function syncCurrentWallet() {
+        if (!currentHandle) return null;
+        const res = await fetch("/api/wallets/sync-balances", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ handle: currentHandle })
+        });
+        return res.json().catch(() => null);
+      }
+
+      async function fetchJson(path) {
+        const res = await fetch(path);
+        const data = await res.json();
+        if (!res.ok || data.ok === false) throw new Error(data.error || "Request failed");
+        return data;
+      }
+
+      function isLiveWallet(wallet) {
+        return Boolean(wallet?.wallets?.some((item) => item.id && !String(item.id).startsWith("wallet_")));
+      }
+
+      function compactAddress(address) {
+        if (!address || address.length < 14) return address || "";
+        return `${address.slice(0, 6)}...${address.slice(-4)}`;
+      }
+
+      function compactHash(hash) {
+        if (!hash || hash.length < 18) return hash || "";
+        return `${hash.slice(0, 10)}...${hash.slice(-8)}`;
+      }
+
+      function sleep(ms) {
+        return new Promise((resolve) => window.setTimeout(resolve, ms));
+      }
+
+      function escapeHtml(text) {
+        return String(text ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+    </script>
+  </body>
+</html>

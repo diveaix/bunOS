@@ -1,0 +1,33 @@
+{
+  "name": "arcpay-social-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node test/run-tests.js",
+    "deploy:frontend:prepare": "node scripts/prepare-vercel-frontend.js",
+    "compile:contracts": "node scripts/compile-contracts.js",
+    "deploy:arc-perps": "node scripts/deploy-arc-perps.js",
+    "mcp:stdio": "node scripts/mcp-stdio.js",
+    "mcp:smoke": "node scripts/mcp-smoke.js",
+    "circle:register-entity-secret": "node scripts/circle-register-entity-secret.js",
+    "circle:create-wallet-set": "node scripts/circle-create-wallet-set.js",
+    "circle:smoke-wallet": "node scripts/circle-smoke-wallet.js",
+    "hackathon:smoke": "node scripts/hackathon-smoke.js",
+    "defi:live-smoke": "node scripts/defi-live-smoke.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@circle-fin/adapter-viem-v2": "^1.11.0",
+    "@circle-fin/app-kit": "^1.5.1",
+    "@circle-fin/developer-controlled-wallets": "^10.3.1",
+    "viem": "^2.49.3"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0",
+    "solc": "^0.8.35"
+  }
+}

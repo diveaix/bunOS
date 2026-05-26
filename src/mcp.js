@@ -1,0 +1,931 @@
+import { createPaymentIntent, createSocialBounty } from "./orchestrator.js";
+import { confirmAction } from "./agentActions.js";
+import { listAgentTools, planAgentActionWithModel, runAgentAction } from "./agentPlanner.js";
+import {
+  getArcPerpsPosition,
+  getArcPerpsReadiness,
+  getArcPerpsStatus,
+  listArcPerpsPositions,
+  quoteArcPerpPosition,
+  readArcPerpsOraclePrice
+} from "./arcPerpsEngine.js";
+import { listApprovals } from "./approvals.js";
+import { getPaymentReceipt } from "./queries.js";
+import {
+  createWallet,
+  fundWallet,
+  getWalletCapabilities,
+  getWalletProfile,
+  syncWalletBalances
+} from "./walletAccounts.js";
+import {
+  confirmDefiAction,
+  getDefiActionReceipt,
+  listDefiActions,
+  listDefiTools,
+  listPerpMarkets,
+  quoteDefiRoute
+} from "./defiOrchestrator.js";
+import { enqueueJob, runJob } from "./jobs.js";
+import {
+  assessLiquidationRisk,
+  listPerpIntelligence,
+  listPerpProposals,
+  proposePerpTrade
+} from "./perpsAgent.js";
+import {
+  listCopyTradeProposals,
+  proposeCopyTrade
+} from "./socialTradingAgent.js";
+import {
+  estimateAppKitBridge,
+  estimateAppKitSend,
+  estimateAppKitSwap,
+  executeAppKitBridge,
+  executeAppKitSend,
+  executeAppKitSwap,
+  getAppKitReadiness,
+  getAppKitUnifiedBalance,
+  listAppKitCapabilities
+} from "./appKitAgentTools.js";
+
+export const mcpTools = [
+  {
+    name: "plan_agent_action",
+    description: "Plan a natural-language agent request into a strict allowlisted tool call with signer and risk metadata. Does not execute.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        text: { type: "string" },
+        defaultSettlementRail: { type: "string" },
+        source: { type: "string" }
+      },
+      required: ["text"]
+    }
+  },
+  {
+    name: "run_agent_action",
+    description: "Plan a natural-language agent request, then execute only the safe allowlisted backend step. Money-moving actions remain approval/user-wallet gated.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        text: { type: "string" },
+        defaultSettlementRail: { type: "string" },
+        source: { type: "string" },
+        postId: { type: "string" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["text"]
+    }
+  },
+  {
+    name: "list_agent_tools",
+    description: "List tools the AI agent planner is allowed to call.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "create_wallet",
+    description: "Create or load a Circle wallet set for an X handle on Arc.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        settlementRails: { type: "array", items: { type: "string" } }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "get_balance",
+    description: "Read a user's Circle wallet balances across ArcPay settlement rails.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "get_wallet_capabilities",
+    description: "Show which actions can execute from a user's Circle wallet and which require a future user-owned signing adapter.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "sync_circle_balances",
+    description: "Refresh a user's real Circle wallet token balances into the ArcPay ledger.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "request_testnet_usdc",
+    description: "Request real Circle faucet testnet USDC/native gas for a user's testnet wallet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        amount: { type: "number" },
+        settlementRail: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "send_usdc",
+    description: "Send USDC from one X handle to another through policy checks and Arc/Circle settlement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        senderHandle: { type: "string" },
+        recipientHandle: { type: "string" },
+        amount: { type: "number" },
+        settlementRail: { type: "string" },
+        memo: { type: "string" }
+      },
+      required: ["senderHandle", "recipientHandle", "amount"]
+    }
+  },
+  {
+    name: "bridge_usdc",
+    description: "Create a policy-checked USDC bridge quote between configured rails. Real execution waits for a user-owned signing adapter.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        amount: { type: "number" },
+        fromRail: { type: "string" },
+        toRail: { type: "string" }
+      },
+      required: ["handle", "amount", "fromRail", "toRail"]
+    }
+  },
+  {
+    name: "demo_bridge_arc_to_base",
+    description: "Judge-friendly demo helper: create/load the user's wallets and produce an Arc Testnet to Base Sepolia bridge quote with approval metadata. It never auto-confirms or spends.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        amount: { type: "number" },
+        slippage: { type: "number" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "quote_swap",
+    description: "Create a policy-checked swap quote and pending approval. Execution is confirmation-gated.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        amount: { type: "number" },
+        settlementRail: { type: "string" },
+        fromToken: { type: "string" },
+        toToken: { type: "string" },
+        slippage: { type: "number" }
+      },
+      required: ["handle", "amount"]
+    }
+  },
+  {
+    name: "list_approvals",
+    description: "List pending or completed approvals for payment, DeFi, social trading, and perps actions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        status: { type: "string" },
+        kind: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "confirm_action",
+    description: "Confirm a pending approval and execute the appropriate payment, DeFi handoff, copy proposal, or perp proposal.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        approvalId: { type: "string" },
+        handle: { type: "string" }
+      },
+      required: ["approvalId"]
+    }
+  },
+  {
+    name: "get_receipt",
+    description: "Get a payment receipt and timeline for an ArcPay action.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        paymentId: { type: "string" }
+      },
+      required: ["paymentId"]
+    }
+  },
+  {
+    name: "propose_copy_trade",
+    description: "Create an AI-selected copy-trading allocation proposal from social trader signals.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        traderHandle: { type: "string" },
+        capitalUsd: { type: "number" },
+        riskProfile: { type: "string" },
+        settlementRail: { type: "string" }
+      },
+      required: ["handle", "traderHandle", "capitalUsd"]
+    }
+  },
+  {
+    name: "list_copy_trade_proposals",
+    description: "List social copy-trading proposals and their approval state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        status: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "list_perp_intelligence",
+    description: "List perp market intelligence with funding bias, risk regime, and suggested leverage caps.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "assess_liquidation_risk",
+    description: "Assess liquidation risk for a proposed leveraged perp position.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        symbol: { type: "string" },
+        side: { type: "string", enum: ["long", "short"] },
+        collateralUsd: { type: "number" },
+        leverage: { type: "number" },
+        entryPrice: { type: "number" }
+      },
+      required: ["handle", "symbol", "side", "collateralUsd", "leverage"]
+    }
+  },
+  {
+    name: "propose_perp_trade",
+    description: "Create a confirmation-gated perp trade proposal with liquidation and stop-loss analysis.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        symbol: { type: "string" },
+        side: { type: "string", enum: ["long", "short"] },
+        collateralUsd: { type: "number" },
+        leverage: { type: "number" },
+        entryPrice: { type: "number" },
+        settlementRail: { type: "string" }
+      },
+      required: ["handle", "symbol", "side", "collateralUsd", "leverage"]
+    }
+  },
+  {
+    name: "list_perp_proposals",
+    description: "List perp trade proposals and their approval state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        status: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "arc_perps_readiness",
+    description: "Check whether ArcPerps Lite contracts are configured. User execution is proposal-gated; backend signer execution is not exposed.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "arc_perps_status",
+    description: "Read ArcPerps Lite vault, optional user address allowance/margin, liquidity, and risk status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ownerAddress: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "quote_arc_perp_position",
+    description: "Quote an Arc-settled perp position using deployed oracle price or a supplied mark price.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string" },
+        side: { type: "string", enum: ["long", "short"] },
+        marginUsd: { type: "number" },
+        leverage: { type: "number" },
+        markPrice: { type: "number" }
+      },
+      required: ["symbol", "side", "marginUsd", "leverage"]
+    }
+  },
+  {
+    name: "read_arc_perps_oracle_price",
+    description: "Read a deployed ArcPerps oracle price for a symbol.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string" }
+      },
+      required: ["symbol"]
+    }
+  },
+  {
+    name: "get_arc_perps_position",
+    description: "Read an ArcPerps position by id with mark price, liquidation price, and current PnL when deployed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        positionId: { type: "number" }
+      },
+      required: ["positionId"]
+    }
+  },
+  {
+    name: "list_arc_perps_positions",
+    description: "List recent ArcPerps positions from the deployed vault.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ownerAddress: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "appkit_readiness",
+    description: "Check Arc App Kit readiness, execution gates, supported chains, and configured Arc rails.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "list_appkit_capabilities",
+    description: "List the MCP tools backed by Arc App Kit: send, bridge, swap, and unified balance.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "appkit_estimate_send",
+    description: "User-owned AppKit send placeholder. Returns user-wallet-signing-required; never uses a backend signer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        settlementRail: { type: "string" },
+        recipientAddress: { type: "string" },
+        recipientHandle: { type: "string" },
+        amount: { type: "number" },
+        token: { type: "string" }
+      },
+      required: ["amount"]
+    }
+  },
+  {
+    name: "appkit_send_usdc",
+    description: "User-owned AppKit send placeholder. Use send_usdc for Circle user-wallet transfers until a user AppKit adapter is configured.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        settlementRail: { type: "string" },
+        recipientAddress: { type: "string" },
+        recipientHandle: { type: "string" },
+        amount: { type: "number" },
+        refId: { type: "string" }
+      },
+      required: ["amount"]
+    }
+  },
+  {
+    name: "appkit_estimate_bridge",
+    description: "Estimate a Circle AppKit USDC bridge from a user Circle wallet. Never uses the backend signer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fromRail: { type: "string" },
+        toRail: { type: "string" },
+        recipientAddress: { type: "string" },
+        recipientHandle: { type: "string" },
+        amount: { type: "number" },
+        useForwarder: { type: "boolean" }
+      },
+      required: ["amount"]
+    }
+  },
+  {
+    name: "appkit_bridge_usdc",
+    description: "Execute a Circle AppKit USDC bridge from a user Circle wallet when APPKIT_EXECUTION_ENABLED=1. Never uses the backend signer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fromRail: { type: "string" },
+        toRail: { type: "string" },
+        recipientAddress: { type: "string" },
+        recipientHandle: { type: "string" },
+        amount: { type: "number" },
+        useForwarder: { type: "boolean" },
+        refId: { type: "string" }
+      },
+      required: ["amount"]
+    }
+  },
+  {
+    name: "appkit_estimate_swap",
+    description: "Estimate a Circle AppKit same-chain swap from a user Circle wallet. Never uses the backend signer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        settlementRail: { type: "string" },
+        tokenIn: { type: "string" },
+        tokenOut: { type: "string" },
+        amount: { type: "number" },
+        amountIn: { type: "number" },
+        slippage: { type: "number" },
+        slippageBps: { type: "number" }
+      },
+      required: ["tokenOut", "amount"]
+    }
+  },
+  {
+    name: "appkit_swap",
+    description: "Execute a Circle AppKit same-chain swap from a user Circle wallet when APPKIT_EXECUTION_ENABLED=1. Never uses the backend signer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        settlementRail: { type: "string" },
+        tokenIn: { type: "string" },
+        tokenOut: { type: "string" },
+        amount: { type: "number" },
+        amountIn: { type: "number" },
+        slippage: { type: "number" },
+        slippageBps: { type: "number" }
+      },
+      required: ["tokenOut", "amount"]
+    }
+  },
+  {
+    name: "appkit_unified_balance",
+    description: "User-owned AppKit unified balance placeholder. Use get_balance/sync_circle_balances for Circle user wallets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        settlementRail: { type: "string" },
+        token: { type: "string" },
+        chains: { type: "array", items: { type: "string" } },
+        includePending: { type: "boolean" }
+      }
+    }
+  },
+  {
+    name: "resolve_x_handle",
+    description: "Resolve an X handle into an ArcPay payment identity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "create_payment_intent",
+    description: "Create a policy-checked USDC payment to an X handle.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        senderHandle: { type: "string" },
+        recipientHandle: { type: "string" },
+        amount: { type: "number" },
+        asset: { type: "string", enum: ["USDC"] },
+        memo: { type: "string" }
+      },
+      required: ["senderHandle", "recipientHandle", "amount"]
+    }
+  },
+  {
+    name: "create_social_bounty",
+    description: "Create a USDC bounty for the first valid commenter on an X post.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        senderHandle: { type: "string" },
+        postId: { type: "string" },
+        amount: { type: "number" },
+        asset: { type: "string", enum: ["USDC"] },
+        rule: { type: "string", enum: ["first_valid_commenter"] }
+      },
+      required: ["senderHandle", "postId", "amount"]
+    }
+  },
+  {
+    name: "list_defi_tools",
+    description: "List ArcPay DeFi tool adapters and their risk/execution status.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "quote_defi_route",
+    description: "Create a policy-checked bridge or swap quote. This does not execute the transaction.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        fromRail: { type: "string" },
+        toRail: { type: "string" },
+        amount: { type: "number" },
+        fromToken: { type: "string" },
+        toToken: { type: "string" },
+        slippage: { type: "number" }
+      },
+      required: ["handle", "fromRail", "toRail", "amount"]
+    }
+  },
+  {
+    name: "confirm_defi_action",
+    description: "Confirm a previously quoted DeFi action and queue the execution handoff. This does not bypass policy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        actionId: { type: "string" },
+        handle: { type: "string" }
+      },
+      required: ["actionId", "handle"]
+    }
+  },
+  {
+    name: "list_defi_actions",
+    description: "List policy-gated DeFi bridge/swap actions and their current execution status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        status: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "reconcile_defi_action",
+    description: "Poll/update a submitted bridge or swap action through the configured user-wallet execution provider.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        actionId: { type: "string" }
+      },
+      required: ["actionId"]
+    }
+  },
+  {
+    name: "get_defi_action_receipt",
+    description: "Get a DeFi action receipt with approval, execution, timeline, tx hash, and public receipt URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        actionId: { type: "string" },
+        host: { type: "string" },
+        protocol: { type: "string" }
+      },
+      required: ["actionId"]
+    }
+  },
+  {
+    name: "list_perp_markets",
+    description: "List Hyperliquid market data. Read-only; no order placement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  }
+];
+
+export async function callMcpTool(tool, args) {
+  if (tool === "plan_agent_action") {
+    return await planAgentActionWithModel(args);
+  }
+
+  if (tool === "run_agent_action") {
+    return await runAgentAction(args);
+  }
+
+  if (tool === "list_agent_tools") {
+    return listAgentTools();
+  }
+
+  if (tool === "create_wallet") {
+    return await createWallet(args);
+  }
+
+  if (tool === "get_balance") {
+    return { ok: true, wallet: getWalletProfile(args.handle) };
+  }
+
+  if (tool === "get_wallet_capabilities") {
+    return getWalletCapabilities(args.handle);
+  }
+
+  if (tool === "sync_circle_balances") {
+    return await syncWalletBalances(args);
+  }
+
+  if (tool === "request_testnet_usdc") {
+    return await fundWallet({
+      handle: args.handle,
+      amount: args.amount || 10,
+      source: "circle_faucet",
+      settlementRail: args.settlementRail || "arc-testnet"
+    });
+  }
+
+  if (tool === "send_usdc") {
+    return await createPaymentIntent({
+      senderHandle: args.senderHandle,
+      recipientHandle: args.recipientHandle,
+      amount: args.amount,
+      asset: "USDC",
+      settlementRail: args.settlementRail,
+      memo: args.memo || "",
+      source: "agent-mcp"
+    });
+  }
+
+  if (tool === "bridge_usdc") {
+    return await quoteDefiRoute({
+      handle: args.handle,
+      type: "bridge",
+      fromRail: args.fromRail,
+      toRail: args.toRail,
+      amount: args.amount,
+      fromToken: "USDC",
+      toToken: "USDC",
+      slippage: args.slippage
+    });
+  }
+
+  if (tool === "demo_bridge_arc_to_base") {
+    const handle = args.handle || "@sara";
+    const wallet = await createWallet({
+      handle,
+      settlementRails: ["arc-testnet", "base-sepolia"]
+    });
+    const quote = await quoteDefiRoute({
+      handle,
+      type: "bridge",
+      fromRail: "arc-testnet",
+      toRail: "base-sepolia",
+      amount: args.amount || 5,
+      fromToken: "USDC",
+      toToken: "USDC",
+      slippage: args.slippage ?? 0.005,
+      source: "mcp-demo"
+    });
+
+    return {
+      ok: quote.ok,
+      demo: "arc_to_base_sepolia_bridge",
+      backendSignerAllowed: false,
+      wallet: wallet.wallet,
+      quote,
+      approvalId: quote.action?.approvalId || null,
+      nextAction: quote.ok
+        ? "Call confirm_defi_action with the returned actionId/approvalId when the user approves."
+        : quote.nextAction || "choose_supported_route"
+    };
+  }
+
+  if (tool === "quote_swap") {
+    const rail = args.settlementRail || "arc-testnet";
+    return await quoteDefiRoute({
+      handle: args.handle,
+      type: "swap",
+      fromRail: rail,
+      toRail: rail,
+      amount: args.amount,
+      fromToken: args.fromToken || "USDC",
+      toToken: args.toToken || "EURC",
+      slippage: args.slippage
+    });
+  }
+
+  if (tool === "list_approvals") {
+    return listApprovals(args);
+  }
+
+  if (tool === "confirm_action") {
+    return await confirmAction(args);
+  }
+
+  if (tool === "get_receipt") {
+    return getPaymentReceipt({ paymentId: args.paymentId });
+  }
+
+  if (tool === "propose_copy_trade") {
+    return proposeCopyTrade(args);
+  }
+
+  if (tool === "list_copy_trade_proposals") {
+    return listCopyTradeProposals(args);
+  }
+
+  if (tool === "list_perp_intelligence") {
+    return await listPerpIntelligence(args);
+  }
+
+  if (tool === "assess_liquidation_risk") {
+    return assessLiquidationRisk(args);
+  }
+
+  if (tool === "propose_perp_trade") {
+    return proposePerpTrade(args);
+  }
+
+  if (tool === "list_perp_proposals") {
+    return listPerpProposals(args);
+  }
+
+  if (tool === "arc_perps_readiness") {
+    return getArcPerpsReadiness();
+  }
+
+  if (tool === "arc_perps_status") {
+    return await getArcPerpsStatus(args);
+  }
+
+  if (tool === "quote_arc_perp_position") {
+    return await quoteArcPerpPosition(args);
+  }
+
+  if (tool === "read_arc_perps_oracle_price") {
+    return await readArcPerpsOraclePrice(args);
+  }
+
+  if ([
+    "set_arc_perps_oracle_price",
+    "set_arc_perps_market",
+    "approve_arc_perps_usdc",
+    "deposit_arc_perps_margin",
+    "withdraw_arc_perps_margin",
+    "provide_arc_perps_liquidity",
+    "open_arc_perp_position",
+    "close_arc_perp_position"
+  ].includes(tool)) {
+    return backendSignerDisabled(tool);
+  }
+
+  if (tool === "get_arc_perps_position") {
+    return await getArcPerpsPosition(args);
+  }
+
+  if (tool === "list_arc_perps_positions") {
+    return await listArcPerpsPositions(args);
+  }
+
+  if (tool === "appkit_readiness") {
+    return await getAppKitReadiness();
+  }
+
+  if (tool === "list_appkit_capabilities") {
+    return await listAppKitCapabilities();
+  }
+
+  if (tool === "appkit_estimate_send") {
+    return await estimateAppKitSend(args);
+  }
+
+  if (tool === "appkit_send_usdc") {
+    return await executeAppKitSend(args);
+  }
+
+  if (tool === "appkit_estimate_bridge") {
+    return await estimateAppKitBridge(args);
+  }
+
+  if (tool === "appkit_bridge_usdc") {
+    return await executeAppKitBridge(args);
+  }
+
+  if (tool === "appkit_estimate_swap") {
+    return await estimateAppKitSwap(args);
+  }
+
+  if (tool === "appkit_swap") {
+    return await executeAppKitSwap(args);
+  }
+
+  if (tool === "appkit_unified_balance") {
+    return await getAppKitUnifiedBalance(args);
+  }
+
+  if (tool === "create_payment_intent") {
+    return await createPaymentIntent({
+      ...args,
+      source: "grok-mcp"
+    });
+  }
+
+  if (tool === "create_social_bounty") {
+    return await createSocialBounty({
+      ...args,
+      source: "grok-mcp"
+    });
+  }
+
+  if (tool === "resolve_x_handle") {
+    return {
+      ok: true,
+      message: "Use /api/identity/resolve in the product API; this tool is advertised for Grok discovery."
+    };
+  }
+
+  if (tool === "list_defi_tools") {
+    return listDefiTools();
+  }
+
+  if (tool === "quote_defi_route") {
+    return await quoteDefiRoute(args);
+  }
+
+  if (tool === "confirm_defi_action") {
+    return await confirmDefiAction(args);
+  }
+
+  if (tool === "list_defi_actions") {
+    return listDefiActions(args);
+  }
+
+  if (tool === "reconcile_defi_action") {
+    const job = enqueueJob({
+      type: "reconcile_defi_action",
+      payload: { actionId: args.actionId },
+      idempotencyKey: `reconcile_defi_action:${args.actionId}:mcp:${Date.now()}`
+    });
+    return await runJob({ jobId: job.id });
+  }
+
+  if (tool === "get_defi_action_receipt") {
+    return getDefiActionReceipt({
+      actionId: args.actionId,
+      host: args.host,
+      protocol: args.protocol || "http"
+    });
+  }
+
+  if (tool === "list_perp_markets") {
+    return await listPerpMarkets(args);
+  }
+
+  throw new Error(`Unknown MCP tool: ${tool}`);
+}
+
+function backendSignerDisabled(tool) {
+  return {
+    ok: false,
+    tool,
+    status: "user_wallet_signing_required",
+    backendSignerAllowed: false,
+    message: "This signer-backed tool was removed from the MCP/agent execution surface. Build a user-owned Circle/AppKit signing path before enabling live execution."
+  };
+}

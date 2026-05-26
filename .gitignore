@@ -1,0 +1,12 @@
+.data/
+.vercel/
+.vercel-frontend/
+node_modules/
+build/
+.env
+.env.local
+.env.*.local
+circle-recovery/
+*.log
+desktop.png
+mobile.png

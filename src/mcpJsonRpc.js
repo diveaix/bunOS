@@ -1,0 +1,84 @@
+import { callMcpTool, mcpTools } from "./mcp.js";
+
+export async function handleMcpJsonRpc(body) {
+  const id = body.id ?? null;
+
+  if (body.method === "initialize") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        protocolVersion: "2025-06-18",
+        serverInfo: {
+          name: "ArcPay Social Agent",
+          version: "0.1.0"
+        },
+        capabilities: {
+          tools: {}
+        }
+      }
+    };
+  }
+
+  if (body.method === "notifications/initialized") {
+    return null;
+  }
+
+  if (body.method === "ping") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {}
+    };
+  }
+
+  if (body.method === "tools/list") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        tools: mcpTools
+      }
+    };
+  }
+
+  if (body.method === "tools/call") {
+    const { name, arguments: args = {} } = body.params || {};
+    const result = await callMcpTool(name, args);
+
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }
+        ],
+        isError: false
+      }
+    };
+  }
+
+  return {
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: -32601,
+      message: `Unsupported MCP method: ${body.method}`
+    }
+  };
+}
+
+export function toMcpError({ id = null, error }) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: -32000,
+      message: error?.message || "MCP tool call failed"
+    }
+  };
+}
+
