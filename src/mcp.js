@@ -28,6 +28,14 @@ import {
 } from "./defiOrchestrator.js";
 import { enqueueJob, runJob } from "./jobs.js";
 import {
+  createAutomation,
+  deleteAutomation,
+  listAutomations,
+  runAutomation,
+  runDueAutomations,
+  updateAutomation
+} from "./automations.js";
+import {
   assessLiquidationRisk,
   listPerpIntelligence,
   listPerpProposals,
@@ -86,6 +94,94 @@ export const mcpTools = [
     inputSchema: {
       type: "object",
       properties: {}
+    }
+  },
+  {
+    name: "create_automation",
+    description: "Create a recurring automation for balance sync, agent prompt execution, or DeFi action reconciliation. Automations run through the same user-wallet and policy-gated paths as terminal actions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        name: { type: "string" },
+        kind: { type: "string", enum: ["sync_circle_balances", "run_agent_action", "reconcile_defi_action"] },
+        prompt: { type: "string" },
+        text: { type: "string" },
+        actionId: { type: "string" },
+        intervalMinutes: { type: "number" },
+        everyMinutes: { type: "number" },
+        defaultSettlementRail: { type: "string" },
+        status: { type: "string" },
+        nextRunAt: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "list_automations",
+    description: "List active or paused user automations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        status: { type: "string" },
+        kind: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "run_automation",
+    description: "Run one automation immediately.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        automationId: { type: "string" }
+      },
+      required: ["automationId"]
+    }
+  },
+  {
+    name: "run_due_automations",
+    description: "Run all due active automations now, up to a limit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "pause_automation",
+    description: "Pause a recurring automation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        automationId: { type: "string" }
+      },
+      required: ["automationId"]
+    }
+  },
+  {
+    name: "resume_automation",
+    description: "Resume a paused automation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        automationId: { type: "string" }
+      },
+      required: ["automationId"]
+    }
+  },
+  {
+    name: "delete_automation",
+    description: "Delete a recurring automation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        automationId: { type: "string" }
+      },
+      required: ["automationId"]
     }
   },
   {
@@ -653,6 +749,34 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "list_agent_tools") {
     return listAgentTools();
+  }
+
+  if (tool === "create_automation") {
+    return createAutomation(args);
+  }
+
+  if (tool === "list_automations") {
+    return listAutomations(args);
+  }
+
+  if (tool === "run_automation") {
+    return await runAutomation(args);
+  }
+
+  if (tool === "run_due_automations") {
+    return await runDueAutomations(args);
+  }
+
+  if (tool === "pause_automation") {
+    return updateAutomation({ automationId: args.automationId, status: "paused" });
+  }
+
+  if (tool === "resume_automation") {
+    return updateAutomation({ automationId: args.automationId, status: "active" });
+  }
+
+  if (tool === "delete_automation") {
+    return deleteAutomation(args);
   }
 
   if (tool === "create_wallet") {

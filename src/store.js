@@ -34,6 +34,7 @@ export async function loadStore() {
   ledger.xCommands = loadJsonRows("x_commands");
   ledger.circleWebhooks = loadJsonRows("circle_webhooks");
   ledger.jobs = loadJsonRows("jobs");
+  ledger.automations = loadJsonRows("automations");
   ledger.defiActions = loadJsonRows("defi_actions");
   ledger.approvals = loadJsonRows("approvals");
   ledger.copyTradeProposals = loadJsonRows("copy_trade_proposals");
@@ -50,7 +51,8 @@ export async function loadStore() {
     approvals: ledger.approvals,
     copyTradeProposals: ledger.copyTradeProposals,
     perpProposals: ledger.perpProposals,
-    xCommands: ledger.xCommands
+    xCommands: ledger.xCommands,
+    automations: ledger.automations
   });
 
   return { ok: true, loaded: true, dbFile };
@@ -74,6 +76,7 @@ export async function persistStore() {
     replaceJsonRows("x_commands", ledger.xCommands, "id");
     replaceJsonRows("circle_webhooks", ledger.circleWebhooks, "eventId", "receivedAt");
     replaceJsonRows("jobs", ledger.jobs, "id");
+    replaceJsonRows("automations", ledger.automations, "id");
     replaceJsonRows("defi_actions", ledger.defiActions, "id");
     replaceJsonRows("approvals", ledger.approvals, "id");
     replaceJsonRows("copy_trade_proposals", ledger.copyTradeProposals, "id");
@@ -187,6 +190,12 @@ function migrateDb() {
     );
 
     CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS automations (
       id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       updated_at TEXT NOT NULL

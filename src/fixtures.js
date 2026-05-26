@@ -114,6 +114,7 @@ export const ledger = {
   xCommands: [],
   circleWebhooks: [],
   jobs: [],
+  automations: [],
   defiActions: [],
   approvals: [],
   copyTradeProposals: [],

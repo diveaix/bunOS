@@ -28,6 +28,14 @@ import {
 import { getCircleReadiness } from "./circleProvider.js";
 import { config } from "./config.js";
 import { getAgentModelReadiness } from "./modelPlanner.js";
+import {
+  createAutomation,
+  deleteAutomation,
+  listAutomations,
+  runAutomation,
+  runDueAutomations,
+  updateAutomation
+} from "./automations.js";
 import { ledger } from "./fixtures.js";
 import { nextEventId } from "./ids.js";
 import {
@@ -128,6 +136,10 @@ export const server = http.createServer(async (req, res) => {
         jobs: {
           queued: ledger.jobs.filter((job) => job.status === "queued").length,
           failed: ledger.jobs.filter((job) => job.status === "failed").length
+        },
+        automations: {
+          total: ledger.automations.length,
+          active: ledger.automations.filter((automation) => automation.status === "active").length
         },
         defi: {
           actions: ledger.defiActions.length,
@@ -241,6 +253,15 @@ export const server = http.createServer(async (req, res) => {
       return json(res, listJobs({
         status: url.searchParams.get("status"),
         type: url.searchParams.get("type"),
+        limit: url.searchParams.get("limit") || 50
+      }));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/automations") {
+      return json(res, listAutomations({
+        handle: url.searchParams.get("handle"),
+        status: url.searchParams.get("status"),
+        kind: url.searchParams.get("kind"),
         limit: url.searchParams.get("limit") || 50
       }));
     }
@@ -708,12 +729,39 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/jobs/run-due") {
       const body = await readJson(req);
-      return jsonPersisted(res, await runDueJobs({ limit: body.limit || 20 }));
+      const jobs = await runDueJobs({ limit: body.limit || 20 });
+      const automations = await runDueAutomations({ limit: body.automationLimit || body.limit || 20 });
+      return jsonPersisted(res, { ok: true, jobs, automations });
     }
 
     const runJobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/run$/);
     if (req.method === "POST" && runJobMatch) {
       return jsonPersisted(res, await runJob({ jobId: runJobMatch[1] }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/automations") {
+      const body = await readJson(req);
+      return jsonPersisted(res, createAutomation(body));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/automations/run-due") {
+      const body = await readJson(req);
+      return jsonPersisted(res, await runDueAutomations({ limit: body.limit || 20 }));
+    }
+
+    const automationRunMatch = url.pathname.match(/^\/api\/automations\/([^/]+)\/run$/);
+    if (req.method === "POST" && automationRunMatch) {
+      return jsonPersisted(res, await runAutomation({ automationId: automationRunMatch[1] }));
+    }
+
+    const automationMatch = url.pathname.match(/^\/api\/automations\/([^/]+)$/);
+    if (req.method === "PATCH" && automationMatch) {
+      const body = await readJson(req);
+      return jsonPersisted(res, updateAutomation({ automationId: automationMatch[1], ...body }));
+    }
+
+    if (req.method === "DELETE" && automationMatch) {
+      return jsonPersisted(res, deleteAutomation({ automationId: automationMatch[1] }));
     }
 
     const awardMatch = url.pathname.match(/^\/api\/bounties\/([^/]+)\/award$/);
@@ -747,7 +795,7 @@ if (!process.env.VERCEL) {
 async function serveStatic(pathname, res) {
   const routeAliases = {
     "/terminal": "/terminal.html",
-    "/mcp": "/mcp.html"
+    "/mcp-guide": "/mcp.html"
   };
   const safePath = routeAliases[pathname] || (pathname === "/" ? "/index.html" : pathname);
   const filePath = join(root, "public", safePath);

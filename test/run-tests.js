@@ -798,6 +798,60 @@ const tests = [
     }
   ],
   [
+    "exposes MCP automations for recurring wallet and agent work",
+    async () => {
+      const names = mcpTools.map((tool) => tool.name);
+      for (const name of [
+        "create_automation",
+        "list_automations",
+        "run_automation",
+        "run_due_automations",
+        "pause_automation",
+        "resume_automation",
+        "delete_automation"
+      ]) {
+        assert.ok(names.includes(name), `${name} missing`);
+      }
+
+      await callMcpTool("create_wallet", { handle: "@automator" });
+      const created = await callMcpTool("create_automation", {
+        handle: "@automator",
+        kind: "sync_circle_balances",
+        intervalMinutes: 1,
+        nextRunAt: new Date(Date.now() - 1_000).toISOString()
+      });
+      assert.equal(created.ok, true);
+      assert.equal(created.automation.kind, "sync_circle_balances");
+      assert.equal(created.automation.status, "active");
+      assert.equal(created.automation.handle, "@automator");
+
+      const listed = await callMcpTool("list_automations", { handle: "@automator" });
+      assert.equal(listed.ok, true);
+      assert.ok(listed.automations.find((automation) => automation.id === created.automation.id));
+
+      const paused = await callMcpTool("pause_automation", { automationId: created.automation.id });
+      assert.equal(paused.automation.status, "paused");
+      const resumed = await callMcpTool("resume_automation", { automationId: created.automation.id });
+      assert.equal(resumed.automation.status, "active");
+
+      const due = await callMcpTool("run_due_automations", { limit: 10 });
+      const ran = due.ran.find((result) => result.automation.id === created.automation.id);
+      assert.ok(ran);
+      assert.equal(ran.ok, true);
+      assert.equal(ran.automation.runCount, 1);
+      assert.ok(new Date(ran.automation.nextRunAt).getTime() > Date.now());
+
+      const manual = await callMcpTool("run_automation", { automationId: created.automation.id });
+      assert.equal(manual.ok, true);
+      assert.equal(manual.automation.runCount, 2);
+
+      const deleted = await callMcpTool("delete_automation", { automationId: created.automation.id });
+      assert.equal(deleted.ok, true);
+      const afterDelete = await callMcpTool("list_automations", { handle: "@automator" });
+      assert.equal(afterDelete.automations.some((automation) => automation.id === created.automation.id), false);
+    }
+  ],
+  [
     "creates copy trading and perps proposals as approvals",
     async () => {
       const copy = await callMcpTool("propose_copy_trade", {
