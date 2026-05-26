@@ -18,14 +18,29 @@ export async function listHyperliquidMarkets({ limit = 20 } = {}) {
     postInfo({ type: "meta" })
   ]);
   const universe = meta?.universe || [];
-  const markets = Object.entries(mids || {})
+  const midsBySymbol = mids || {};
+  const orderedSymbols = [
+    ...universe.map((item) => item.name),
+    ...Object.keys(midsBySymbol)
+  ];
+  const seen = new Set();
+  const markets = orderedSymbols
+    .filter((symbol) => {
+      if (!symbol || seen.has(symbol) || midsBySymbol[symbol] === undefined) return false;
+      seen.add(symbol);
+      return true;
+    })
+    .filter((symbol) => !String(symbol).startsWith("#"))
     .slice(0, Number(limit) || 20)
-    .map(([symbol, mid]) => ({
-      symbol,
-      mid,
-      maxLeverage: universe.find((item) => item.name === symbol)?.maxLeverage || null,
-      onlyIsolated: universe.find((item) => item.name === symbol)?.onlyIsolated || false
-    }));
+    .map((symbol) => {
+      const metaItem = universe.find((item) => item.name === symbol);
+      return {
+        symbol,
+        mid: midsBySymbol[symbol],
+        maxLeverage: metaItem?.maxLeverage || null,
+        onlyIsolated: metaItem?.onlyIsolated || false
+      };
+    });
 
   return {
     ok: true,
