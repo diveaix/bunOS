@@ -6,8 +6,11 @@ import {
   getArcPerpsReadiness,
   getArcPerpsStatus,
   listArcPerpsPositions,
+  openArcPerpPositionWithUserWallet,
   quoteArcPerpPosition,
-  readArcPerpsOraclePrice
+  readArcPerpsOraclePrice,
+  closeArcPerpPositionWithUserWallet,
+  syncArcPerpsOracleFromHyperliquid
 } from "./arcPerpsEngine.js";
 import { listApprovals } from "./approvals.js";
 import { getPaymentReceipt } from "./queries.js";
@@ -486,6 +489,45 @@ export const mcpTools = [
     }
   },
   {
+    name: "open_arc_perp_user_position",
+    description: "Open an ArcPerps position through the user's Circle Arc wallet. Never uses ARC_SETTLEMENT_PRIVATE_KEY for user funds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        symbol: { type: "string" },
+        side: { type: "string", enum: ["long", "short"] },
+        marginUsd: { type: "number" },
+        leverage: { type: "number" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["handle", "symbol", "side", "marginUsd", "leverage"]
+    }
+  },
+  {
+    name: "close_arc_perp_user_position",
+    description: "Close an ArcPerps position through the user's Circle Arc wallet. Never uses ARC_SETTLEMENT_PRIVATE_KEY for user funds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        positionId: { type: "number" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["handle", "positionId"]
+    }
+  },
+  {
+    name: "sync_arc_perps_oracle",
+    description: "Sync ArcPerps oracle prices from live Hyperliquid market data using the protocol admin signer. This does not move user funds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbols: { type: "array", items: { type: "string" } }
+      }
+    }
+  },
+  {
     name: "appkit_readiness",
     description: "Check Arc App Kit readiness, execution gates, supported chains, and configured Arc rails.",
     inputSchema: {
@@ -945,6 +987,18 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "list_arc_perps_positions") {
     return await listArcPerpsPositions(args);
+  }
+
+  if (tool === "open_arc_perp_user_position") {
+    return await openArcPerpPositionWithUserWallet(args);
+  }
+
+  if (tool === "close_arc_perp_user_position") {
+    return await closeArcPerpPositionWithUserWallet(args);
+  }
+
+  if (tool === "sync_arc_perps_oracle") {
+    return await syncArcPerpsOracleFromHyperliquid(args);
   }
 
   if (tool === "appkit_readiness") {

@@ -70,11 +70,10 @@
       }
 
       .brand-logo {
-        width: 32px;
-        height: 32px;
+        width: 36px;
+        height: 36px;
         border-radius: 8px;
-        object-fit: contain;
-        background: #111111;
+        overflow: hidden;
       }
 
       .header-title {
@@ -179,9 +178,9 @@
       .welcome.hidden { display: none; }
 
       .welcome-icon {
-        width: 64px;
-        height: 64px;
-        border-radius: 16px;
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
         overflow: hidden;
       }
 
@@ -815,11 +814,18 @@
       function formatApprovalResult(data) {
         const result = data.result || {};
         const job = result.job || result.result?.job || {};
+        const workerRun = data.worker?.jobs?.ran?.find((item) => item.job?.id === job.id || item.result?.proposalId === result.proposal?.id) || {};
+        const execution = workerRun.result?.execution || result.proposal?.execution || {};
+        const txHash = execution.txHash || execution.steps?.find((step) => step.txHash)?.txHash;
+        const explorerUrl = execution.explorerUrl || execution.steps?.find((step) => step.explorerUrl)?.explorerUrl;
         return `Approved <code>${escapeHtml(data.approval?.kind || "action")}</code>. I kicked the worker once for execution.
 ${renderResultCard([
   ["Approval", statusBadge(data.approval?.status || "approved", "ok")],
   ["Job", escapeHtml(job.id || "queued")],
-  ["Next", escapeHtml(result.nextAction || "check activity/receipt")]
+  ["Status", statusBadge(workerRun.status || workerRun.job?.status || execution.status || "queued", workerRun.ok === false ? "fail" : "ok")],
+  ["Tx", renderTxLink(txHash, explorerUrl)],
+  ["Position", escapeHtml(execution.positionId || result.proposal?.positionId || "n/a")],
+  ["Next", escapeHtml(result.nextAction || (txHash ? "check ArcPerps position" : "check activity/receipt"))]
 ])}`;
       }
 
@@ -1108,7 +1114,7 @@ ${renderResultCard([
         });
         const data = await res.json();
         if (!res.ok || data.ok === false) throw new Error(data.error || "Approval failed");
-        await runWorkerOnce();
+        data.worker = await runWorkerOnce();
         latestApprovalId = null;
         return data;
       }
@@ -1256,11 +1262,12 @@ ${renderResultCard([
       }
 
       async function runWorkerOnce() {
-        await fetch("/api/jobs/run-due", {
+        const res = await fetch("/api/jobs/run-due", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ limit: 10 })
         });
+        return res.json().catch(() => null);
       }
 
       async function runJobOnce(jobId) {

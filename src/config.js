@@ -65,6 +65,12 @@ export const config = {
     oracleAddress: process.env.ARC_PERPS_ORACLE_ADDRESS || "",
     vaultAddress: process.env.ARC_PERPS_VAULT_ADDRESS || "",
     executionEnabled: process.env.ARC_PERPS_EXECUTION_ENABLED === "1",
+    oracleSyncEnabled: process.env.ARC_PERPS_ORACLE_SYNC_ENABLED !== "0",
+    oracleSyncSymbols: (process.env.ARC_PERPS_ORACLE_SYMBOLS || "BTC")
+      .split(",")
+      .map((symbol) => symbol.trim().toUpperCase())
+      .filter(Boolean),
+    oracleMaxAgeMs: Math.max(15_000, Number(process.env.ARC_PERPS_ORACLE_MAX_AGE_MS || 60_000)),
     maxLeverage: Number(process.env.ARC_PERPS_MAX_LEVERAGE || 3)
   },
   automations: {

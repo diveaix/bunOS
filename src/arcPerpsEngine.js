@@ -11,13 +11,20 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { config } from "./config.js";
+import { circleErrorMessage, getCircleDeveloperClient } from "./circleSdk.js";
+import { listHyperliquidMarkets } from "./hyperliquidAdapter.js";
 import { getSettlementRail } from "./settlement.js";
-import { readOnlySigner } from "./signerPolicy.js";
+import { readOnlySigner, userWalletSigningRequired } from "./signerPolicy.js";
+import { getWalletProfile } from "./walletAccounts.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const USDC_DECIMALS = 6;
 const PRICE_DECIMALS = 8;
 const BPS = 10_000;
+const FINAL_CIRCLE_STATES = new Set(["COMPLETE", "CONFIRMED", "MINED"]);
+const FAILED_CIRCLE_STATES = new Set(["FAILED", "CANCELLED", "DENIED"]);
+const CIRCLE_POLL_INTERVAL_MS = 2500;
+const CIRCLE_POLL_TIMEOUT_MS = 120_000;
 const ERC20_ABI = [
   {
     type: "function",
@@ -57,13 +64,22 @@ export function getArcPerpsReadiness() {
   if (!config.arcPerps.usdcAddress) missing.push("ARC_PERPS_USDC_ADDRESS");
   if (!config.arcPerps.oracleAddress) missing.push("ARC_PERPS_ORACLE_ADDRESS");
   if (!config.arcPerps.vaultAddress) missing.push("ARC_PERPS_VAULT_ADDRESS");
+  const circleReady = Boolean(config.circle.apiKey && config.circle.entitySecret && config.circle.walletSetId);
 
   return {
     ok: missing.length === 0,
-    executionEnabled: false,
+    executionEnabled: Boolean(config.arcPerps.executionEnabled && circleReady && missing.length === 0),
+    userWalletExecutionReady: Boolean(config.arcPerps.executionEnabled && circleReady && missing.length === 0),
     backendSignerAllowed: false,
     adminSignerConfigured: Boolean(config.arc.settlementPrivateKey),
+    adminExecutionEnabled: Boolean(config.arcPerps.executionEnabled && config.arc.settlementPrivateKey && missing.length === 0),
+    oracleSyncEnabled: Boolean(config.arcPerps.oracleSyncEnabled && config.arcPerps.executionEnabled && config.defi.liveAdapters && config.arc.settlementPrivateKey && missing.length === 0),
     missing,
+    blockers: [
+      ...missing,
+      ...(!circleReady ? ["Circle API key, entity secret, and wallet set required for user-wallet perps execution"] : []),
+      ...(!config.arcPerps.executionEnabled ? ["Set ARC_PERPS_EXECUTION_ENABLED=1 to submit user-wallet perps transactions"] : [])
+    ],
     rail: "arc-testnet",
     usdcAddress: config.arcPerps.usdcAddress || null,
     vaultAddress: config.arcPerps.vaultAddress || null,
@@ -213,7 +229,7 @@ export async function readArcPerpsOraclePrice({ symbol = "BTC" } = {}) {
 }
 
 export async function setArcPerpsOraclePrice({ symbol = "BTC", price } = {}) {
-  assertExecutionReady();
+  assertAdminExecutionReady();
   const oracle = await getOracleArtifact();
   const clients = getClients();
   const rawPrice = parseUnits(String(Number(price || 0)), PRICE_DECIMALS);
@@ -235,7 +251,7 @@ export async function setArcPerpsOraclePrice({ symbol = "BTC", price } = {}) {
 }
 
 export async function setArcPerpsMarket({ symbol = "BTC", enabled = true } = {}) {
-  assertExecutionReady();
+  assertAdminExecutionReady();
   const vault = await getVaultArtifact();
   const clients = getClients();
   const data = encodeFunctionData({
@@ -258,7 +274,7 @@ export async function openArcPerpPosition({
   marginUsd,
   leverage = 2
 } = {}) {
-  assertExecutionReady();
+  assertAdminExecutionReady();
   const vault = await getVaultArtifact();
   const clients = getClients();
   const symbolHex = symbolBytes32(symbol);
@@ -281,7 +297,7 @@ export async function openArcPerpPosition({
 }
 
 export async function approveArcPerpsUsdc({ amountUsd } = {}) {
-  assertExecutionReady();
+  assertAdminExecutionReady();
   const clients = getClients();
   const amount = parseUsdc(amountUsd);
   const data = encodeFunctionData({
@@ -299,7 +315,7 @@ export async function approveArcPerpsUsdc({ amountUsd } = {}) {
 }
 
 export async function depositArcPerpsMargin({ amountUsd } = {}) {
-  assertExecutionReady();
+  assertAdminExecutionReady();
   const vault = await getVaultArtifact();
   const clients = getClients();
   const amount = parseUsdc(amountUsd);
@@ -318,7 +334,7 @@ export async function depositArcPerpsMargin({ amountUsd } = {}) {
 }
 
 export async function withdrawArcPerpsMargin({ amountUsd } = {}) {
-  assertExecutionReady();
+  assertAdminExecutionReady();
   const vault = await getVaultArtifact();
   const clients = getClients();
   const amount = parseUsdc(amountUsd);
@@ -337,7 +353,7 @@ export async function withdrawArcPerpsMargin({ amountUsd } = {}) {
 }
 
 export async function provideArcPerpsLiquidity({ amountUsd } = {}) {
-  assertExecutionReady();
+  assertAdminExecutionReady();
   const vault = await getVaultArtifact();
   const clients = getClients();
   const amount = parseUsdc(amountUsd);
@@ -356,7 +372,7 @@ export async function provideArcPerpsLiquidity({ amountUsd } = {}) {
 }
 
 export async function closeArcPerpPosition({ positionId } = {}) {
-  assertExecutionReady();
+  assertAdminExecutionReady();
   const vault = await getVaultArtifact();
   const clients = getClients();
   const data = encodeFunctionData({
@@ -371,6 +387,194 @@ export async function closeArcPerpPosition({ positionId } = {}) {
   const receipt = await clients.publicClient.waitForTransactionReceipt({ hash });
 
   return transactionResult(hash, receipt);
+}
+
+export async function executeArcPerpProposalWithUserWallet({ proposal } = {}) {
+  if (!proposal) throw new Error("proposal is required");
+  return await openArcPerpPositionWithUserWallet({
+    handle: proposal.handle,
+    symbol: proposal.symbol,
+    side: proposal.side,
+    marginUsd: proposal.collateralUsd,
+    leverage: proposal.leverage,
+    idempotencyKey: `arc-perps:${proposal.id}`
+  });
+}
+
+export async function openArcPerpPositionWithUserWallet({
+  handle = "@sara",
+  symbol = "BTC",
+  side = "long",
+  marginUsd,
+  leverage = 2,
+  idempotencyKey
+} = {}) {
+  const readiness = getArcPerpsReadiness();
+  if (!readiness.userWalletExecutionReady) {
+    return userExecutionBlocked("open_arc_perp_position", readiness);
+  }
+
+  const vault = await getVaultArtifact();
+  const profile = getWalletProfile(handle);
+  const wallet = walletForRail(profile, "arc-testnet");
+  const publicClient = getPublicClient().publicClient;
+  const symbolHex = symbolBytes32(symbol);
+  const margin = parseUsdc(marginUsd);
+  const leverageBps = BigInt(Math.round(Number(leverage) * BPS));
+  const isLong = side !== "short";
+  const nextPositionId = await publicClient.readContract({
+    address: config.arcPerps.vaultAddress,
+    abi: vault.abi,
+    functionName: "nextPositionId"
+  });
+
+  const steps = [];
+  steps.push(await submitUserContractExecution({
+    wallet,
+    contractAddress: config.arcPerps.usdcAddress,
+    callData: encodeFunctionData({
+      abi: ERC20_ABI,
+      functionName: "approve",
+      args: [config.arcPerps.vaultAddress, margin]
+    }),
+    refId: `${idempotencyKey || `arc-perps:${Date.now()}`}:approve`
+  }));
+
+  steps.push(await submitUserContractExecution({
+    wallet,
+    contractAddress: config.arcPerps.vaultAddress,
+    callData: encodeFunctionData({
+      abi: vault.abi,
+      functionName: "depositMargin",
+      args: [margin]
+    }),
+    refId: `${idempotencyKey || `arc-perps:${Date.now()}`}:deposit`
+  }));
+
+  const open = await submitUserContractExecution({
+    wallet,
+    contractAddress: config.arcPerps.vaultAddress,
+    callData: encodeFunctionData({
+      abi: vault.abi,
+      functionName: "openPosition",
+      args: [symbolHex, isLong, margin, leverageBps]
+    }),
+    refId: `${idempotencyKey || `arc-perps:${Date.now()}`}:open`
+  });
+  steps.push(open);
+
+  const positionId = Number(nextPositionId);
+  const position = await getArcPerpsPosition({ positionId }).then((result) => result.position).catch(() => null);
+
+  return {
+    ok: true,
+    status: "submitted",
+    mode: "circle_user_wallet_contract_execution",
+    backendSignerAllowed: false,
+    handle: profile.handle,
+    wallet: {
+      id: wallet.id,
+      address: wallet.address,
+      rail: wallet.rail
+    },
+    positionId,
+    position,
+    steps,
+    txHash: open.txHash,
+    explorerUrl: open.explorerUrl,
+    signer: circleUserArcPerpsSigner(profile, "open_arc_perp_position")
+  };
+}
+
+export async function closeArcPerpPositionWithUserWallet({
+  handle = "@sara",
+  positionId,
+  idempotencyKey
+} = {}) {
+  const readiness = getArcPerpsReadiness();
+  if (!readiness.userWalletExecutionReady) {
+    return userExecutionBlocked("close_arc_perp_position", readiness);
+  }
+
+  const vault = await getVaultArtifact();
+  const profile = getWalletProfile(handle);
+  const wallet = walletForRail(profile, "arc-testnet");
+  const before = await getArcPerpsPosition({ positionId }).then((result) => result.position);
+  if (before.owner.toLowerCase() !== wallet.address.toLowerCase()) {
+    throw new Error("Position does not belong to this user's Arc wallet");
+  }
+
+  const close = await submitUserContractExecution({
+    wallet,
+    contractAddress: config.arcPerps.vaultAddress,
+    callData: encodeFunctionData({
+      abi: vault.abi,
+      functionName: "closePosition",
+      args: [BigInt(positionId)]
+    }),
+    refId: `${idempotencyKey || `arc-perps:${Date.now()}`}:close:${positionId}`
+  });
+  const after = await getArcPerpsPosition({ positionId }).then((result) => result.position).catch(() => null);
+
+  return {
+    ok: true,
+    status: "submitted",
+    mode: "circle_user_wallet_contract_execution",
+    backendSignerAllowed: false,
+    handle: profile.handle,
+    wallet: {
+      id: wallet.id,
+      address: wallet.address,
+      rail: wallet.rail
+    },
+    positionId: Number(positionId),
+    before,
+    position: after,
+    steps: [close],
+    txHash: close.txHash,
+    explorerUrl: close.explorerUrl,
+    signer: circleUserArcPerpsSigner(profile, "close_arc_perp_position")
+  };
+}
+
+export async function syncArcPerpsOracleFromHyperliquid({ symbols = config.arcPerps.oracleSyncSymbols } = {}) {
+  const readiness = getArcPerpsReadiness();
+  if (!readiness.oracleSyncEnabled) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "ArcPerps oracle sync needs live adapters, deployed contracts, and the protocol admin signer."
+    };
+  }
+
+  const markets = await listHyperliquidMarkets({ limit: 250 });
+  const updates = [];
+  for (const symbol of symbols) {
+    const market = markets.markets.find((item) => item.symbol.toUpperCase() === symbol.toUpperCase());
+    const price = Number(market?.mid || 0);
+    if (!Number.isFinite(price) || price <= 0) {
+      updates.push({ symbol, skipped: true, reason: "No live Hyperliquid mid price" });
+      continue;
+    }
+
+    const current = await readArcPerpsOraclePrice({ symbol }).catch(() => null);
+    const stale = !current?.updatedAt || (Date.now() / 1000 - current.updatedAt) * 1000 > config.arcPerps.oracleMaxAgeMs;
+    const changed = !current?.price || Math.abs(current.price - price) / current.price > 0.0005;
+    if (!stale && !changed) {
+      updates.push({ symbol, skipped: true, price, oraclePrice: current.price, reason: "Fresh enough" });
+      continue;
+    }
+
+    const tx = await setArcPerpsOraclePrice({ symbol, price });
+    updates.push({ symbol, price, txHash: tx.txHash, explorerUrl: tx.explorerUrl });
+  }
+
+  return {
+    ok: true,
+    provider: markets.provider,
+    mode: markets.mode,
+    updates
+  };
 }
 
 export async function listArcPerpsPositions({ ownerAddress, limit = 25 } = {}) {
@@ -453,13 +657,13 @@ async function readPosition({ publicClient, vault, positionId }) {
   return position;
 }
 
-function assertExecutionReady() {
+function assertAdminExecutionReady() {
   const readiness = getArcPerpsReadiness();
   if (!readiness.ok) {
     throw new Error(`ArcPerps contracts are not configured: ${readiness.missing.join(", ")}`);
   }
-  if (!readiness.executionEnabled) {
-    throw new Error("ArcPerps backend signer execution is disabled; use a user-owned signing adapter");
+  if (!config.arcPerps.executionEnabled || !config.arc.settlementPrivateKey) {
+    throw new Error("ArcPerps admin execution is disabled; set ARC_PERPS_EXECUTION_ENABLED=1 and ARC_SETTLEMENT_PRIVATE_KEY for protocol admin operations");
   }
 }
 
@@ -498,6 +702,114 @@ function getClients() {
   return {
     publicClient: createPublicClient({ chain, transport: http(config.arc.rpcUrl) }),
     walletClient: createWalletClient({ account, chain, transport: http(config.arc.rpcUrl) })
+  };
+}
+
+async function submitUserContractExecution({ wallet, contractAddress, callData, refId }) {
+  const response = await getCircleDeveloperClient().createContractExecutionTransaction({
+    walletId: wallet.id,
+    contractAddress,
+    callData,
+    amount: "0",
+    fee: {
+      type: "level",
+      config: { feeLevel: "MEDIUM" }
+    },
+    refId
+  }).catch((error) => {
+    throw new Error(circleErrorMessage(error, "Circle ArcPerps transaction submission failed"));
+  });
+  const transaction = unwrapCircleTransaction(response);
+  const txHash = transaction.txHash || transaction.transactionHash || await pollCircleTxHash(transaction.id);
+  const receipt = await getPublicClient().publicClient.waitForTransactionReceipt({ hash: txHash });
+  return {
+    ok: true,
+    id: transaction.id || null,
+    status: normalizeCircleTransactionStatus(transaction.state || transaction.status),
+    txHash,
+    receiptStatus: receipt.status,
+    explorerUrl: `${getSettlementRail("arc-testnet").explorerBaseUrl}${txHash}`
+  };
+}
+
+async function pollCircleTxHash(transactionId) {
+  if (!transactionId) {
+    throw new Error("Circle did not return a transaction id");
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < CIRCLE_POLL_TIMEOUT_MS) {
+    await new Promise((resolve) => setTimeout(resolve, CIRCLE_POLL_INTERVAL_MS));
+    const response = await getCircleDeveloperClient().getTransaction({ id: transactionId }).catch((error) => {
+      throw new Error(circleErrorMessage(error, "Circle ArcPerps transaction polling failed"));
+    });
+    const transaction = unwrapCircleTransaction(response);
+    const txHash = transaction.txHash || transaction.transactionHash;
+    if (txHash) return txHash;
+
+    const state = String(transaction.state || transaction.status || "").toUpperCase();
+    if (FAILED_CIRCLE_STATES.has(state)) {
+      throw new Error(transaction.errorReason || transaction.errorDetails || `Circle transaction failed with state ${state}`);
+    }
+    if (FINAL_CIRCLE_STATES.has(state) && !txHash) {
+      throw new Error(`Circle transaction ${transactionId} completed without a transaction hash`);
+    }
+  }
+
+  throw new Error(`Timed out waiting for Circle transaction hash: ${transactionId}`);
+}
+
+function unwrapCircleTransaction(response) {
+  const data = response.data || response;
+  return data.transaction || data.data?.transaction || data.data || data;
+}
+
+function normalizeCircleTransactionStatus(value = "") {
+  const status = String(value || "").toUpperCase();
+  if (["CONFIRMED", "COMPLETE", "COMPLETED", "MINED"].includes(status)) return "settled";
+  if (["FAILED", "CANCELLED", "DENIED"].includes(status)) return "failed";
+  if (status) return status.toLowerCase();
+  return "submitted";
+}
+
+function walletForRail(profile, railId) {
+  const wallet = profile.wallets?.find((item) => item.rail === railId);
+  if (!wallet?.id || !wallet?.address) {
+    throw new Error(`No Circle wallet found for ${profile.handle} on ${railId}`);
+  }
+  if (String(wallet.id).startsWith("wallet_") || String(profile.walletSetId || "").endsWith("_demo")) {
+    throw new Error(`Real Circle wallet required for ${profile.handle} on ${railId}`);
+  }
+  return wallet;
+}
+
+function circleUserArcPerpsSigner(profile, operation) {
+  return {
+    signerType: "circle_user_wallet",
+    signerScope: "per_user",
+    handle: profile.handle,
+    operation,
+    settlementRail: "arc-testnet",
+    backendSignerAllowed: false,
+    gasPayer: "circle_wallet_or_paymaster",
+    executionStatus: "submitted"
+  };
+}
+
+function userExecutionBlocked(operation, readiness) {
+  return {
+    ok: false,
+    status: "user_wallet_signing_required",
+    mode: "blocked",
+    operation,
+    backendSignerAllowed: false,
+    readiness,
+    signer: userWalletSigningRequired({
+      operation,
+      settlementRail: "arc-testnet",
+      reason: readiness.blockers.join("; ") || "Circle user wallet execution is not ready"
+    }),
+    reason: readiness.blockers.join("; ") || "Circle user wallet execution is not ready"
   };
 }
 

@@ -13,8 +13,11 @@ import {
   getArcPerpsReadiness,
   getArcPerpsStatus,
   listArcPerpsPositions,
+  openArcPerpPositionWithUserWallet,
   quoteArcPerpPosition,
-  readArcPerpsOraclePrice
+  readArcPerpsOraclePrice,
+  closeArcPerpPositionWithUserWallet,
+  syncArcPerpsOracleFromHyperliquid
 } from "./arcPerpsEngine.js";
 import { listApprovals } from "./approvals.js";
 import {
@@ -603,7 +606,8 @@ export const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/arc-perps/open") {
-      return json(res, signerBackedExecutionDisabled("open_arc_perp_position"), 409);
+      const body = await readJson(req);
+      return jsonPersisted(res, await openArcPerpPositionWithUserWallet(body));
     }
 
     if (req.method === "POST" && url.pathname === "/api/arc-perps/oracle/price") {
@@ -631,7 +635,8 @@ export const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/arc-perps/close") {
-      return json(res, signerBackedExecutionDisabled("close_arc_perp_position"), 409);
+      const body = await readJson(req);
+      return jsonPersisted(res, await closeArcPerpPositionWithUserWallet(body));
     }
 
     const confirmDefiMatch = url.pathname.match(/^\/api\/defi\/actions\/([^/]+)\/confirm$/);
@@ -823,14 +828,16 @@ async function runBackgroundWorkerTick() {
   backgroundWorkerRunning = true;
 
   try {
-    const [jobs, automations] = await Promise.all([
+    const [jobs, automations, oracleSync] = await Promise.all([
       runDueJobs({ limit: config.automations.limit }),
-      runDueAutomations({ limit: config.automations.limit })
+      runDueAutomations({ limit: config.automations.limit }),
+      syncArcPerpsOracleFromHyperliquid()
     ]);
 
-    if (jobs.ran.length || automations.ran.length) {
+    const oracleUpdates = oracleSync.ok ? oracleSync.updates.filter((item) => !item.skipped).length : 0;
+    if (jobs.ran.length || automations.ran.length || oracleUpdates) {
       await persistStore();
-      console.log(`Background worker ran ${jobs.ran.length} jobs and ${automations.ran.length} automations`);
+      console.log(`Background worker ran ${jobs.ran.length} jobs, ${automations.ran.length} automations, and ${oracleUpdates} oracle updates`);
     }
   } finally {
     backgroundWorkerRunning = false;

@@ -1,6 +1,6 @@
 import { ledger, users } from "./fixtures.js";
 import { nextEventId } from "./ids.js";
-import { getArcPerpsReadiness } from "./arcPerpsEngine.js";
+import { executeArcPerpProposalWithUserWallet, getArcPerpsReadiness } from "./arcPerpsEngine.js";
 import { submitDefiActionExecution, syncDefiActionExecutionStatus } from "./defiExecution.js";
 import { submitPaymentTransfer } from "./transferProvider.js";
 import { userWalletSigningRequired } from "./signerPolicy.js";
@@ -378,29 +378,50 @@ async function executePerpProposalJob({ proposalId }) {
   }
 
   const readiness = getArcPerpsReadiness();
-  proposal.status = "user_wallet_signing_required";
-  proposal.execution = {
-    mode: "locked",
-    backendSignerAllowed: false,
-    reason: readiness.ok
-      ? "Perp proposals are ready for a user-owned signing adapter. Backend ARC_SETTLEMENT_PRIVATE_KEY execution is disabled."
-      : `ArcPerps is missing: ${readiness.missing.filter((item) => item !== "ARC_SETTLEMENT_PRIVATE_KEY").join(", ") || "user wallet signing adapter"}`
-  };
-  proposal.signer ||= userWalletSigningRequired({
-    operation: "open_perp_position",
-    settlementRail: proposal.settlementRail,
-    reason: proposal.execution.reason
-  });
+  if (!readiness.userWalletExecutionReady) {
+    proposal.status = "user_wallet_signing_required";
+    proposal.execution = {
+      mode: "locked",
+      backendSignerAllowed: false,
+      reason: readiness.ok
+        ? "Perp proposals are ready for Circle user-wallet execution, but ARC_PERPS_EXECUTION_ENABLED is not enabled."
+        : `ArcPerps is missing: ${readiness.missing.filter((item) => item !== "ARC_SETTLEMENT_PRIVATE_KEY").join(", ") || "Circle user wallet execution"}`
+    };
+    proposal.signer ||= userWalletSigningRequired({
+      operation: "open_perp_position",
+      settlementRail: proposal.settlementRail,
+      reason: proposal.execution.reason
+    });
+    ledger.events.push({
+      id: nextEventId(),
+      at: new Date().toISOString(),
+      type: "perp_proposal_user_wallet_required",
+      proposalId: proposal.id,
+      handle: proposal.handle,
+      reason: proposal.execution.reason
+    });
+
+    return { ok: true, skipped: true, proposalId, status: proposal.status, execution: proposal.execution };
+  }
+
+  const execution = await executeArcPerpProposalWithUserWallet({ proposal });
+  proposal.execution = execution;
+  proposal.status = execution.ok ? "submitted" : execution.status || "execution_failed";
+  if (execution.positionId) proposal.positionId = execution.positionId;
+  if (execution.txHash) proposal.txHash = execution.txHash;
+  proposal.executedAt = new Date().toISOString();
   ledger.events.push({
     id: nextEventId(),
-    at: new Date().toISOString(),
-    type: "perp_proposal_user_wallet_required",
+    at: proposal.executedAt,
+    type: execution.ok ? "perp_position_open_submitted" : "perp_position_open_blocked",
     proposalId: proposal.id,
     handle: proposal.handle,
-    reason: proposal.execution.reason
+    positionId: proposal.positionId || null,
+    txHash: proposal.txHash || null,
+    reason: execution.reason || null
   });
 
-  return { ok: true, skipped: true, proposalId, status: proposal.status, execution: proposal.execution };
+  return { ok: true, skipped: !execution.ok, proposalId, status: proposal.status, execution };
 }
 
 function settleWalletMovementForJob(payment) {

@@ -918,7 +918,10 @@ const tests = [
         "quote_arc_perp_position",
         "read_arc_perps_oracle_price",
         "get_arc_perps_position",
-        "list_arc_perps_positions"
+        "list_arc_perps_positions",
+        "open_arc_perp_user_position",
+        "close_arc_perp_user_position",
+        "sync_arc_perps_oracle"
       ]) {
         assert.ok(names.includes(name), `${name} missing`);
       }
@@ -954,6 +957,21 @@ const tests = [
       });
       assert.equal(mcpQuote.ok, true);
       assert.ok(mcpQuote.quote.liquidationPrice > mcpQuote.quote.entryPrice);
+
+      const userOpen = await callMcpTool("open_arc_perp_user_position", {
+        handle: "@sara",
+        symbol: "BTC",
+        side: "long",
+        marginUsd: 1,
+        leverage: 2
+      });
+      assert.equal(userOpen.ok, false);
+      assert.equal(userOpen.backendSignerAllowed, false);
+      assert.equal(userOpen.status, "user_wallet_signing_required");
+
+      const oracleSync = await callMcpTool("sync_arc_perps_oracle", { symbols: ["BTC"] });
+      assert.equal(oracleSync.ok, false);
+      assert.equal(oracleSync.skipped, true);
     }
   ],
   [
