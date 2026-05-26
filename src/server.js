@@ -139,7 +139,9 @@ export const server = http.createServer(async (req, res) => {
         },
         automations: {
           total: ledger.automations.length,
-          active: ledger.automations.filter((automation) => automation.status === "active").length
+          active: ledger.automations.filter((automation) => automation.status === "active").length,
+          workerEnabled: config.automations.workerEnabled,
+          workerIntervalMs: config.automations.tickMs
         },
         defi: {
           actions: ledger.defiActions.length,
@@ -786,10 +788,53 @@ export const server = http.createServer(async (req, res) => {
 export const ready = loadStore();
 await ready;
 
+let backgroundWorkerRunning = false;
+
 if (!process.env.VERCEL) {
   server.listen(port, () => {
     console.log(`ArcPay prototype running on http://localhost:${port}`);
   });
+  startBackgroundWorker();
+}
+
+function startBackgroundWorker() {
+  if (!config.automations.workerEnabled) {
+    console.log("Background automation worker disabled");
+    return;
+  }
+
+  const runTick = () => {
+    runBackgroundWorkerTick().catch((error) => {
+      console.error("Background automation worker failed", error);
+    });
+  };
+
+  const timer = setInterval(runTick, config.automations.tickMs);
+  timer.unref?.();
+
+  const firstTick = setTimeout(runTick, 2_000);
+  firstTick.unref?.();
+
+  console.log(`Background automation worker running every ${config.automations.tickMs}ms`);
+}
+
+async function runBackgroundWorkerTick() {
+  if (backgroundWorkerRunning) return;
+  backgroundWorkerRunning = true;
+
+  try {
+    const [jobs, automations] = await Promise.all([
+      runDueJobs({ limit: config.automations.limit }),
+      runDueAutomations({ limit: config.automations.limit })
+    ]);
+
+    if (jobs.ran.length || automations.ran.length) {
+      await persistStore();
+      console.log(`Background worker ran ${jobs.ran.length} jobs and ${automations.ran.length} automations`);
+    }
+  } finally {
+    backgroundWorkerRunning = false;
+  }
 }
 
 async function serveStatic(pathname, res) {

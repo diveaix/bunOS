@@ -67,6 +67,11 @@ export const config = {
     executionEnabled: process.env.ARC_PERPS_EXECUTION_ENABLED === "1",
     maxLeverage: Number(process.env.ARC_PERPS_MAX_LEVERAGE || 3)
   },
+  automations: {
+    workerEnabled: process.env.AUTOMATION_WORKER_ENABLED !== "0",
+    tickMs: Math.max(5_000, Number(process.env.AUTOMATION_WORKER_INTERVAL_MS || 60_000)),
+    limit: Math.max(1, Number(process.env.AUTOMATION_WORKER_LIMIT || 20))
+  },
   settlement: {
     defaultRail: process.env.DEFAULT_SETTLEMENT_RAIL || "arc-testnet",
     supportedRails: (process.env.SUPPORTED_SETTLEMENT_RAILS || "arc-testnet,base-sepolia")
