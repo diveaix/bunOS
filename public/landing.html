@@ -183,6 +183,7 @@
 
       .hero {
         position: relative;
+        isolation: isolate;
         min-height: min(760px, calc(100dvh - 72px));
         display: grid;
         grid-template-columns: minmax(0, 1.04fr) minmax(360px, 0.96fr);
@@ -201,9 +202,70 @@
         background: linear-gradient(90deg, transparent, var(--line-red), transparent);
       }
 
+      .function-field {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        overflow: hidden;
+        opacity: 0.74;
+        mask-image: radial-gradient(circle at 62% 42%, black 0%, black 38%, transparent 82%);
+      }
+
+      .function-field::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, rgba(8, 8, 11, 0.82), transparent 38%, rgba(8, 8, 11, 0.88)),
+          linear-gradient(180deg, rgba(8, 8, 11, 0.88), transparent 26%, rgba(8, 8, 11, 0.94));
+        pointer-events: none;
+      }
+
+      .code-fragment {
+        position: absolute;
+        display: inline-flex;
+        align-items: center;
+        min-height: 26px;
+        padding: 0 9px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        color: rgba(246, 240, 236, 0.12);
+        font: 700 clamp(10px, 1vw, 13px)/1 var(--mono);
+        letter-spacing: 0;
+        white-space: nowrap;
+        transition: color 170ms ease, opacity 170ms ease, text-shadow 170ms ease, border-color 170ms ease, background 170ms ease, transform 170ms ease;
+        cursor: default;
+        user-select: none;
+      }
+
+      .code-fragment:hover {
+        color: var(--accent-2);
+        opacity: 1;
+        border-color: rgba(255, 59, 28, 0.28);
+        background: rgba(255, 59, 28, 0.075);
+        text-shadow: 0 0 10px rgba(255, 59, 28, 0.72), 0 0 34px rgba(255, 59, 28, 0.36);
+        transform: translateY(-1px);
+      }
+
+      .code-fragment:nth-child(1) { top: 10%; left: 42%; }
+      .code-fragment:nth-child(2) { top: 16%; left: 66%; }
+      .code-fragment:nth-child(3) { top: 22%; left: 53%; }
+      .code-fragment:nth-child(4) { top: 29%; left: 78%; }
+      .code-fragment:nth-child(5) { top: 38%; left: 47%; }
+      .code-fragment:nth-child(6) { top: 46%; left: 69%; }
+      .code-fragment:nth-child(7) { top: 55%; left: 39%; }
+      .code-fragment:nth-child(8) { top: 62%; left: 59%; }
+      .code-fragment:nth-child(9) { top: 72%; left: 73%; }
+      .code-fragment:nth-child(10) { top: 80%; left: 49%; }
+      .code-fragment:nth-child(11) { top: 34%; left: 31%; }
+      .code-fragment:nth-child(12) { top: 68%; left: 27%; }
+
       .hero-copy {
         display: grid;
         gap: 26px;
+        position: relative;
+        z-index: 2;
+        pointer-events: none;
       }
 
       h1,
@@ -231,6 +293,7 @@
         display: flex;
         flex-wrap: wrap;
         gap: 11px;
+        pointer-events: auto;
       }
 
       .button svg,
@@ -273,7 +336,9 @@
 
       .product-stage {
         position: relative;
+        z-index: 2;
         min-height: 620px;
+        pointer-events: none;
       }
 
       .orbit-line {
@@ -1014,6 +1079,19 @@
           padding-top: 42px;
         }
 
+        .function-field {
+          opacity: 0.42;
+          mask-image: linear-gradient(180deg, black, transparent 54%);
+        }
+
+        .code-fragment {
+          font-size: 10px;
+        }
+
+        .code-fragment:nth-child(n + 7) {
+          display: none;
+        }
+
         .hero-actions,
         .cta-actions {
           display: grid;
@@ -1107,6 +1185,20 @@
 
     <main>
       <section class="shell hero" id="top">
+        <div class="function-field" aria-hidden="true">
+          <span class="code-fragment">create_wallet(@handle)</span>
+          <span class="code-fragment">public fun send_usdc(amount, recipient)</span>
+          <span class="code-fragment">run_agent_action("swap EURC to USDC")</span>
+          <span class="code-fragment">bridge_arc_to_base(usdc)</span>
+          <span class="code-fragment">mcp.tools.call("get_balance")</span>
+          <span class="code-fragment">quote_arc_perp_position(BTC, long)</span>
+          <span class="code-fragment">sync_circle_balances()</span>
+          <span class="code-fragment">emit Receipt { txHash, rail, status }</span>
+          <span class="code-fragment">watch_x_post("@bunos pay $10")</span>
+          <span class="code-fragment">settle_on_arc(position_id)</span>
+          <span class="code-fragment">sign_with_user_wallet()</span>
+          <span class="code-fragment">policy.check(limit, route)</span>
+        </div>
         <div class="hero-copy">
           <h1>Money you can talk to.</h1>
           <p>Connect an X handle, get a Circle wallet, then ask bunOS to send USDC, swap tokens, bridge rails, automate tasks, and trade testnet perps on Arc.</p>
