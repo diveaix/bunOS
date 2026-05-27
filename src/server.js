@@ -883,6 +883,7 @@ async function serveStatic(pathname, res) {
   const routeAliases = {
     "/terminal": "/terminal.html",
     "/mcp-guide": "/mcp.html",
+    "/api-keys": "/api-keys.html",
     "/dashboard": "/index.html",
     "/wallet": "/index.html"
   };

@@ -79,6 +79,7 @@ await writeFile(join(outputDir, "vercel.json"), `${JSON.stringify({
     { src: "/messages", dest: `${backendUrl}/messages` },
     { src: "/x/(.*)", dest: `${backendUrl}/x/$1` },
     { src: "/defi/(.*)", dest: `${backendUrl}/defi/$1` },
+    { src: "/api-keys", dest: "/api-keys.html" },
     { src: "/terminal", dest: "/terminal.html" },
     { src: "/wallet", dest: "/wallet.html" },
     { src: "/dashboard", dest: "/wallet.html" },

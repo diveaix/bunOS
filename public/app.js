@@ -11,8 +11,6 @@ const state = {
   payments: [],
   approvals: [],
   defiActions: [],
-  apiKeys: [],
-  lastCreatedApiKey: null,
   claims: [],
   funding: [],
   bridges: [],
@@ -49,10 +47,6 @@ const els = {
   railBalances: document.querySelector("#railBalances"),
   activityList: document.querySelector("#activityList"),
   toast: document.querySelector("#toast"),
-  createApiKey: document.querySelector("#createApiKey"),
-  newApiKeyPanel: document.querySelector("#newApiKeyPanel"),
-  apiKeyList: document.querySelector("#apiKeyList"),
-  mcpConfigSnippet: document.querySelector("#mcpConfigSnippet"),
   openFund: document.querySelector("#openFund"),
   openSend: document.querySelector("#openSend"),
   openReceive: document.querySelector("#openReceive"),
@@ -95,16 +89,6 @@ els.railSelect?.addEventListener("change", () => {
   state.selectedRail = els.railSelect.value;
   localStorage.setItem("arcpay:rail", state.selectedRail);
   render();
-});
-
-els.createApiKey?.addEventListener("click", async () => {
-  const result = await post("/api/api-keys", {
-    name: `MCP key ${new Date().toLocaleDateString()}`
-  });
-  state.lastCreatedApiKey = result.secret;
-  state.apiKeys = [result.apiKey, ...state.apiKeys.filter((key) => key.id !== result.apiKey.id)];
-  notify("MCP API key created");
-  renderApiKeys();
 });
 
 els.createWalletForm?.addEventListener("submit", async (event) => {
@@ -238,12 +222,6 @@ async function refresh() {
   state.funding = ledger.funding || [];
   state.bridges = ledger.bridges || [];
   state.events = ledger.events;
-  if (state.session?.handle) {
-    state.apiKeys = (await fetchJson("/api/api-keys")).apiKeys || [];
-  } else {
-    state.apiKeys = [];
-    state.lastCreatedApiKey = null;
-  }
 
   const loggedOut = localStorage.getItem("arcpay:loggedOut") === "1" && !explicitHandle && !state.session?.handle;
   const realMode = state.config.providerMode === "real";
@@ -304,7 +282,6 @@ function render() {
   renderWallet(wallet);
   renderRailBalances(wallet);
   renderActivity(wallet);
-  renderApiKeys();
 }
 
 function renderAccountSwitcher() {
@@ -398,74 +375,6 @@ function renderActivity(wallet) {
     ? `${actions}${payments}`
     : empty("No activity yet", "Bridge, swap, or send USDC to see live activity here.");
   bindPaymentButtons();
-}
-
-function renderApiKeys() {
-  if (!els.apiKeyList) return;
-
-  const origin = location.origin;
-  const config = {
-    mcpServers: {
-      bunos: {
-        url: `${origin}/mcp`,
-        headers: {
-          Authorization: "Bearer bunos_mcp_..."
-        }
-      }
-    }
-  };
-
-  if (els.mcpConfigSnippet) {
-    els.mcpConfigSnippet.textContent = JSON.stringify(config, null, 2);
-  }
-
-  if (els.newApiKeyPanel) {
-    els.newApiKeyPanel.classList.toggle("is-hidden", !state.lastCreatedApiKey);
-    els.newApiKeyPanel.innerHTML = state.lastCreatedApiKey ? `
-      <span class="panel-kicker">Copy once</span>
-      <strong>Your new MCP API key</strong>
-      <code>${esc(state.lastCreatedApiKey)}</code>
-      <button type="button" class="secondary-action compact-button" data-copy-secret>Copy key</button>
-    ` : "";
-  }
-
-  if (!state.session?.handle) {
-    els.apiKeyList.innerHTML = empty("Sign in first", "Connect X to create an MCP API key for your wallet.");
-    bindApiKeyButtons();
-    return;
-  }
-
-  els.apiKeyList.innerHTML = state.apiKeys.length
-    ? state.apiKeys.map((key) => `
-      <div class="api-key-item">
-        <div>
-          <strong>${esc(key.name)}</strong>
-          <span>${esc(key.prefix)}...${esc(key.last4)} · created ${esc(formatDate(key.createdAt))}</span>
-          <small>${key.lastUsedAt ? `Last used ${esc(formatDate(key.lastUsedAt))}` : "Not used yet"}</small>
-        </div>
-        <button type="button" class="secondary-action compact-button" data-revoke-key="${esc(key.id)}">Revoke</button>
-      </div>
-    `).join("")
-    : empty("No keys yet", "Create a key to connect this wallet to Claude, Cursor, or any MCP client.");
-
-  bindApiKeyButtons();
-}
-
-function bindApiKeyButtons() {
-  document.querySelector("[data-copy-secret]")?.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(state.lastCreatedApiKey || "");
-    notify("API key copied");
-  });
-
-  document.querySelectorAll("[data-revoke-key]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const keyId = button.dataset.revokeKey;
-      await del(`/api/api-keys/${encodeURIComponent(keyId)}`);
-      state.apiKeys = state.apiKeys.filter((key) => key.id !== keyId);
-      notify("API key revoked");
-      renderApiKeys();
-    });
-  });
 }
 
 function renderPaymentItem(payment, handle) {
@@ -589,13 +498,6 @@ async function post(path, payload) {
   });
   const data = await response.json();
   if (!response.ok || data.ok === false) throw new Error(data.error || data.event?.reason || data.nextAction || "Request failed");
-  return data;
-}
-
-async function del(path) {
-  const response = await fetch(path, { method: "DELETE" });
-  const data = await response.json();
-  if (!response.ok || data.ok === false) throw new Error(data.error || "Request failed");
   return data;
 }
 
