@@ -11,6 +11,7 @@ const els = {
   newApiKeyPanel: document.querySelector("#newApiKeyPanel"),
   apiKeyList: document.querySelector("#apiKeyList"),
   mcpConfigSnippet: document.querySelector("#mcpConfigSnippet"),
+  mcpUrlPrompt: document.querySelector("#mcpUrlPrompt"),
   logoutButton: document.querySelector("#logoutButton"),
   toast: document.querySelector("#toast")
 };
@@ -61,10 +62,11 @@ function render() {
 }
 
 function renderConfigSnippet() {
+  const mcpUrl = `${location.origin}/mcp`;
   const config = {
     mcpServers: {
       bunos: {
-        url: `${location.origin}/mcp`,
+        url: mcpUrl,
         headers: {
           Authorization: "Bearer bunos_mcp_..."
         }
@@ -72,6 +74,13 @@ function renderConfigSnippet() {
     }
   };
   els.mcpConfigSnippet.textContent = JSON.stringify(config, null, 2);
+  els.mcpUrlPrompt.textContent = [
+    "Use this MCP URL in any MCP client:",
+    mcpUrl,
+    "",
+    "Authorization header:",
+    "Bearer bunos_mcp_..."
+  ].join("\n");
 }
 
 function renderNewKey() {
