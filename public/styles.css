@@ -200,11 +200,26 @@ svg {
   opacity: 0.5;
 }
 
+.terminal-nav-glyph {
+  width: 18px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  opacity: 0.6;
+}
+
 .nav-link.active svg {
   opacity: 1;
 }
 
-.nav-link:hover svg {
+.nav-link.active .terminal-nav-glyph,
+.nav-link:hover svg,
+.nav-link:hover .terminal-nav-glyph {
   opacity: 1;
 }
 
