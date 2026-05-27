@@ -44,9 +44,21 @@ await writeFile(join(outputDir, "vercel.json"), `${JSON.stringify({
   trailingSlash: false,
   redirects: [
     {
+      source: "/",
+      has: [{ type: "host", value: "vercel-frontend-rho-woad.vercel.app" }],
+      destination: "https://bunos.xyz",
+      permanent: true
+    },
+    {
       source: "/:path*",
       has: [{ type: "host", value: "vercel-frontend-rho-woad.vercel.app" }],
       destination: "https://bunos.xyz/:path*",
+      permanent: true
+    },
+    {
+      source: "/",
+      has: [{ type: "host", value: "www.bunos.xyz" }],
+      destination: "https://bunos.xyz",
       permanent: true
     },
     {
