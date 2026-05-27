@@ -389,6 +389,26 @@ svg {
 
 .connect-card.is-hidden { display: none; }
 
+.connect-provider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.x-logo-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #f7f3f0;
+  color: #080509;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+}
+
 .connect-inline-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

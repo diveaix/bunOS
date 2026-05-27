@@ -525,7 +525,7 @@ export const server = http.createServer(async (req, res) => {
       return jsonPersisted(res, result, 200, sessionCookieHeader(result.session));
     }
 
-    if (req.method === "GET" && url.pathname === "/auth/x/callback") {
+    if (req.method === "GET" && ["/auth/x/callback", "/wallet/auth/x/callback"].includes(url.pathname)) {
       let result;
       try {
         result = await completeXOAuth({

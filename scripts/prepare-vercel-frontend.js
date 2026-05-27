@@ -44,6 +44,7 @@ await writeFile(join(outputDir, "vercel.json"), `${JSON.stringify({
   trailingSlash: false,
   routes: [
     { src: "/api/(.*)", dest: `${backendUrl}/api/$1` },
+    { src: "/wallet/auth/(.*)", dest: `${backendUrl}/wallet/auth/$1` },
     { src: "/auth/(.*)", dest: `${backendUrl}/auth/$1` },
     { src: "/mcp", dest: `${backendUrl}/mcp` },
     { src: "/mcp/sse", dest: `${backendUrl}/mcp/sse` },
