@@ -324,10 +324,10 @@ function renderWallet(wallet) {
   const hasWallet = Boolean(wallet?.onboarded);
   const chainWallet = walletForRail(wallet, state.selectedRail);
   const address = chainWallet?.address || wallet?.walletAddress || "Connect X";
-  const railBalance = railTokenTotal(wallet, state.selectedRail);
+  const totalBalance = Number(wallet?.balance ?? railTokenTotal(wallet, state.selectedRail));
 
   els.walletAddress.textContent = compactAddress(address);
-  els.walletBalance.textContent = money(railBalance);
+  els.walletBalance.textContent = money(totalBalance);
   els.createPanel.classList.toggle("is-hidden", hasWallet);
   if (els.receiveHandle) els.receiveHandle.textContent = wallet?.handle || state.currentHandle || "Connect X";
   if (els.receiveAddress) els.receiveAddress.textContent = address;

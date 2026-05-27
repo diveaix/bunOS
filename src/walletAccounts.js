@@ -1,4 +1,5 @@
 import { ledger, users } from "./fixtures.js";
+import { createPublicClient, erc20Abi, formatUnits, http } from "viem";
 import {
   getCircleWalletTokenBalances,
   provisionCircleWallets,
@@ -206,8 +207,12 @@ export async function syncWalletBalances({ handle } = {}) {
   for (const wallet of enabledChainWallets(user)) {
     if (!wallet.id || !wallet.rail) continue;
     const rail = getSettlementRail(wallet.rail);
-    const tokenBalances = await getCircleWalletTokenBalances({ walletId: wallet.id });
-    const normalizedTokens = normalizeTokenBalances(tokenBalances, rail);
+    const circleTokenBalances = await getCircleWalletTokenBalances({ walletId: wallet.id }).catch(() => []);
+    const onchainTokenBalances = await getOnchainWalletTokenBalances({ address: wallet.address, rail });
+    const normalizedTokens = normalizeTokenBalances([
+      ...circleTokenBalances,
+      ...onchainTokenBalances
+    ], rail);
     const usdc = findTokenBalance(normalizedTokens, rail, "USDC");
     const amount = usdc ? Number(usdc.amount || 0) : 0;
     user.balances[rail.id] = roundUsd(amount);
@@ -551,6 +556,104 @@ function normalizeCircleTokenBalance(balance, rail) {
     valueUsd: stableUsdValue(symbol, amount),
     isPrimary: symbol === "USDC" && tokenMatchesRail(tokenAddress, rail.usdcAddress)
   };
+}
+
+async function getOnchainWalletTokenBalances({ address, rail }) {
+  if (!address || !rail?.chainId) return [];
+
+  const client = createPublicClient({
+    transport: http(rail.rpcUrl || defaultRpcUrl(rail))
+  });
+
+  const balances = [];
+  if (rail.nativeCurrency?.symbol) {
+    const native = await readNativeBalance({ client, address, rail }).catch(() => null);
+    if (native) balances.push(native);
+  }
+
+  const tokenChecks = knownOnchainTokens(rail);
+  for (const token of tokenChecks) {
+    const balance = await readErc20Balance({ client, address, token }).catch(() => null);
+    if (balance) balances.push(balance);
+  }
+
+  return balances;
+}
+
+async function readNativeBalance({ client, address, rail }) {
+  const raw = await client.getBalance({ address });
+  const amount = roundUsd(Number(formatUnits(raw, rail.nativeCurrency.decimals || 18)));
+  if (amount <= 0) return null;
+
+  const symbol = normalizeTokenSymbol(rail.nativeCurrency.symbol);
+  return {
+    symbol,
+    amount,
+    displayAmount: String(amount),
+    tokenAddress: null,
+    name: rail.nativeCurrency.name || symbol,
+    standard: "native",
+    decimals: rail.nativeCurrency.decimals || 18,
+    valueUsd: stableUsdValue(symbol, amount),
+    isPrimary: symbol === "USDC"
+  };
+}
+
+async function readErc20Balance({ client, address, token }) {
+  const [raw, decimals] = await Promise.all([
+    client.readContract({
+      address: token.address,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [address]
+    }),
+    readErc20Decimals({ client, token })
+  ]);
+  const amount = roundUsd(Number(formatUnits(raw, decimals)));
+  if (amount <= 0) return null;
+
+  return {
+    symbol: token.symbol,
+    amount,
+    displayAmount: String(amount),
+    tokenAddress: token.address,
+    name: token.name || token.symbol,
+    standard: "ERC20",
+    decimals,
+    valueUsd: stableUsdValue(token.symbol, amount),
+    isPrimary: token.symbol === "USDC"
+  };
+}
+
+async function readErc20Decimals({ client, token }) {
+  if (token.decimals !== undefined) return token.decimals;
+  return await client.readContract({
+    address: token.address,
+    abi: erc20Abi,
+    functionName: "decimals"
+  });
+}
+
+function knownOnchainTokens(rail) {
+  return [
+    rail.usdcAddress && {
+      symbol: "USDC",
+      name: "USD Coin",
+      address: rail.usdcAddress,
+      decimals: 6
+    },
+    rail.cirbtcAddress && {
+      symbol: "cirBTC",
+      name: "Circle Bitcoin",
+      address: rail.cirbtcAddress,
+      decimals: 8
+    }
+  ].filter(Boolean);
+}
+
+function defaultRpcUrl(rail) {
+  if (rail.id === "base-sepolia") return "https://sepolia.base.org";
+  return config.arc.rpcUrl;
 }
 
 function normalizeStoredTokenBalance(token) {
