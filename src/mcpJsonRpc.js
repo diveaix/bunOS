@@ -1,6 +1,7 @@
 import { callMcpTool, mcpTools } from "./mcp.js";
+import { applyMcpApiKeyContext } from "./mcpApiKeys.js";
 
-export async function handleMcpJsonRpc(body) {
+export async function handleMcpJsonRpc(body, context = {}) {
   const id = body.id ?? null;
 
   if (body.method === "initialize") {
@@ -44,7 +45,7 @@ export async function handleMcpJsonRpc(body) {
 
   if (body.method === "tools/call") {
     const { name, arguments: args = {} } = body.params || {};
-    const result = await callMcpTool(name, args);
+    const result = await callMcpTool(name, applyMcpApiKeyContext(name, args, context));
 
     return {
       jsonrpc: "2.0",
@@ -81,4 +82,3 @@ export function toMcpError({ id = null, error }) {
     }
   };
 }
-

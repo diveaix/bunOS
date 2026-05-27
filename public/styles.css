@@ -537,6 +537,7 @@ select {
 /* ─── Lists ─────────────────────────────────────── */
 .asset-list,
 .activity-list,
+.api-key-list,
 .market-list,
 .protocol-list {
   display: grid;
@@ -581,6 +582,77 @@ button.activity-item {
 }
 
 /* ─── Asset / Activity Items ────────────────────── */
+.api-key-config {
+  margin-bottom: 10px;
+}
+
+.api-key-config pre {
+  margin: 12px 0 0;
+  padding: 14px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.api-key-secret {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: rgba(251, 51, 21, 0.08);
+}
+
+.api-key-secret.is-hidden {
+  display: none;
+}
+
+.api-key-secret strong {
+  color: var(--accent-light);
+}
+
+.api-key-secret code {
+  padding: 12px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.api-key-item {
+  min-height: 76px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.api-key-item strong,
+.api-key-item span,
+.api-key-item small {
+  display: block;
+}
+
+.api-key-item span,
+.api-key-item small {
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
 .asset-icon,
 .act-icon {
   display: grid;

@@ -54,6 +54,13 @@ import {
   getArcPerpsStatus,
   quoteArcPerpPosition
 } from "../src/arcPerpsEngine.js";
+import {
+  applyMcpApiKeyContext,
+  authenticateMcpApiKey,
+  createMcpApiKey,
+  listMcpApiKeys,
+  revokeMcpApiKey
+} from "../src/mcpApiKeys.js";
 
 config.providerMode = "mock";
 config.transferProvider = "mock";
@@ -1203,6 +1210,33 @@ const tests = [
       assert.equal(unclear.ok, false);
       assert.equal(unclear.status, "clarification_required");
       assert.equal(unclear.signer.backendSignerAllowed, false);
+    }
+  ],
+  [
+    "binds MCP API keys to the user's own wallet handle",
+    async () => {
+      users.get("@sara").mcpApiKeys = [];
+      const created = createMcpApiKey({ handle: "@sara", name: "Cursor" });
+      assert.equal(created.ok, true);
+      assert.ok(created.secret.startsWith("bunos_mcp_"));
+      assert.equal(created.apiKey.name, "Cursor");
+      assert.equal(listMcpApiKeys("@sara").length, 1);
+
+      const auth = authenticateMcpApiKey(`Bearer ${created.secret}`);
+      assert.equal(auth.handle, "@sara");
+      assert.equal(listMcpApiKeys("@sara")[0].lastUsedAt !== null, true);
+
+      const scoped = applyMcpApiKeyContext("send_usdc", {
+        senderHandle: "@bob",
+        recipientHandle: "@alice",
+        amount: 1
+      }, auth);
+      assert.equal(scoped.senderHandle, "@sara");
+      assert.equal(scoped.handle, "@sara");
+
+      const revoked = revokeMcpApiKey({ handle: "@sara", keyId: created.apiKey.id });
+      assert.equal(revoked.ok, true);
+      assert.equal(authenticateMcpApiKey(created.secret), null);
     }
   ]
 ];

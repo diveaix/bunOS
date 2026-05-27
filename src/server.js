@@ -94,6 +94,13 @@ import {
   rankSocialTraders
 } from "./socialTradingAgent.js";
 import {
+  applyMcpApiKeyContext,
+  authenticateMcpApiKey,
+  createMcpApiKey,
+  listMcpApiKeys,
+  revokeMcpApiKey
+} from "./mcpApiKeys.js";
+import {
   assessLiquidationRisk,
   listPerpIntelligence,
   listPerpProposals,
@@ -199,6 +206,30 @@ export const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/session") {
       const session = getSession(readCookie(req, "arcpay_session"));
       return json(res, { ok: true, session });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/api-keys") {
+      const session = requireSession(req);
+      return json(res, { ok: true, apiKeys: listMcpApiKeys(session.handle) });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/api-keys") {
+      const session = requireSession(req);
+      const body = await readJson(req);
+      return jsonPersisted(res, createMcpApiKey({
+        handle: session.handle,
+        name: body.name || "MCP key",
+        scopes: body.scopes || ["mcp:tools"]
+      }));
+    }
+
+    const apiKeyMatch = url.pathname.match(/^\/api\/api-keys\/([^/]+)$/);
+    if (req.method === "DELETE" && apiKeyMatch) {
+      const session = requireSession(req);
+      return jsonPersisted(res, revokeMcpApiKey({
+        handle: session.handle,
+        keyId: apiKeyMatch[1]
+      }));
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
@@ -456,11 +487,11 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/mcp") {
       const body = await readJson(req);
-      return jsonPersisted(res, await handleMcpHttpPayload(body), 200, corsHeaders());
+      return jsonPersisted(res, await handleMcpHttpPayload(body, getMcpAuthContext(req)), 200, corsHeaders());
     }
 
     if (req.method === "GET" && (url.pathname === "/sse" || url.pathname === "/mcp/sse")) {
-      return openMcpSse(req, res, url.pathname === "/mcp/sse" ? "/mcp/messages" : "/messages");
+      return openMcpSse(req, res, url.pathname === "/mcp/sse" ? "/mcp/messages" : "/messages", getMcpAuthContext(req));
     }
 
     if (req.method === "POST" && (url.pathname === "/messages" || url.pathname === "/mcp/messages")) {
@@ -469,7 +500,11 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/mcp/call") {
       const body = await readJson(req);
-      return jsonPersisted(res, await callMcpTool(body.tool, body.arguments || {}));
+      const context = getMcpAuthContext(req);
+      return jsonPersisted(res, await callMcpTool(
+        body.tool,
+        applyMcpApiKeyContext(body.tool, body.arguments || {}, context)
+      ));
     }
 
     const publicXCommandMatch = url.pathname.match(/^\/x\/commands\/([^/]+)$/);
@@ -1179,20 +1214,20 @@ async function jsonPersisted(res, payload, status = 200, headers = {}) {
   return json(res, payload, status, headers);
 }
 
-async function handleMcpHttpPayload(body) {
+async function handleMcpHttpPayload(body, context = {}) {
   if (Array.isArray(body)) {
     const responses = [];
     for (const item of body) {
-      const response = await handleMcpJsonRpc(item);
+      const response = await handleMcpJsonRpc(item, context);
       if (response) responses.push(response);
     }
     return responses;
   }
 
-  return await handleMcpJsonRpc(body);
+  return await handleMcpJsonRpc(body, context);
 }
 
-function openMcpSse(req, res, messagePath) {
+function openMcpSse(req, res, messagePath, context = {}) {
   const sessionId = randomUUID();
   const endpoint = `${messagePath}?sessionId=${encodeURIComponent(sessionId)}`;
   res.writeHead(200, {
@@ -1209,7 +1244,7 @@ function openMcpSse(req, res, messagePath) {
     if (!res.destroyed) res.write(": heartbeat\n\n");
   }, 25_000);
 
-  sseClients.set(sessionId, { res, heartbeat });
+  sseClients.set(sessionId, { res, heartbeat, context });
   req.on("close", () => closeMcpSseSession(sessionId));
 }
 
@@ -1226,7 +1261,7 @@ async function handleMcpSseMessage(req, res, url) {
   let response;
   try {
     const body = await readJson(req);
-    response = await handleMcpHttpPayload(body);
+    response = await handleMcpHttpPayload(body, client.context || {});
     await persistStore();
   } catch (error) {
     response = toMcpError({ id: null, error });
@@ -1254,8 +1289,23 @@ function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type, mcp-session-id"
+    "access-control-allow-headers": "authorization, content-type, mcp-session-id"
   };
+}
+
+function getMcpAuthContext(req) {
+  const auth = authenticateMcpApiKey(req.headers.authorization || "");
+  return auth ? { handle: auth.handle, keyId: auth.keyId, scopes: auth.scopes } : {};
+}
+
+function requireSession(req) {
+  const session = getSession(readCookie(req, "arcpay_session"));
+  if (!session?.handle) {
+    const error = new Error("Sign in with X before managing MCP API keys.");
+    error.status = 401;
+    throw error;
+  }
+  return session;
 }
 
 function notFound(res) {
