@@ -24,7 +24,6 @@ const els = {
   railSelect: document.querySelector("#railSelect"),
   createPanel: document.querySelector("#createPanel"),
   createWalletForm: document.querySelector("#createWalletForm"),
-  createHandleInput: document.querySelector("#createHandleInput"),
   connectCopy: document.querySelector("#connectCopy"),
   walletStatus: document.querySelector("#walletStatus"),
   walletBalance: document.querySelector("#walletBalance"),
@@ -94,15 +93,14 @@ els.railSelect?.addEventListener("change", () => {
 
 els.createWalletForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const handle = normalizeHandle(form.get("handle") || state.currentHandle);
 
   if (state.config.x?.authMode === "real") {
-    const started = await post("/api/auth/x/start", { returnTo: "/" });
+    const started = await post("/api/auth/x/start", { returnTo: "/wallet" });
     location.href = started.authUrl;
     return;
   }
 
+  const handle = normalizeHandle(state.currentHandle || "@demo");
   await post("/api/auth/x/mock", { handle });
   state.currentHandle = handle;
   localStorage.setItem("arcpay:handle", handle);

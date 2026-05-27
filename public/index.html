@@ -93,10 +93,12 @@
               <span class="panel-kicker">X account</span>
             </div>
             <strong>Connect X to create Circle wallets.</strong>
-            <p id="connectCopy">Connect an X handle to provision Circle wallets. Real X OAuth turns on when the app is on HTTPS.</p>
-            <form id="createWalletForm" class="connect-inline-form">
-              <input name="handle" id="createHandleInput" placeholder="@handle" autocomplete="off" />
-              <button type="submit">Connect</button>
+            <p id="connectCopy">Connect with real X OAuth. Circle wallets are provisioned after authorization.</p>
+            <form id="createWalletForm" class="connect-signin-form">
+              <button type="submit" class="x-signin-button">
+                <span class="x-signin-mark" aria-hidden="true">X</span>
+                Sign in with X
+              </button>
             </form>
           </div>
         </section>
