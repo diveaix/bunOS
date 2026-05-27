@@ -15,6 +15,13 @@ await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 await cp(join(root, "public"), outputDir, { recursive: true });
 
+const walletPath = join(outputDir, "index.html");
+const landingPath = join(outputDir, "landing.html");
+if (existsSync(walletPath) && existsSync(landingPath)) {
+  await copyFile(walletPath, join(outputDir, "wallet.html"));
+  await copyFile(landingPath, walletPath);
+}
+
 const mcpGuidePath = join(outputDir, "mcp.html");
 if (existsSync(mcpGuidePath)) {
   await copyFile(mcpGuidePath, join(outputDir, "mcp-guide.html"));
@@ -46,6 +53,8 @@ await writeFile(join(outputDir, "vercel.json"), `${JSON.stringify({
     { src: "/x/(.*)", dest: `${backendUrl}/x/$1` },
     { src: "/defi/(.*)", dest: `${backendUrl}/defi/$1` },
     { src: "/terminal", dest: "/terminal.html" },
+    { src: "/wallet", dest: "/wallet.html" },
+    { src: "/dashboard", dest: "/wallet.html" },
     { handle: "filesystem" }
   ]
 }, null, 2)}\n`);
@@ -56,6 +65,15 @@ await writeFile(indexPath, index.replace(
   "</head>",
   `  <meta name="backend-origin" content="${escapeHtml(backendUrl)}" />\n  </head>`
 ));
+
+const walletOutputPath = join(outputDir, "wallet.html");
+if (existsSync(walletOutputPath)) {
+  const wallet = await readFile(walletOutputPath, "utf8");
+  await writeFile(walletOutputPath, wallet.replace(
+    "</head>",
+    `  <meta name="backend-origin" content="${escapeHtml(backendUrl)}" />\n  </head>`
+  ));
+}
 
 console.log(`Prepared Vercel frontend in ${outputDir}`);
 console.log(`Backend origin: ${backendUrl}`);

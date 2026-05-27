@@ -847,9 +847,11 @@ async function runBackgroundWorkerTick() {
 async function serveStatic(pathname, res) {
   const routeAliases = {
     "/terminal": "/terminal.html",
-    "/mcp-guide": "/mcp.html"
+    "/mcp-guide": "/mcp.html",
+    "/dashboard": "/index.html",
+    "/wallet": "/index.html"
   };
-  const safePath = routeAliases[pathname] || (pathname === "/" ? "/index.html" : pathname);
+  const safePath = routeAliases[pathname] || (pathname === "/" ? "/landing.html" : pathname);
   const filePath = join(root, "public", safePath);
   let content;
 
