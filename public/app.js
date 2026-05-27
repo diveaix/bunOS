@@ -230,6 +230,8 @@ async function refresh() {
   const preferredHandle = chooseDefaultHandle();
   if (loggedOut) {
     state.currentHandle = "";
+  } else if (realMode && !sessionHandle && !explicitHandle) {
+    state.currentHandle = "";
   } else if (realMode && state.currentHandle && !explicitHandle && !currentIsSession && !isLiveWallet(currentWallet())) {
     state.currentHandle = preferredHandle;
   } else if (!state.currentHandle || !state.wallets.some((wallet) => wallet.handle === state.currentHandle)) {
@@ -432,9 +434,11 @@ function currentWallet() {
 function chooseDefaultHandle() {
   const sessionHandle = normalizeHandle(state.session?.handle || "");
   if (sessionHandle && sessionHandle !== "@") return sessionHandle;
+  if (state.config.providerMode === "real") {
+    return explicitHandle ? state.currentHandle : "";
+  }
   const liveWallet = state.wallets.find(isLiveWallet);
   if (liveWallet) return liveWallet.handle;
-  if (state.config.providerMode === "real") return "";
   return state.wallets.find((wallet) => wallet.onboarded)?.handle || state.wallets[0]?.handle || "@sara";
 }
 
