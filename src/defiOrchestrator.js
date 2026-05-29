@@ -106,14 +106,19 @@ export async function quoteDefiRoute(input) {
   recordEvent("defi_action_quoted", record);
 
   if (!policy.requiresConfirmation && ["bridge", "swap"].includes(record.type)) {
-    const execution = await autoExecuteDefiAction(record);
+    const execution = input.fast
+      ? queueDefiActionExecution(record, { mode: "queued_fast" })
+      : await autoExecuteDefiAction(record);
     return {
       ok: true,
       action: record,
       policy,
       quote,
       execution,
-      nextAction: execution.result?.execution?.status === "submitted" || record.status === "submitted"
+      fast: Boolean(input.fast),
+      nextAction: input.fast
+        ? "execution_queued"
+        : execution.result?.execution?.status === "submitted" || record.status === "submitted"
         ? "reconcile_defi_action"
         : "display_receipt"
     };
@@ -133,13 +138,28 @@ async function autoExecuteDefiAction(action) {
   action.confirmedAt = new Date().toISOString();
   action.nextAction = "execute_defi_action";
   recordEvent("defi_action_auto_confirmed", action);
+  const queued = queueDefiActionExecution(action);
+  const job = queued.job;
+  return await runJob({ jobId: job.id });
+}
+
+function queueDefiActionExecution(action, { mode = "queued" } = {}) {
+  action.status = "confirmed";
+  action.confirmedAt ||= new Date().toISOString();
+  action.nextAction = "execute_defi_action";
+  recordEvent("defi_action_execution_queued", action);
   const job = enqueueJob({
     type: "execute_defi_action",
     payload: { actionId: action.id },
     idempotencyKey: `execute_defi_action:${action.id}`
   });
   action.executionJobId = job.id;
-  return await runJob({ jobId: job.id });
+  return {
+    ok: true,
+    mode,
+    job,
+    nextAction: "run_execution_worker"
+  };
 }
 
 export async function searchPredictionMarkets({ handle = "@sara", query, limit } = {}) {

@@ -39,6 +39,13 @@ import {
   runDueAutomations,
   updateAutomation
 } from "./automations.js";
+import {
+  awardAirdrop,
+  createAirdrop,
+  getAirdropReceipt,
+  listAirdrops
+} from "./airdrops.js";
+import { listArcTradingPrimitives } from "./arcTradingPrimitives.js";
 import { ledger } from "./fixtures.js";
 import { nextEventId } from "./ids.js";
 import {
@@ -82,11 +89,13 @@ import {
   postXCommandReply
 } from "./xReplyPoster.js";
 import {
+  runXBotCommand,
+  runXBotWebhookDelivery
+} from "./xBotLoop.js";
+import {
   getXWebhookStatus,
   getXCommandReceipt,
   listXCommands,
-  processXWebhookDelivery,
-  processXPaymentEvent,
 } from "./xPayments.js";
 import {
   listCopyTradeProposals,
@@ -311,6 +320,23 @@ export const server = http.createServer(async (req, res) => {
       }));
     }
 
+    if (req.method === "GET" && url.pathname === "/api/airdrops") {
+      return json(res, listAirdrops({
+        handle: url.searchParams.get("handle"),
+        status: url.searchParams.get("status"),
+        limit: url.searchParams.get("limit") || 50
+      }));
+    }
+
+    const airdropApiMatch = url.pathname.match(/^\/api\/airdrops\/([^/]+)$/);
+    if (req.method === "GET" && airdropApiMatch) {
+      return json(res, getAirdropReceipt({
+        airdropId: airdropApiMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http"
+      }));
+    }
+
     if (req.method === "GET" && url.pathname === "/api/x/commands") {
       return json(res, listXCommands({
         handle: url.searchParams.get("handle"),
@@ -349,6 +375,56 @@ export const server = http.createServer(async (req, res) => {
         publicUrl: body.publicUrl || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers.host}/x/commands/${encodeURIComponent(xCommandReplyMatch[1])}`,
         force: Boolean(body.force)
       }));
+    }
+
+    const xCommandApproveApiMatch = url.pathname.match(/^\/api\/x\/commands\/([^/]+)\/approve$/);
+    if (req.method === "POST" && xCommandApproveApiMatch) {
+      const body = await readJson(req);
+      const receipt = getXCommandReceipt({
+        commandId: xCommandApproveApiMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http"
+      }).receipt;
+      const approval = receipt.related.approval;
+      if (!approval) {
+        return json(res, { ok: false, error: "This X command does not require approval." }, 409);
+      }
+      const confirmed = await confirmAction({
+        approvalId: approval.id,
+        handle: body.handle || approval.handle
+      });
+      const txHash = confirmed.result?.execution?.txHash
+        || confirmed.result?.payment?.transfer?.txHash
+        || confirmed.result?.action?.execution?.txHash
+        || null;
+      receipt.command.approvalResult = {
+        status: confirmed.approval.status,
+        approvalId: approval.id,
+        approvedAt: confirmed.approval.completedAt || new Date().toISOString(),
+        txHash,
+        resultStatus: confirmed.result?.execution?.status
+          || confirmed.result?.payment?.status
+          || confirmed.result?.action?.status
+          || "approved"
+      };
+      if (txHash && !receipt.command.resultRefs?.txHash) {
+        receipt.command.resultRefs = {
+          ...(receipt.command.resultRefs || {}),
+          txHash
+        };
+      }
+      const updatedReceipt = getXCommandReceipt({
+        commandId: xCommandApproveApiMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http"
+      }).receipt;
+      return jsonPersisted(res, {
+        ok: true,
+        command: updatedReceipt.command,
+        approval: confirmed.approval,
+        result: confirmed.result,
+        receipt: updatedReceipt
+      });
     }
 
     if (req.method === "GET" && url.pathname === "/api/social/traders") {
@@ -412,6 +488,10 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/defi/tools") {
       return json(res, listDefiTools());
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/arc/trading-primitives") {
+      return json(res, listArcTradingPrimitives());
     }
 
     if (req.method === "GET" && url.pathname === "/api/defi/actions") {
@@ -517,6 +597,16 @@ export const server = http.createServer(async (req, res) => {
       return html(res, renderPublicXCommandReceipt(receipt));
     }
 
+    const publicXCommandApproveMatch = url.pathname.match(/^\/x\/commands\/([^/]+)\/approve$/);
+    if (req.method === "GET" && publicXCommandApproveMatch) {
+      const receipt = getXCommandReceipt({
+        commandId: publicXCommandApproveMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http"
+      }).receipt;
+      return html(res, renderPublicXCommandApproval(receipt));
+    }
+
     const publicDefiActionMatch = url.pathname.match(/^\/defi\/actions\/([^/]+)$/);
     if (req.method === "GET" && publicDefiActionMatch) {
       const receipt = getDefiActionReceipt({
@@ -527,11 +617,38 @@ export const server = http.createServer(async (req, res) => {
       return html(res, renderPublicDefiActionReceipt(receipt));
     }
 
+    const publicAirdropMatch = url.pathname.match(/^\/airdrops\/([^/]+)$/);
+    if (req.method === "GET" && publicAirdropMatch) {
+      const receipt = getAirdropReceipt({
+        airdropId: publicAirdropMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http"
+      }).receipt;
+      return html(res, renderPublicAirdropReceipt(receipt));
+    }
+
     if (req.method === "POST" && url.pathname === "/api/actions/confirm") {
       const body = await readJson(req);
       return jsonPersisted(res, await confirmAction({
         approvalId: body.approvalId,
         handle: body.handle
+      }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/airdrops") {
+      const body = await readJson(req);
+      return jsonPersisted(res, await createAirdrop({
+        ...body,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+      }));
+    }
+
+    const airdropAwardMatch = url.pathname.match(/^\/api\/airdrops\/([^/]+)\/award$/);
+    if (req.method === "POST" && airdropAwardMatch) {
+      const body = await readJson(req);
+      return jsonPersisted(res, await awardAirdrop({
+        airdropId: airdropAwardMatch[1],
+        winnerHandles: body.winnerHandles || body.recipients || []
       }));
     }
 
@@ -705,9 +822,12 @@ export const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/x/webhook") {
       const rawBody = await readBody(req);
       try {
-        return jsonPersisted(res, await processXWebhookDelivery({
+        return jsonPersisted(res, await runXBotWebhookDelivery({
           headers: req.headers,
-          rawBody
+          rawBody,
+          host: req.headers.host,
+          protocol: req.headers["x-forwarded-proto"] || "http",
+          postReply: url.searchParams.get("reply") !== "0"
         }));
       } catch (error) {
         await persistStore();
@@ -734,13 +854,17 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/x/command") {
       const body = await readJson(req);
-      return jsonPersisted(res, await processXPaymentEvent({
+      return jsonPersisted(res, await runXBotCommand({
         actorHandle: body.actorHandle,
         text: body.text,
         postId: body.postId || "demo-post",
-        eventId: body.eventId || body.idempotencyKey || req.headers["idempotency-key"],
+        eventId: body.eventId,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"],
         settlementRail: body.settlementRail,
-        source: "x-command"
+        source: "x-command",
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http",
+        postReply: body.postReply !== false
       }));
     }
 
@@ -880,14 +1004,8 @@ async function runBackgroundWorkerTick() {
 }
 
 async function serveStatic(pathname, res) {
-  const routeAliases = {
-    "/terminal": "/terminal.html",
-    "/mcp-guide": "/mcp.html",
-    "/api-keys": "/api-keys.html",
-    "/dashboard": "/index.html",
-    "/wallet": "/index.html"
-  };
-  const safePath = routeAliases[pathname] || (pathname === "/" ? "/landing.html" : pathname);
+  const spaRoutes = new Set(["/", "/terminal", "/mcp-guide", "/api-keys", "/dashboard", "/wallet"]);
+  const safePath = spaRoutes.has(pathname) ? "/index.html" : pathname;
   const filePath = join(root, "public", safePath);
   let content;
 
@@ -943,14 +1061,19 @@ function renderPublicXCommandReceipt(receipt) {
   const command = receipt.command;
   const related = receipt.related || {};
   const payment = related.payment;
+  const airdrop = related.airdrop;
   const proposal = related.proposal;
   const action = related.defiAction;
   const approval = related.approval;
   const title = `${command.actorHandle} command`;
   const resultStatus = command.result?.status || payment?.status || proposal?.status || action?.status || command.status;
+  const approvalUrl = receipt.approvalUrl;
+  const txHash = command.resultRefs?.txHash || command.approvalResult?.txHash || "none";
   const summary = payment
     ? `${payment.amount} ${payment.asset || "USDC"} to ${payment.recipientHandle || "claim winner"}`
-    : proposal
+    : airdrop
+      ? `${airdrop.amountPerRecipient} ${airdrop.asset} airdrop`
+      : proposal
       ? `${proposal.side} ${proposal.symbol} at ${proposal.leverage}x`
       : action
         ? `${action.type} ${action.amount} ${action.fromToken || "USDC"}`
@@ -995,14 +1118,90 @@ function renderPublicXCommandReceipt(receipt) {
           ${receiptCell("Actor", command.actorHandle)}
           ${receiptCell("Source", command.source)}
           ${receiptCell("Intent", command.intent?.action || "unknown")}
-          ${receiptCell("Settlement", command.settlementRail || payment?.settlementRail || proposal?.settlementRail || action?.fromRail || "arc-testnet")}
+          ${receiptCell("Settlement", command.settlementRail || payment?.settlementRail || airdrop?.settlementRail || proposal?.settlementRail || action?.fromRail || "arc-testnet")}
           ${receiptCell("Approval", approval?.status || "not required")}
+          ${receiptCell("Approval link", approvalUrl || "not required")}
+          ${receiptCell("Tx hash", txHash)}
+          ${receiptCell("Reply delivery", command.replyDelivery?.status || "not attempted")}
           ${receiptCell("Backend signer", "not used")}
         </div>
         <div class="reply"><strong>Bot reply</strong><br />${escapeHtml(receipt.reply || command.reply || "")}</div>
-        <p class="muted">This receipt is generated from the local ArcPay command ledger. Real public demo should use HTTPS and durable storage.</p>
+        <p class="muted">This receipt is generated from the bunOS command ledger and is designed to be shared back in the X thread.</p>
       </article>
     </main>
+  </body>
+</html>`;
+}
+
+function renderPublicXCommandApproval(receipt) {
+  const command = receipt.command;
+  const approval = receipt.related?.approval;
+  const disabled = !approval || approval.status !== "pending";
+  const status = approval?.status || "not required";
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Approve ${escapeHtml(command.id)} | bunOS</title>
+    <style>
+      :root { color-scheme: dark; --bg:#060608; --ink:#f4f1ee; --muted:#a29a94; --line:#2a2020; --surface:#141416; --orange:#ff3b1f; }
+      * { box-sizing:border-box; }
+      body { margin:0; min-height:100dvh; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; display:grid; place-items:center; padding:24px; }
+      main { width:min(720px, 100%); border:1px solid var(--line); border-radius:18px; background:var(--surface); padding:clamp(24px, 5vw, 44px); }
+      .kicker { color:var(--orange); text-transform:uppercase; letter-spacing:.1em; font-size:12px; font-weight:900; }
+      h1 { margin:10px 0 12px; font-size:clamp(34px, 8vw, 72px); line-height:.95; letter-spacing:0; }
+      blockquote { margin:24px 0; padding:16px; border:1px solid var(--line); border-radius:12px; background:#09090c; overflow-wrap:anywhere; }
+      .grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin:22px 0; }
+      .cell { border:1px solid var(--line); border-radius:12px; padding:12px; background:#0c0c10; }
+      .cell span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; font-weight:900; }
+      .cell strong { display:block; margin-top:4px; overflow-wrap:anywhere; }
+      button, a { min-height:46px; border-radius:12px; border:1px solid var(--line); padding:0 16px; display:inline-flex; align-items:center; justify-content:center; color:var(--ink); text-decoration:none; font-weight:900; }
+      button { background:var(--orange); border-color:var(--orange); cursor:pointer; }
+      button:disabled { opacity:.45; cursor:not-allowed; }
+      a { background:#0c0c10; margin-left:8px; }
+      .msg { margin-top:18px; color:var(--muted); min-height:24px; }
+      @media (max-width: 640px) { .grid { grid-template-columns:1fr; } a { margin:8px 0 0; width:100%; } button { width:100%; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="kicker">${escapeHtml(command.id)}</span>
+      <h1>${disabled ? "Approval status" : "Approve action"}</h1>
+      <p>${escapeHtml(approval?.summary || "This command has no pending approval.")}</p>
+      <blockquote>${escapeHtml(command.text)}</blockquote>
+      <div class="grid">
+        ${receiptCell("Actor", command.actorHandle)}
+        ${receiptCell("Approval", status)}
+        ${receiptCell("Kind", approval?.kind || "none")}
+        ${receiptCell("Target", approval?.targetId || "none")}
+      </div>
+      <button id="approve" ${disabled ? "disabled" : ""}>Approve and execute</button>
+      <a href="${escapeHtml(receipt.publicUrl || `/x/commands/${command.id}`)}">View receipt</a>
+      <div class="msg" id="msg">${disabled ? `Current status: ${escapeHtml(status)}` : "This will execute using the user's connected wallet/tool path, not a backend signer."}</div>
+    </main>
+    <script>
+      const button = document.getElementById("approve");
+      const msg = document.getElementById("msg");
+      button?.addEventListener("click", async () => {
+        button.disabled = true;
+        msg.textContent = "Approving...";
+        const response = await fetch("/api/x/commands/${encodeURIComponent(command.id)}/approve", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ handle: "${escapeHtml(command.actorHandle)}" })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) {
+          msg.textContent = data.error || "Approval failed.";
+          button.disabled = false;
+          return;
+        }
+        msg.textContent = "Approved. Opening updated receipt...";
+        window.location.href = data.receipt?.publicUrl || "${escapeHtml(receipt.publicUrl || `/x/commands/${command.id}`)}";
+      });
+    </script>
   </body>
 </html>`;
 }
@@ -1067,6 +1266,59 @@ function renderPublicDefiActionReceipt(receipt) {
           ${timeline.map((item) => `<li><strong>${escapeHtml(item.label || item.type)}</strong><span>${escapeHtml(item.at)}</span></li>`).join("")}
         </ul>
         <p class="muted">This receipt records user-wallet execution state. It does not use the backend deployer wallet for user funds.</p>
+      </article>
+    </main>
+  </body>
+</html>`;
+}
+
+function renderPublicAirdropReceipt(receipt) {
+  const airdrop = receipt.airdrop;
+  const approval = receipt.approval;
+  const payments = receipt.payments || [];
+  const title = `${airdrop.amountPerRecipient} ${airdrop.asset} airdrop`;
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)} | bunOS Airdrop</title>
+    <style>
+      :root { color-scheme: dark; --bg:#060608; --ink:#f4f1ee; --muted:#a29a94; --line:#2a2020; --surface:#141416; --orange:#ff3b1f; }
+      * { box-sizing:border-box; }
+      body { margin:0; min-height:100dvh; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+      main { width:min(860px, calc(100% - 32px)); margin:0 auto; padding:48px 0; }
+      article { border:1px solid var(--line); border-radius:18px; background:var(--surface); padding:clamp(24px, 5vw, 44px); }
+      .kicker { color:var(--orange); text-transform:uppercase; letter-spacing:.1em; font-size:12px; font-weight:900; }
+      h1 { margin:10px 0 12px; font-size:clamp(38px, 8vw, 78px); line-height:.95; letter-spacing:0; }
+      .grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:24px; }
+      .cell { border:1px solid var(--line); border-radius:12px; padding:12px; background:#0c0c10; }
+      .cell span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; font-weight:900; }
+      .cell strong { display:block; margin-top:4px; overflow-wrap:anywhere; }
+      ul { margin:24px 0 0; padding:0; list-style:none; display:grid; gap:10px; }
+      li { border:1px solid var(--line); border-radius:12px; padding:12px; background:#0c0c10; display:flex; justify-content:space-between; gap:12px; }
+      .muted { color:var(--muted); }
+      @media (max-width: 640px) { .grid { grid-template-columns:1fr; } li { display:block; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article>
+        <span class="kicker">${escapeHtml(airdrop.id)}</span>
+        <h1>${escapeHtml(title)}</h1>
+        <p class="muted">${escapeHtml(airdrop.rule)} from ${escapeHtml(airdrop.senderHandle)} on ${escapeHtml(airdrop.settlementRail)}.</p>
+        <div class="grid">
+          ${receiptCell("Status", airdrop.status)}
+          ${receiptCell("Budget", `${airdrop.totalBudget} ${airdrop.asset}`)}
+          ${receiptCell("Recipients", `${airdrop.winnerHandles?.length || 0}/${airdrop.maxRecipients}`)}
+          ${receiptCell("Approval", approval?.status || "not required")}
+          ${receiptCell("Backend signer", "not used")}
+          ${receiptCell("Next", receipt.nextAction)}
+        </div>
+        <ul>
+          ${payments.map((payment) => `<li><strong>${escapeHtml(payment.recipientHandle || "recipient")}</strong><span>${escapeHtml(payment.status)} ${escapeHtml(payment.id)}</span></li>`).join("") || "<li><strong>No distributions yet</strong><span>waiting</span></li>"}
+        </ul>
       </article>
     </main>
   </body>

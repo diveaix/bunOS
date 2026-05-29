@@ -39,6 +39,7 @@ export async function loadStore() {
   ledger.approvals = loadJsonRows("approvals");
   ledger.copyTradeProposals = loadJsonRows("copy_trade_proposals");
   ledger.perpProposals = loadJsonRows("perp_proposals");
+  ledger.airdrops = loadJsonRows("airdrops");
   ledger.idempotency = new Map(
     db.prepare("SELECT key, data FROM idempotency").all()
       .map((row) => [row.key, JSON.parse(row.data)])
@@ -52,7 +53,8 @@ export async function loadStore() {
     copyTradeProposals: ledger.copyTradeProposals,
     perpProposals: ledger.perpProposals,
     xCommands: ledger.xCommands,
-    automations: ledger.automations
+    automations: ledger.automations,
+    airdrops: ledger.airdrops
   });
 
   return { ok: true, loaded: true, dbFile };
@@ -81,6 +83,7 @@ export async function persistStore() {
     replaceJsonRows("approvals", ledger.approvals, "id");
     replaceJsonRows("copy_trade_proposals", ledger.copyTradeProposals, "id");
     replaceJsonRows("perp_proposals", ledger.perpProposals, "id");
+    replaceJsonRows("airdrops", ledger.airdrops, "id");
     replaceIdempotency();
     db.exec("COMMIT");
     inTransaction = false;
@@ -220,6 +223,12 @@ function migrateDb() {
     );
 
     CREATE TABLE IF NOT EXISTS perp_proposals (
+      id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS airdrops (
       id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       updated_at TEXT NOT NULL

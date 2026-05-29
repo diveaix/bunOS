@@ -1,6 +1,41 @@
 # ArcPay Build Phases
 
-Last updated: 2026-05-25
+Last updated: 2026-05-29
+
+## Current Immediate Build Plan
+
+This is the active plan. Older phase sections below are historical hackathon scaffolding and should not override this roadmap.
+
+### Phase 1: Agent Overhaul
+
+Status: Done locally.
+
+- Replaced weak fallback responses with structured execution results.
+- Added `close_perp_position` intent and tool path.
+- Made terminal/X/MCP execution responses include `status`, `reason`, `txHash`, `receiptUrl`, and `nextAction` where applicable.
+- Added agent memory for last trade, open positions, and "that action".
+- Added failure narration so the agent explains why an action did not execute.
+
+### Phase 2: X Bot Execution Loop
+
+Status: Done locally.
+
+- Built a reusable X bot loop that processes command/webhook input, creates receipts, and attempts real X replies when reply envs are enabled.
+- Added command receipts with stable public receipt URLs, approval URLs, reply delivery state, signer policy, and tx hash fields.
+- Added approval links at `/x/commands/:id/approve` and approval execution API at `/api/x/commands/:id/approve`.
+- Hardened idempotency with explicit idempotency keys, event-id hashing, normalized command hashing, duplicate replay counters, and duplicate webhook rejection before execution.
+
+### Phase 3: Real Arc Trading Primitives
+
+Status: Built locally.
+
+- Swaps and bridges route through DeFi/AppKit quote, confirmation, execution, reconciliation, and receipt primitives.
+- Perps route through ArcPerps proposal, quote, open/close user-wallet paths, readiness checks, oracle reads, and position receipts.
+- Airdrops are now first-class primitives with fixed-recipient distribution, social winner awarding, approvals, receipts, MCP tools, API routes, and terminal/X agent planning.
+- Bounties remain available through social bounty creation and award flows.
+- Automations run balance syncs, agent actions, and DeFi reconciliation through the same policy-gated surfaces.
+- No user-facing path may spend through `ARC_SETTLEMENT_PRIVATE_KEY`.
+- Unsupported live execution returns a clear `user_wallet_signing_required`, `execution_not_enabled`, or route-specific failure reason.
 
 ## Product Rule
 

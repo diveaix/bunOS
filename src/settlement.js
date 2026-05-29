@@ -14,7 +14,7 @@ const rails = {
     usdcAddress: "0x3600000000000000000000000000000000000000",
     cirbtcAddress: "0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF",
     cctpDomain: 26,
-    rpcUrl: "https://rpc.testnet.arc.network",
+    rpcUrl: config.arc.rpcUrl,
     explorerBaseUrl: "https://testnet.arcscan.app/tx/"
   },
   "base-sepolia": {

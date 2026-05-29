@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { canteenCliInstallHint, isCanteenRpcUrl } from "./canteenRpc.js";
 
 export async function checkArcRpcHealth({ timeoutMs = 3500 } = {}) {
   const startedAt = Date.now();
@@ -10,11 +11,19 @@ export async function checkArcRpcHealth({ timeoutMs = 3500 } = {}) {
   return {
     ok: chainId?.toLowerCase() === config.arc.expectedChainIdHex,
     rpc: redactRpcUrl(config.arc.rpcUrl),
+    rpcSource: config.arc.rpcSource,
+    rpcProvider: config.arc.rpcProvider,
+    canteenTrackingReady: Boolean(config.arc.canteenTrackingReady && isCanteenRpcUrl(config.arc.rpcUrl)),
     chainId,
     expectedChainId: config.arc.expectedChainIdHex,
     blockNumberHex: blockNumber,
     blockNumber: blockNumber ? Number.parseInt(blockNumber, 16) : null,
-    latencyMs: Date.now() - startedAt
+    latencyMs: Date.now() - startedAt,
+    canteen: {
+      requiredForTrackedJudging: true,
+      connected: Boolean(config.arc.canteenTrackingReady && isCanteenRpcUrl(config.arc.rpcUrl)),
+      cli: canteenCliInstallHint()
+    }
   };
 }
 
@@ -25,8 +34,16 @@ export async function getArcReadiness() {
     return {
       ok: false,
       rpc: redactRpcUrl(config.arc.rpcUrl),
+      rpcSource: config.arc.rpcSource,
+      rpcProvider: config.arc.rpcProvider,
+      canteenTrackingReady: Boolean(config.arc.canteenTrackingReady && isCanteenRpcUrl(config.arc.rpcUrl)),
       expectedChainId: config.arc.expectedChainIdHex,
-      error: error.message
+      error: error.message,
+      canteen: {
+        requiredForTrackedJudging: true,
+        connected: Boolean(config.arc.canteenTrackingReady && isCanteenRpcUrl(config.arc.rpcUrl)),
+        cli: canteenCliInstallHint()
+      }
     };
   }
 }

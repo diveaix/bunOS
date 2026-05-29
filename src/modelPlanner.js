@@ -4,6 +4,10 @@ import { normalizeHandle } from "./identity.js";
 const ALLOWED_ACTIONS = new Set([
   "send_payment",
   "create_social_bounty",
+  "create_airdrop",
+  "award_airdrop",
+  "list_airdrops",
+  "get_airdrop_receipt",
   "quote_bridge",
   "quote_swap",
   "propose_perp_trade",
@@ -24,6 +28,7 @@ const ALLOWED_ACTIONS = new Set([
   "read_arc_perps_oracle_price",
   "get_arc_perps_position",
   "list_arc_perps_positions",
+  "close_arc_perp_user_position",
   "appkit_readiness",
   "list_appkit_capabilities",
   "appkit_estimate_bridge",
@@ -33,6 +38,7 @@ const ALLOWED_ACTIONS = new Set([
   "appkit_unified_balance",
   "resolve_x_handle",
   "list_defi_tools",
+  "list_arc_trading_primitives",
   "list_defi_actions",
   "reconcile_defi_action",
   "get_defi_action_receipt",
@@ -55,61 +61,79 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
   const readiness = getAgentModelReadiness();
   if (!readiness.ok) return null;
 
-  const response = await fetch(`${config.ai.baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(config.ai.model)}:generateContent`, {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": config.ai.apiKey,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [
-          {
-            text: [
-              "You are the ArcPay intent planner.",
-              "Return only JSON. Do not execute transactions.",
-              `Allowed actions: ${Array.from(ALLOWED_ACTIONS).join(", ")}.`,
-              "Supported rails: arc-testnet, base-sepolia. Use arc-testnet as default.",
-              "Payments and bounties are USDC only. Swaps and bridges can use fromToken/toToken symbols or EVM token addresses. If unclear, return clarify with a question.",
-              "Do not return create_wallet; the terminal does not create wallets.",
-              "Schema examples:",
-              "{\"action\":\"send_payment\",\"amount\":5,\"asset\":\"USDC\",\"recipientHandle\":\"@alice\"}",
-              "{\"action\":\"quote_bridge\",\"amount\":1,\"asset\":\"USDC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
-              "{\"action\":\"quote_bridge\",\"amount\":5,\"asset\":\"EURC\",\"fromToken\":\"EURC\",\"toToken\":\"EURC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
-              "{\"action\":\"quote_swap\",\"amount\":1,\"fromToken\":\"USDC\",\"toToken\":\"EURC\",\"settlementRail\":\"arc-testnet\"}",
-              "{\"action\":\"quote_swap\",\"amount\":20,\"fromToken\":\"EURC\",\"toToken\":\"USDC\",\"settlementRail\":\"arc-testnet\"}",
-              "{\"action\":\"quote_swap\",\"amount\":0.001,\"fromToken\":\"USDC\",\"toToken\":\"cirBTC\",\"settlementRail\":\"arc-testnet\"}",
-              "{\"action\":\"propose_perp_trade\",\"symbol\":\"BTC\",\"side\":\"long\",\"collateralUsd\":1,\"leverage\":2}",
-              "{\"action\":\"get_balance\"}",
-              "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
-              "{\"action\":\"get_defi_action_receipt\",\"actionId\":\"defi_0001\"}",
-              "{\"action\":\"clarify\",\"question\":\"Which token do you want to buy?\"}"
-            ].join("\n")
-          }
-        ]
+  const timeoutMs = Number(process.env.AGENT_MODEL_TIMEOUT_MS || 1200);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response;
+  try {
+    response = await fetch(`${config.ai.baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(config.ai.model)}:generateContent`, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": config.ai.apiKey,
+        "content-type": "application/json"
       },
-      contents: [
-        {
-          role: "user",
+      signal: controller.signal,
+      body: JSON.stringify({
+        systemInstruction: {
           parts: [
             {
-              text: JSON.stringify({ text, defaultSettlementRail })
+              text: [
+                "You are the ArcPay intent planner.",
+                "Return only JSON. Do not execute transactions.",
+                `Allowed actions: ${Array.from(ALLOWED_ACTIONS).join(", ")}.`,
+                "Supported rails: arc-testnet, base-sepolia. Use arc-testnet as default.",
+                "Payments and bounties are USDC only. Swaps and bridges can use fromToken/toToken symbols or EVM token addresses. If unclear, return clarify with a question.",
+                "Do not return create_wallet; the terminal does not create wallets.",
+                "Schema examples:",
+                "{\"action\":\"send_payment\",\"amount\":5,\"asset\":\"USDC\",\"recipientHandle\":\"@alice\"}",
+                "{\"action\":\"quote_bridge\",\"amount\":1,\"asset\":\"USDC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
+                "{\"action\":\"create_airdrop\",\"amount\":1,\"asset\":\"USDC\",\"recipients\":[\"@alice\",\"@bob\"],\"settlementRail\":\"arc-testnet\"}",
+                "{\"action\":\"create_airdrop\",\"amount\":1,\"asset\":\"USDC\",\"maxRecipients\":100,\"rule\":\"first_commenters\",\"settlementRail\":\"arc-testnet\"}",
+                "{\"action\":\"award_airdrop\",\"airdropId\":\"air_0001\",\"recipients\":[\"@alice\",\"@bob\"]}",
+                "{\"action\":\"quote_bridge\",\"amount\":5,\"asset\":\"EURC\",\"fromToken\":\"EURC\",\"toToken\":\"EURC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
+                "{\"action\":\"quote_swap\",\"amount\":1,\"fromToken\":\"USDC\",\"toToken\":\"EURC\",\"settlementRail\":\"arc-testnet\"}",
+                "{\"action\":\"quote_swap\",\"amount\":20,\"fromToken\":\"EURC\",\"toToken\":\"USDC\",\"settlementRail\":\"arc-testnet\"}",
+                "{\"action\":\"quote_swap\",\"amount\":0.001,\"fromToken\":\"USDC\",\"toToken\":\"cirBTC\",\"settlementRail\":\"arc-testnet\"}",
+                "{\"action\":\"propose_perp_trade\",\"symbol\":\"BTC\",\"side\":\"long\",\"collateralUsd\":1,\"leverage\":2}",
+                "{\"action\":\"close_arc_perp_user_position\",\"positionId\":12}",
+                "{\"action\":\"get_balance\"}",
+                "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
+                "{\"action\":\"get_defi_action_receipt\",\"actionId\":\"defi_0001\"}",
+                "{\"action\":\"clarify\",\"question\":\"Which token do you want to buy?\"}"
+              ].join("\n")
             }
           ]
+        },
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: JSON.stringify({ text, defaultSettlementRail })
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseJsonSchema: intentSchema()
         }
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseJsonSchema: intentSchema()
-      }
-    })
-  });
+      })
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(`Agent model timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error?.message || "Agent model request failed");
   }
-
   return sanitizeModelIntent(JSON.parse(extractGeminiText(data)), defaultSettlementRail);
 }
 
@@ -123,6 +147,9 @@ function intentSchema() {
       asset: { type: ["string", "null"] },
       recipientHandle: { type: ["string", "null"] },
       rule: { type: ["string", "null"] },
+      recipients: { type: ["array", "null"], items: { type: "string" } },
+      maxRecipients: { type: ["number", "null"] },
+      airdropId: { type: ["string", "null"] },
       fromRail: { type: ["string", "null"] },
       toRail: { type: ["string", "null"] },
       fromToken: { type: ["string", "null"] },
@@ -149,6 +176,9 @@ function intentSchema() {
       "asset",
       "recipientHandle",
       "rule",
+      "recipients",
+      "maxRecipients",
+      "airdropId",
       "fromRail",
       "toRail",
       "fromToken",
@@ -175,6 +205,9 @@ function intentSchema() {
       "asset",
       "recipientHandle",
       "rule",
+      "recipients",
+      "maxRecipients",
+      "airdropId",
       "fromRail",
       "toRail",
       "fromToken",
@@ -229,6 +262,42 @@ function sanitizeModelIntent(intent, defaultSettlementRail) {
       amount: Number(intent.amount),
       asset: "USDC",
       rule: intent.rule || "first_valid_commenter"
+    };
+  }
+
+  if (intent.action === "create_airdrop") {
+    if (!positive(intent.amount)) return clarify("How much USDC should each airdrop recipient receive?");
+    const recipients = Array.isArray(intent.recipients)
+      ? intent.recipients.map(normalizeHandle).filter(Boolean)
+      : [];
+    const maxRecipients = positive(intent.maxRecipients) ? Number(intent.maxRecipients) : recipients.length;
+    if (!recipients.length && !maxRecipients) return clarify("Who should receive the airdrop, or how many social winners should qualify?");
+    return {
+      action: "tool_call",
+      tool: "create_airdrop",
+      arguments: stripNullish({
+        amountPerRecipient: Number(intent.amount),
+        recipients,
+        maxRecipients,
+        rule: intent.rule || (recipients.length ? "fixed_recipients" : "first_commenters"),
+        settlementRail: normalizeRail(intent.settlementRail) || defaultSettlementRail
+      })
+    };
+  }
+
+  if (intent.action === "award_airdrop") {
+    if (!intent.airdropId) return clarify("Which airdrop ID should I award?");
+    const recipients = Array.isArray(intent.recipients)
+      ? intent.recipients.map(normalizeHandle).filter(Boolean)
+      : [];
+    if (!recipients.length) return clarify("Which X handles won the airdrop?");
+    return {
+      action: "tool_call",
+      tool: "award_airdrop",
+      arguments: {
+        airdropId: String(intent.airdropId),
+        winnerHandles: recipients
+      }
     };
   }
 
@@ -322,9 +391,11 @@ const MODEL_TOOL_ACTIONS = new Set([
   "get_balance",
   "sync_circle_balances",
   "request_testnet_usdc",
+  "list_airdrops",
   "list_approvals",
   "confirm_action",
   "get_receipt",
+  "get_airdrop_receipt",
   "propose_copy_trade",
   "list_copy_trade_proposals",
   "list_perp_intelligence",
@@ -336,6 +407,7 @@ const MODEL_TOOL_ACTIONS = new Set([
   "read_arc_perps_oracle_price",
   "get_arc_perps_position",
   "list_arc_perps_positions",
+  "close_arc_perp_user_position",
   "appkit_readiness",
   "list_appkit_capabilities",
   "appkit_estimate_bridge",
@@ -345,6 +417,7 @@ const MODEL_TOOL_ACTIONS = new Set([
   "appkit_unified_balance",
   "resolve_x_handle",
   "list_defi_tools",
+  "list_arc_trading_primitives",
   "list_defi_actions",
   "reconcile_defi_action",
   "get_defi_action_receipt",

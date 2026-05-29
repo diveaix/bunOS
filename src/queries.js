@@ -86,7 +86,8 @@ export function getOperations({ limit = 50 } = {}) {
     circleWebhooks: ledger.circleWebhooks.slice().reverse().slice(0, Number(limit) || 50),
     funding: ledger.funding.slice().reverse().slice(0, Number(limit) || 50),
     bridges: ledger.bridges.slice().reverse().slice(0, Number(limit) || 50),
-    defiActions: ledger.defiActions.slice().reverse().slice(0, Number(limit) || 50)
+    defiActions: ledger.defiActions.slice().reverse().slice(0, Number(limit) || 50),
+    airdrops: ledger.airdrops.slice().reverse().slice(0, Number(limit) || 50)
   };
 }
 

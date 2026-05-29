@@ -12,7 +12,15 @@ export async function getBuildPreflight() {
   const circle = getCircleReadiness();
   const xReply = getXReplyReadiness();
   const checks = [
-    check("arc_rpc", "Arc RPC", arc.ok, true, arc.ok ? `chain ${arc.chainId}` : arc.error || "not ready"),
+    check(
+      "arc_rpc",
+      "Canteen Arc RPC",
+      arc.ok,
+      Boolean(arc.ok && arc.canteenTrackingReady),
+      arc.ok
+        ? `chain ${arc.chainId}; ${arc.rpcProvider || "unknown"} via ${arc.rpcSource || "unknown"}`
+        : arc.error || "not ready"
+    ),
     check("circle_wallets", "Circle wallets", circle.ready, true, circle.ready ? "configured" : circle.message),
     check("circle_transfers", "Circle transfer provider", config.transferProvider === "circle" && circle.ready, true, `provider=${config.transferProvider}`),
     check("x_auth", "X auth", true, config.x.authMode === "real" && Boolean(config.x.clientId && config.x.redirectUri.startsWith("https://")), config.x.authMode),
@@ -62,6 +70,9 @@ function nextActions({ checks, circle, arcPerps }) {
   const actions = [];
   if (!circle.ready) {
     actions.push("Finish Circle env: CIRCLE_API_KEY, CIRCLE_ENTITY_SECRET, CIRCLE_WALLET_SET_ID, CIRCLE_WALLETS_ENABLED=1");
+  }
+  if (!checks.find((item) => item.id === "arc_rpc")?.launchOk) {
+    actions.push("Use Canteen tracked Arc RPC: run `uv tool install git+https://github.com/the-canteen-dev/ARC-cli`, `arc-canteen login`, then set ARC_TESTNET_RPC_URL from `arc-canteen rpc-url` in Railway/Vercel.");
   }
   if (config.transferProvider !== "circle") {
     actions.push("Set TRANSFER_PROVIDER=circle for real Circle transfers");

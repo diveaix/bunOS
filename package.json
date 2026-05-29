@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node test/run-tests.js",
+    "frontend:dev": "cd frontend && npm run dev",
+    "frontend:build": "cd frontend && npm run build",
+    "frontend:install": "cd frontend && npm install",
     "deploy:frontend:prepare": "node scripts/prepare-vercel-frontend.js",
     "compile:contracts": "node scripts/compile-contracts.js",
     "deploy:arc-perps": "node scripts/deploy-arc-perps.js",
@@ -14,6 +17,7 @@
     "circle:register-entity-secret": "node scripts/circle-register-entity-secret.js",
     "circle:create-wallet-set": "node scripts/circle-create-wallet-set.js",
     "circle:smoke-wallet": "node scripts/circle-smoke-wallet.js",
+    "arc:canteen:preflight": "node scripts/canteen-preflight.js",
     "hackathon:smoke": "node scripts/hackathon-smoke.js",
     "defi:live-smoke": "node scripts/defi-live-smoke.js"
   },

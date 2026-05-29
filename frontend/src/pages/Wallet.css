@@ -1,0 +1,110 @@
+/* ─── Wallet Page Styles ──────────────────── */
+.wallet-view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 18px;
+}
+
+.view-tab {
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-muted);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.view-tab:hover {
+  color: var(--ink);
+  background: var(--bg-card);
+}
+
+.view-tab.active {
+  color: var(--ink);
+  background: var(--bg-card);
+  border-color: var(--line-strong);
+}
+
+.activity-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.link-action {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.primitive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.primitive-card {
+  min-height: 164px;
+  padding: 18px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgba(255, 59, 28, 0.08), transparent 45%),
+    var(--bg-subtle);
+}
+
+.primitive-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.primitive-head span {
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.primitive-head strong {
+  font-size: 10px;
+  color: var(--accent-light);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: right;
+}
+
+.primitive-card p {
+  margin: 10px 0 14px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.primitive-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.primitive-tools code {
+  font-size: 11px;
+  color: var(--accent-light);
+  background: rgba(255, 59, 28, 0.08);
+  border: 1px solid rgba(255, 59, 28, 0.14);
+  border-radius: 7px;
+  padding: 3px 7px;
+}
+
+.primitive-card small {
+  display: block;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}

@@ -1,4 +1,7 @@
 import "./env.js";
+import { resolveArcRpcUrl } from "./canteenRpc.js";
+
+const arcRpc = resolveArcRpcUrl();
 
 export const config = {
   appBaseUrl: process.env.APP_BASE_URL || `http://localhost:${process.env.PORT || 4317}`,
@@ -7,7 +10,10 @@ export const config = {
   tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY || "dev-only-token-encryption-key-change-me",
   webhookSecret: process.env.X_WEBHOOK_SECRET || "",
   arc: {
-    rpcUrl: process.env.ARC_TESTNET_RPC_URL || process.env.RPC || "https://rpc.testnet.arc.network",
+    rpcUrl: arcRpc.url,
+    rpcSource: arcRpc.source,
+    rpcProvider: arcRpc.provider,
+    canteenTrackingReady: arcRpc.canteenTrackingReady,
     wsUrl: process.env.ARC_TESTNET_WS_URL || "wss://rpc.testnet.arc.network",
     settlementPrivateKey: process.env.ARC_SETTLEMENT_PRIVATE_KEY || "",
     expectedChainIdHex: "0x4cef52"

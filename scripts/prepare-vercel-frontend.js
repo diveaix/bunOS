@@ -1,4 +1,4 @@
-import { copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,19 +14,6 @@ if (!backendUrl) {
 await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 await cp(join(root, "public"), outputDir, { recursive: true });
-
-const walletPath = join(outputDir, "index.html");
-const landingPath = join(outputDir, "landing.html");
-if (existsSync(walletPath) && existsSync(landingPath)) {
-  await copyFile(walletPath, join(outputDir, "wallet.html"));
-  await copyFile(landingPath, walletPath);
-}
-
-const mcpGuidePath = join(outputDir, "mcp.html");
-if (existsSync(mcpGuidePath)) {
-  await copyFile(mcpGuidePath, join(outputDir, "mcp-guide.html"));
-  await rm(mcpGuidePath);
-}
 
 if (existsSync(join(root, "bunOS.svg"))) {
   await cp(join(root, "bunOS.svg"), join(outputDir, "bunOS.svg"));
@@ -79,11 +66,8 @@ await writeFile(join(outputDir, "vercel.json"), `${JSON.stringify({
     { src: "/messages", dest: `${backendUrl}/messages` },
     { src: "/x/(.*)", dest: `${backendUrl}/x/$1` },
     { src: "/defi/(.*)", dest: `${backendUrl}/defi/$1` },
-    { src: "/api-keys", dest: "/api-keys.html" },
-    { src: "/terminal", dest: "/terminal.html" },
-    { src: "/wallet", dest: "/wallet.html" },
-    { src: "/dashboard", dest: "/wallet.html" },
-    { handle: "filesystem" }
+    { handle: "filesystem" },
+    { src: "/(.*)", dest: "/index.html" }
   ]
 }, null, 2)}\n`);
 
@@ -93,15 +77,6 @@ await writeFile(indexPath, index.replace(
   "</head>",
   `  <meta name="backend-origin" content="${escapeHtml(backendUrl)}" />\n  </head>`
 ));
-
-const walletOutputPath = join(outputDir, "wallet.html");
-if (existsSync(walletOutputPath)) {
-  const wallet = await readFile(walletOutputPath, "utf8");
-  await writeFile(walletOutputPath, wallet.replace(
-    "</head>",
-    `  <meta name="backend-origin" content="${escapeHtml(backendUrl)}" />\n  </head>`
-  ));
-}
 
 console.log(`Prepared Vercel frontend in ${outputDir}`);
 console.log(`Backend origin: ${backendUrl}`);

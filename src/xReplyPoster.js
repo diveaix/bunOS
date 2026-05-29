@@ -44,7 +44,10 @@ export async function postXCommandReply({ commandId, publicUrl, force = false } 
   }
 
   const readiness = getXReplyReadiness({ handle: command.actorHandle });
-  const text = command.reply || buildXCommandReply(command, command.result || {}, { publicUrl });
+  const approvalUrl = command.links?.approvalUrl || buildApprovalUrlFromReceiptUrl(command, publicUrl);
+  const text = command.reply
+    ? appendReplyLinks(command.reply, { publicUrl, approvalUrl })
+    : buildXCommandReply(command, command.result || {}, { publicUrl, approvalUrl });
   const delivery = {
     status: "not_sent",
     replyAuthor: readiness.authorMode,
@@ -164,4 +167,25 @@ function trimPostText(text) {
   const value = String(text || "").trim();
   if (value.length <= 280) return value;
   return `${value.slice(0, 276).trimEnd()}...`;
+}
+
+function buildApprovalUrlFromReceiptUrl(command, publicUrl) {
+  if (!command.resultRefs?.approvalId || !publicUrl) {
+    return null;
+  }
+
+  return `${String(publicUrl).replace(/\/+$/, "")}/approve`;
+}
+
+function appendReplyLinks(text, { publicUrl, approvalUrl } = {}) {
+  const links = [
+    approvalUrl && !String(text).includes(approvalUrl) ? `Approve: ${approvalUrl}` : "",
+    publicUrl && !String(text).includes(publicUrl) ? `Receipt: ${publicUrl}` : ""
+  ].filter(Boolean);
+
+  if (!links.length) {
+    return text;
+  }
+
+  return `${text} ${links.join(" ")}`.trim();
 }

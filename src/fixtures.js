@@ -118,7 +118,8 @@ export const ledger = {
   defiActions: [],
   approvals: [],
   copyTradeProposals: [],
-  perpProposals: []
+  perpProposals: [],
+  airdrops: []
 };
 
 export const sessions = new Map();

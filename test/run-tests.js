@@ -26,6 +26,7 @@ import {
   processXWebhookDelivery,
   verifyXWebhook
 } from "../src/xPayments.js";
+import { runXBotCommand, runXBotWebhookDelivery } from "../src/xBotLoop.js";
 import { reconcileCircleNotification } from "../src/transferProvider.js";
 import {
   getOperations,
@@ -39,6 +40,13 @@ import {
   retryPaymentTransfer
 } from "../src/reconciliation.js";
 import { bridgeFunds, getWalletProfile } from "../src/walletAccounts.js";
+import {
+  awardAirdrop,
+  createAirdrop,
+  getAirdropReceipt,
+  listAirdrops
+} from "../src/airdrops.js";
+import { listArcTradingPrimitives } from "../src/arcTradingPrimitives.js";
 import {
   confirmDefiAction,
   getDefiActionReceipt,
@@ -79,6 +87,8 @@ const tests = [
       assert.equal(arc.appKitChain, "Arc_Testnet");
       assert.equal(arc.usdcAddress, "0x3600000000000000000000000000000000000000");
       assert.equal(arc.cirbtcAddress, "0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF");
+      assert.equal(arc.rpcUrl, config.arc.rpcUrl);
+      assert.ok(["canteen", "custom", "circle-public"].includes(config.arc.rpcProvider));
       assert.equal(arc.explorerBaseUrl, "https://testnet.arcscan.app/tx/");
       assert.equal(redactRpcUrl("https://rpc.testnet.arc-node.thecanteenapp.com/v1/secret-key"), "https://rpc.testnet.arc-node.thecanteenapp.com/v1/<key>");
     }
@@ -191,6 +201,69 @@ const tests = [
       await settleQueuedPayment(awarded.payment);
       assert.equal(awarded.payment.status, "settled");
       assert.equal(awarded.payment.recipientHandle, "@bob");
+    }
+  ],
+  [
+    "creates fixed-recipient airdrops through Circle user-wallet payment paths",
+    async () => {
+      const result = await createAirdrop({
+        senderHandle: "@sara",
+        recipients: ["@alice", "@bob"],
+        amountPerRecipient: 1,
+        settlementRail: "arc-testnet",
+        idempotencyKey: "test_airdrop_fixed_001"
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.airdrop.status, "distributed");
+      assert.equal(result.airdrop.distributions.length, 2);
+      assert.equal(result.airdrop.signer.signerType, "circle_user_wallet");
+      assert.equal(result.airdrop.signer.backendSignerAllowed, false);
+      assert.equal(result.payments.length, 2);
+
+      const receipt = getAirdropReceipt({
+        airdropId: result.airdrop.id,
+        host: "localhost:4319"
+      });
+      assert.equal(receipt.receipt.payments.length, 2);
+      assert.ok(listAirdrops({ handle: "@sara" }).airdrops.find((airdrop) => airdrop.id === result.airdrop.id));
+
+      const replay = await createAirdrop({
+        senderHandle: "@sara",
+        recipients: ["@alice", "@bob"],
+        amountPerRecipient: 1,
+        settlementRail: "arc-testnet",
+        idempotencyKey: "test_airdrop_fixed_001"
+      });
+      assert.equal(replay.idempotentReplay, true);
+      assert.equal(replay.airdrop.id, result.airdrop.id);
+    }
+  ],
+  [
+    "creates social airdrops and awards winners later",
+    async () => {
+      const created = await createAirdrop({
+        senderHandle: "@sara",
+        amountPerRecipient: 0.5,
+        maxRecipients: 2,
+        postId: "post_airdrop_001",
+        rule: "first_commenters",
+        settlementRail: "arc-testnet"
+      });
+
+      assert.equal(created.ok, true);
+      assert.equal(created.airdrop.status, "watching_replies");
+      assert.equal(created.nextAction, "award_airdrop");
+
+      const awarded = await awardAirdrop({
+        airdropId: created.airdrop.id,
+        winnerHandles: ["@alice", "@bob", "@sara"]
+      });
+
+      assert.equal(awarded.ok, true);
+      assert.equal(awarded.airdrop.status, "distributed");
+      assert.equal(awarded.airdrop.winnerHandles.length, 2);
+      assert.equal(awarded.payments.length, 2);
     }
   ],
   [
@@ -354,6 +427,68 @@ const tests = [
       assert.equal(second.originalCommandId, first.command.id);
       assert.ok(getXWebhookStatus({ host: "localhost:4319" }).sample.rawBody);
       config.webhookSecret = "";
+    }
+  ],
+  [
+    "runs the X bot loop with receipts, approval links, and reply delivery state",
+    async () => {
+      const previousReplyEnabled = config.x.replyEnabled;
+      config.x.replyEnabled = false;
+
+      const result = await runXBotCommand({
+        actorHandle: "@sara",
+        text: "@ArcPay long BTC with 12 USDC at 2x",
+        postId: "1234567890123456789",
+        eventId: "evt_loop_perp_001",
+        settlementRail: "arc-testnet",
+        host: "bunos.xyz",
+        protocol: "https"
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.loop.status, "processed");
+      assert.equal(result.loop.replyPostStatus, "x_reply_not_enabled");
+      assert.equal(result.receipt.publicUrl, `https://bunos.xyz/x/commands/${result.command.id}`);
+      assert.equal(result.receipt.approvalUrl, `https://bunos.xyz/x/commands/${result.command.id}/approve`);
+      assert.match(result.reply, /Approve: https:\/\/bunos\.xyz\/x\/commands\//);
+      assert.match(result.replyDelivery.message, /X_REPLY_ENABLED=1/);
+
+      config.x.replyEnabled = previousReplyEnabled;
+    }
+  ],
+  [
+    "rejects replayed X bot webhook deliveries before running execution twice",
+    async () => {
+      const before = ledger.payments.length;
+      const payload = {
+        eventId: "evt_loop_replay_001",
+        postId: "1234567890123456790",
+        actorHandle: "@sara",
+        text: "@ArcPay send 1 USDC to @bob",
+        settlementRail: "arc-testnet"
+      };
+      const rawBody = JSON.stringify(payload);
+
+      const first = await runXBotWebhookDelivery({
+        headers: { "content-type": "application/json" },
+        rawBody,
+        host: "bunos.xyz",
+        protocol: "https",
+        postReply: false
+      });
+      const second = await runXBotWebhookDelivery({
+        headers: { "content-type": "application/json" },
+        rawBody,
+        host: "bunos.xyz",
+        protocol: "https",
+        postReply: false
+      });
+
+      assert.equal(first.ok, true);
+      assert.equal(second.duplicate, true);
+      assert.equal(second.loop.status, "duplicate_rejected");
+      assert.equal(second.loop.receiptUrl, first.receipt.publicUrl);
+      assert.equal(ledger.payments.length, before + 1);
     }
   ],
   [
@@ -722,7 +857,7 @@ const tests = [
     "exposes core Arc/Circle MCP money tools with approval routing",
     async () => {
       const names = mcpTools.map((tool) => tool.name);
-      for (const name of ["create_wallet", "get_balance", "get_wallet_capabilities", "send_usdc", "bridge_usdc", "demo_bridge_arc_to_base", "quote_swap", "list_approvals", "confirm_action", "get_receipt", "list_defi_actions", "reconcile_defi_action", "get_defi_action_receipt"]) {
+      for (const name of ["create_wallet", "get_balance", "get_wallet_capabilities", "send_usdc", "create_airdrop", "award_airdrop", "list_airdrops", "get_airdrop_receipt", "list_arc_trading_primitives", "bridge_usdc", "demo_bridge_arc_to_base", "quote_swap", "list_approvals", "confirm_action", "get_receipt", "list_defi_actions", "reconcile_defi_action", "get_defi_action_receipt"]) {
         assert.ok(names.includes(name), `${name} missing`);
       }
 
@@ -759,6 +894,22 @@ const tests = [
       const receipt = await callMcpTool("get_receipt", { paymentId: payment.payment.id });
       assert.equal(receipt.ok, true);
       assert.equal(receipt.receipt.payment.id, payment.payment.id);
+
+      const airdrop = await callMcpTool("create_airdrop", {
+        senderHandle: "@sara",
+        recipients: ["@alice"],
+        amountPerRecipient: 1,
+        settlementRail: "arc-testnet"
+      });
+      assert.equal(airdrop.ok, true);
+      assert.equal(airdrop.airdrop.status, "distributed");
+      assert.equal(airdrop.airdrop.signer.backendSignerAllowed, false);
+
+      const primitives = await callMcpTool("list_arc_trading_primitives", {});
+      assert.equal(primitives.ok, true);
+      for (const name of ["swap", "bridge", "perps", "airdrop", "bounty", "automation"]) {
+        assert.ok(primitives.primitives.find((primitive) => primitive.name === name), `${name} primitive missing`);
+      }
 
       const bridge = await callMcpTool("bridge_usdc", {
         handle: "@sara",
@@ -1065,9 +1216,12 @@ const tests = [
         "list_approvals",
         "get_defi_action_receipt",
         "propose_copy_trade",
+        "create_airdrop",
+        "list_arc_trading_primitives",
         "arc_perps_readiness",
         "appkit_readiness",
-        "list_perp_markets"
+        "list_perp_markets",
+        "close_arc_perp_user_position"
       ]) {
         assert.ok(agentTools.tools.includes(name), `${name} missing from terminal agent tools`);
       }
@@ -1140,6 +1294,14 @@ const tests = [
       assert.equal(planned.plan.tool, "propose_perp_trade");
       assert.equal(planned.signer.backendSignerAllowed, false);
 
+      const closePerp = planAgentAction({
+        handle: "@sara",
+        text: "close arc perp position #42"
+      });
+      assert.equal(closePerp.plan.tool, "close_arc_perp_user_position");
+      assert.equal(closePerp.plan.arguments.positionId, 42);
+      assert.equal(closePerp.signer.backendSignerAllowed, false);
+
       const balance = planAgentAction({
         handle: "@sara",
         text: "show my balance"
@@ -1159,6 +1321,20 @@ const tests = [
       });
       assert.equal(copy.plan.tool, "propose_copy_trade");
       assert.equal(copy.plan.arguments.traderHandle, "@macro_mira");
+
+      const airdrop = planAgentAction({
+        handle: "@sara",
+        text: "airdrop $1 to @alice @bob"
+      });
+      assert.equal(airdrop.plan.tool, "create_airdrop");
+      assert.deepEqual(airdrop.plan.arguments.recipients, ["@alice", "@bob"]);
+      assert.equal(airdrop.signer.backendSignerAllowed, false);
+
+      const primitivePlan = planAgentAction({
+        handle: "@sara",
+        text: "list arc trading primitives"
+      });
+      assert.equal(primitivePlan.plan.tool, "list_arc_trading_primitives");
     }
   ],
   [
@@ -1180,12 +1356,14 @@ const tests = [
         text: "bridge 5 usdc from arc to base",
         source: "test-agent-run"
       });
-      assert.equal(bridge.ok, true);
+      assert.equal(bridge.ok, false);
       assert.equal(bridge.planned.plan.tool, "quote_defi_route");
       assert.equal(bridge.result.action.status, "execution_not_enabled");
+      assert.equal(bridge.execution.status, "execution_not_enabled");
+      assert.equal(bridge.execution.ok, false);
       assert.equal(bridge.result.action.approvalId, undefined);
       assert.equal(bridge.signer.backendSignerAllowed, false);
-      assert.equal(bridge.nextAction, "display_receipt");
+      assert.equal(bridge.nextAction, "enable_execution_or_check_provider");
 
       const balance = await callMcpTool("run_agent_action", {
         handle: "@sara",
@@ -1195,6 +1373,17 @@ const tests = [
       assert.equal(balance.planned.plan.tool, "get_balance");
       assert.equal(balance.result.wallet.handle, "@sara");
 
+      const airdrop = await callMcpTool("run_agent_action", {
+        handle: "@sara",
+        text: "airdrop $1 to @alice @bob",
+        source: "test-agent-run",
+        idempotencyKey: "test_agent_airdrop_001"
+      });
+      assert.equal(airdrop.ok, true);
+      assert.equal(airdrop.planned.plan.tool, "create_airdrop");
+      assert.equal(airdrop.result.airdrop.status, "distributed");
+      assert.equal(airdrop.result.airdrop.signer.backendSignerAllowed, false);
+
       const readiness = await callMcpTool("run_agent_action", {
         handle: "@sara",
         text: "appkit readiness"
@@ -1202,6 +1391,18 @@ const tests = [
       assert.equal(readiness.ok, true);
       assert.equal(readiness.planned.plan.tool, "appkit_readiness");
       assert.equal(readiness.result.backendSignerAllowed, false);
+
+      const closePerp = await callMcpTool("run_agent_action", {
+        handle: "@sara",
+        text: "close arc perp position #42",
+        source: "test-agent-run"
+      });
+      assert.equal(closePerp.ok, false);
+      assert.equal(closePerp.planned.plan.tool, "close_arc_perp_user_position");
+      assert.equal(closePerp.execution.status, "user_wallet_signing_required");
+      assert.equal(closePerp.execution.ok, false);
+      assert.equal(closePerp.signer.backendSignerAllowed, false);
+      assert.match(closePerp.execution.reason, /user wallet|Circle user wallet|Set ARC_PERPS/i);
 
       const unclear = await callMcpTool("run_agent_action", {
         handle: "@sara",

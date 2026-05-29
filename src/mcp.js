@@ -39,6 +39,13 @@ import {
   updateAutomation
 } from "./automations.js";
 import {
+  awardAirdrop,
+  createAirdrop,
+  getAirdropReceipt,
+  listAirdrops
+} from "./airdrops.js";
+import { listArcTradingPrimitives } from "./arcTradingPrimitives.js";
+import {
   assessLiquidationRisk,
   listPerpIntelligence,
   listPerpProposals,
@@ -97,6 +104,71 @@ export const mcpTools = [
     inputSchema: {
       type: "object",
       properties: {}
+    }
+  },
+  {
+    name: "list_arc_trading_primitives",
+    description: "List the real Arc trading primitives exposed by bunOS: swaps, bridges, perps, airdrops, bounties, and automations, including provider readiness and signer policy.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "create_airdrop",
+    description: "Create a USDC airdrop from a user's Circle wallet to fixed X handles or a social winner set. Known recipients distribute through payment jobs; social airdrops wait for award_airdrop.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        senderHandle: { type: "string" },
+        recipients: { type: "array", items: { type: "string" } },
+        amount: { type: "number" },
+        amountPerRecipient: { type: "number" },
+        maxRecipients: { type: "number" },
+        postId: { type: "string" },
+        rule: { type: "string" },
+        settlementRail: { type: "string" },
+        memo: { type: "string" }
+      },
+      required: ["senderHandle"]
+    }
+  },
+  {
+    name: "award_airdrop",
+    description: "Award a social airdrop to the selected X handles. Each winner is paid through the same policy-gated Circle user-wallet payment path.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        airdropId: { type: "string" },
+        winnerHandles: { type: "array", items: { type: "string" } },
+        recipients: { type: "array", items: { type: "string" } }
+      },
+      required: ["airdropId"]
+    }
+  },
+  {
+    name: "list_airdrops",
+    description: "List USDC airdrop campaigns and distribution state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        status: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "get_airdrop_receipt",
+    description: "Get an airdrop receipt with approval, distribution payments, timeline, and public URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        airdropId: { type: "string" },
+        host: { type: "string" },
+        protocol: { type: "string" }
+      },
+      required: ["airdropId"]
     }
   },
   {
@@ -791,6 +863,29 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "list_agent_tools") {
     return listAgentTools();
+  }
+
+  if (tool === "list_arc_trading_primitives") {
+    return listArcTradingPrimitives();
+  }
+
+  if (tool === "create_airdrop") {
+    return await createAirdrop({
+      ...args,
+      source: "agent-mcp"
+    });
+  }
+
+  if (tool === "award_airdrop") {
+    return await awardAirdrop(args);
+  }
+
+  if (tool === "list_airdrops") {
+    return listAirdrops(args);
+  }
+
+  if (tool === "get_airdrop_receipt") {
+    return getAirdropReceipt(args);
   }
 
   if (tool === "create_automation") {

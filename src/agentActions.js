@@ -1,4 +1,5 @@
 import { completeApproval, getApproval } from "./approvals.js";
+import { confirmAirdrop } from "./airdrops.js";
 import { confirmDefiAction } from "./defiOrchestrator.js";
 import { confirmPayment } from "./orchestrator.js";
 import { confirmPerpProposal } from "./perpsAgent.js";
@@ -27,6 +28,8 @@ export async function confirmAction({ approvalId, handle } = {}) {
     result = confirmCopyTradeProposal({ proposalId: approval.targetId });
   } else if (approval.kind === "perp_trade") {
     result = confirmPerpProposal({ proposalId: approval.targetId });
+  } else if (approval.kind === "airdrop") {
+    result = await confirmAirdrop({ airdropId: approval.targetId });
   } else {
     throw new Error(`Unsupported approval kind: ${approval.kind}`);
   }

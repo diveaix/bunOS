@@ -28,7 +28,7 @@ Engine     USDC          Bridge Demo
 
 - `POST /api/auth/x/mock` connects an X handle and creates Circle-style wallets.
 - Wallets are provisioned for `arc-testnet` and `base-sepolia`.
-- Arc Testnet uses the live network metadata: chain ID `5042002`, USDC gas, and `https://testnet.arcscan.app`.
+- Arc Testnet uses the live network metadata: chain ID `5042002`, USDC gas, Canteen-tracked RPC when available, and `https://testnet.arcscan.app`.
 - `/api/wallets/fund` requests Circle testnet faucet funds in real Circle mode, or creates a real external-deposit instruction.
 - `/api/wallets/sync-balances` refreshes Circle token balances into the dashboard ledger.
 - `/api/wallets/send` sends USDC on the selected rail.
@@ -70,15 +70,21 @@ To run on another port:
 $env:PORT=4319; npm start
 ```
 
-To use Canteen's agent-friendly Arc RPC:
+To use Canteen's tracked Arc RPC:
 
 ```bash
-uv tool install git+https://github.com/the-canteen-dev/ARC-cli.git
+uv tool install git+https://github.com/the-canteen-dev/ARC-cli
 arc-canteen login
 arc-canteen rpc-url
 ```
 
-Put the returned URL in `ARC_TESTNET_RPC_URL`.
+Locally, the backend auto-detects the CLI URL when `ARC_TESTNET_RPC_URL` and `RPC` are not set. For Railway/Vercel, put the full returned URL in `ARC_TESTNET_RPC_URL`. Keep that URL secret because it contains the Canteen server token.
+
+Check without printing the secret:
+
+```bash
+npm run arc:canteen:preflight
+```
 
 ## Circle Real Mode Setup
 
@@ -120,7 +126,7 @@ CIRCLE_WALLETS_ENABLED=1
 CIRCLE_API_KEY=...
 CIRCLE_ENTITY_SECRET=...
 CIRCLE_WALLET_SET_ID=...
-ARC_TESTNET_RPC_URL=...
+ARC_TESTNET_RPC_URL=https://rpc.testnet.arc-node.thecanteenapp.com/v1/...
 ARC_PERPS_EXECUTION_ENABLED=0
 ARC_PERPS_USDC_ADDRESS=0x3600000000000000000000000000000000000000
 ARC_PERPS_ORACLE_ADDRESS=...
@@ -137,7 +143,7 @@ Copy `.env.example` into your real environment manager and set:
 - `PROVIDER_MODE=real` when backend provider rails are real. X auth is controlled separately by `X_AUTH_MODE`.
 - `X_AUTH_MODE=mock` locally until the app has HTTPS; set `X_AUTH_MODE=real` after Vercel/X OAuth setup.
 - `TRANSFER_PROVIDER=mock` or `circle`. Use `circle` for real user-owned Circle wallet transfers.
-- `ARC_TESTNET_RPC_URL` for Arc Testnet JSON-RPC. The public default is `https://rpc.testnet.arc.network`; Canteen keys work too.
+- `ARC_TESTNET_RPC_URL` for Arc Testnet JSON-RPC. Prefer the Canteen tracked URL from `arc-canteen rpc-url`; the backend also accepts `$RPC` and can auto-detect the local CLI during development. Health/preflight responses redact `/v1/<token>`.
 - `ARC_SETTLEMENT_PRIVATE_KEY` is admin-only for deploy scripts. It is not used by MCP or agent tools for user money.
 - `APPKIT_EXECUTION_ENABLED=1` lets Circle AppKit submit bridge/swap transactions through the user's Circle wallet adapter. Keep `0` unless Circle wallets, live adapters, and test funds are ready.
 - `APPKIT_UNIFIED_BALANCE_ENABLED=0` until the unified-balance UX is ready.
