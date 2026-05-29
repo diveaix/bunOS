@@ -1,5 +1,4 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,10 +13,6 @@ if (!backendUrl) {
 await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 await cp(join(root, "public"), outputDir, { recursive: true });
-
-if (existsSync(join(root, "bunOS.svg"))) {
-  await cp(join(root, "bunOS.svg"), join(outputDir, "bunOS.svg"));
-}
 
 await writeFile(join(outputDir, "package.json"), `${JSON.stringify({
   private: true,
@@ -75,8 +70,15 @@ const indexPath = join(outputDir, "index.html");
 const index = await readFile(indexPath, "utf8");
 await writeFile(indexPath, index.replace(
   "</head>",
-  `  <meta name="backend-origin" content="${escapeHtml(backendUrl)}" />\n  </head>`
+  `  <meta name="backend-origin" content="${escapeHtml(backendUrl)}" />\n  <script>${legacyHostRedirectScript()}</script>\n  </head>`
 ));
+
+const spaHtml = await readFile(indexPath, "utf8");
+for (const route of ["wallet", "terminal", "mcp-guide", "api-keys", "dashboard"]) {
+  const routeDir = join(outputDir, route);
+  await mkdir(routeDir, { recursive: true });
+  await writeFile(join(routeDir, "index.html"), spaHtml);
+}
 
 console.log(`Prepared Vercel frontend in ${outputDir}`);
 console.log(`Backend origin: ${backendUrl}`);
@@ -96,4 +98,8 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function legacyHostRedirectScript() {
+  return "if(location.hostname==='vercel-frontend-rho-woad.vercel.app'){location.replace('https://bunos.xyz'+location.pathname+location.search+location.hash)}";
 }
