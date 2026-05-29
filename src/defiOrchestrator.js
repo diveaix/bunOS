@@ -350,6 +350,22 @@ function normalizeRouteToken(token) {
 async function getPreferredRouteQuote({ input, fromAddress, toAddress }) {
   const shouldPreferAppKit = config.defi.liveAdapters && input.protocol !== "lifi" && supportsCircleAppKitRoute(input);
   if (shouldPreferAppKit) {
+    const appKitSkipReason = circleAppKitSkipReason(input);
+    if (appKitSkipReason) {
+      try {
+        const lifi = await getLifiRouteQuote({ input, fromAddress, toAddress });
+        return {
+          ...lifi,
+          fallback: {
+            attemptedProvider: "circle-app-kit",
+            reason: appKitSkipReason
+          }
+        };
+      } catch (lifiError) {
+        throw new Error(`LI.FI fallback: ${lifiError.message}; Circle AppKit: ${appKitSkipReason}`);
+      }
+    }
+
     try {
       return await quoteCircleAppKitRoute({
         ...input,
@@ -383,11 +399,22 @@ function supportsCircleAppKitRoute(input) {
   return fromToken === "USDC" && toToken === "USDC";
 }
 
+function circleAppKitSkipReason(input) {
+  if (input.type === "swap" && !config.appKit.kitKey) {
+    return "Circle AppKit swaps require APPKIT_KIT_KEY=KIT_KEY:<keyId>:<keySecret>. Add a Circle Kit Key to enable the AppKit swap provider.";
+  }
+  return null;
+}
+
 function canonicalTokenKey(token) {
   return String(token || "").toUpperCase();
 }
 
 async function getLifiRouteQuote({ input, fromAddress, toAddress }) {
+  if (!fromAddress) {
+    throw new Error(`No Circle wallet address found for ${input.handle || "this user"} on ${input.fromRail}`);
+  }
+
   return await getLifiQuote({
     fromRail: input.fromRail,
     toRail: input.toRail,
