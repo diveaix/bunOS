@@ -990,7 +990,7 @@ async function runBackgroundWorkerTick() {
     const [jobs, automations, oracleSync] = await Promise.all([
       runDueJobs({ limit: config.automations.limit }),
       runDueAutomations({ limit: config.automations.limit }),
-      syncArcPerpsOracleFromHyperliquid()
+      safeOracleSync()
     ]);
 
     const oracleUpdates = oracleSync.ok ? oracleSync.updates.filter((item) => !item.skipped).length : 0;
@@ -1000,6 +1000,15 @@ async function runBackgroundWorkerTick() {
     }
   } finally {
     backgroundWorkerRunning = false;
+  }
+}
+
+async function safeOracleSync() {
+  try {
+    return await syncArcPerpsOracleFromHyperliquid();
+  } catch (error) {
+    console.error("Background oracle sync failed", error);
+    return { ok: false, updates: [], error: error.message };
   }
 }
 
