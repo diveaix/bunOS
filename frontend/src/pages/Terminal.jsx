@@ -32,6 +32,7 @@ export default function Terminal() {
   const chatRef = useRef(null);
   const inputRef = useRef(null);
   const handleRef = useRef(currentHandle || localStorage.getItem("arcpay:handle") || "");
+  const defiPollersRef = useRef(new Map());
 
   useEffect(() => {
     if (currentHandle) handleRef.current = currentHandle;
@@ -39,6 +40,11 @@ export default function Terminal() {
 
   useEffect(() => {
     hydrateWallet();
+  }, []);
+
+  useEffect(() => () => {
+    for (const timer of defiPollersRef.current.values()) clearTimeout(timer);
+    defiPollersRef.current.clear();
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -50,7 +56,15 @@ export default function Terminal() {
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
 
   const addMessage = useCallback((role, content, html) => {
-    setMessages((prev) => [...prev, { id: Date.now() + Math.random(), role, content, html }]);
+    const id = Date.now() + Math.random();
+    setMessages((prev) => [...prev, { id, role, content, html }]);
+    return id;
+  }, []);
+
+  const updateMessageHtml = useCallback((messageId, html) => {
+    setMessages((prev) => prev.map((msg) => (
+      msg.id === messageId ? { ...msg, html } : msg
+    )));
   }, []);
 
   const hydrateWallet = async () => {
@@ -112,7 +126,8 @@ export default function Terminal() {
 
       if (isApprovalIntent(value) && latestApprovalId) {
         const data = await confirmApproval(latestApprovalId);
-        addMessage("agent", null, formatApprovalResult(data));
+        const messageId = addMessage("agent", null, formatApprovalResult(data));
+        followDefiExecution(data, messageId);
         return;
       }
 
@@ -138,7 +153,8 @@ export default function Terminal() {
 
       if (!res.ok || data.ok === false) {
         if (data.execution) {
-          addMessage("agent", null, formatResult(data));
+          const messageId = addMessage("agent", null, formatResult(data));
+          followDefiExecution(data, messageId);
           trackApproval(data);
         } else if (data.planned?.plan?.reason) {
           addMessage("agent", null, formatClarification(data));
@@ -146,7 +162,8 @@ export default function Terminal() {
           addMessage("agent", null, formatError(data));
         }
       } else {
-        addMessage("agent", null, formatResult(data));
+        const messageId = addMessage("agent", null, formatResult(data));
+        followDefiExecution(data, messageId);
         trackApproval(data);
       }
     } catch (err) {
@@ -162,7 +179,8 @@ export default function Terminal() {
     setBusy(true);
     try {
       const data = await confirmApproval(approvalId);
-      addMessage("agent", null, formatApprovalResult(data));
+      const messageId = addMessage("agent", null, formatApprovalResult(data));
+      followDefiExecution(data, messageId);
     } catch (err) {
       addMessage("agent", null, formatError({ error: err.message }));
     } finally {
@@ -185,6 +203,44 @@ export default function Terminal() {
     setLatestApprovalId(null);
     return data;
   };
+
+  const followDefiExecution = useCallback((data, messageId) => {
+    const actionId = extractDefiActionId(data);
+    if (!actionId || !shouldPollDefiAction(data)) return;
+    if (defiPollersRef.current.has(actionId)) clearTimeout(defiPollersRef.current.get(actionId));
+
+    let attempt = 0;
+    const poll = async () => {
+      attempt += 1;
+      try {
+        if (attempt > 1) {
+          try {
+            await post("/api/jobs/run-due", { limit: 10 });
+          } catch {}
+        }
+        const receiptData = await fetchJson(`/api/defi/actions/${encodeURIComponent(actionId)}/receipt`);
+        updateMessageHtml(messageId, formatDefiReceiptFollowup(receiptData, data));
+        const status = String(receiptData.receipt?.action?.status || "").toLowerCase();
+        const done = ["settled", "failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(status);
+        if (done || attempt >= 30) {
+          defiPollersRef.current.delete(actionId);
+          return;
+        }
+      } catch (error) {
+        if (attempt >= 30) {
+          updateMessageHtml(messageId, formatDefiPollingFailure(actionId, error));
+          defiPollersRef.current.delete(actionId);
+          return;
+        }
+      }
+
+      const timer = window.setTimeout(poll, attempt < 3 ? 1200 : 2500);
+      defiPollersRef.current.set(actionId, timer);
+    };
+
+    const timer = window.setTimeout(poll, 900);
+    defiPollersRef.current.set(actionId, timer);
+  }, [updateMessageHtml]);
 
   const trackApproval = (data) => {
     const payment = data.result?.payment;
@@ -305,6 +361,85 @@ function renderTxLink(txHash, explorerUrl) {
   const compact = compactHash(txHash);
   if (!explorerUrl) return `<code>${esc(compact)}</code>`;
   return `<a href="${esc(explorerUrl)}" target="_blank" rel="noreferrer" style="color:var(--green);font-weight:800">${esc(compact)}</a>`;
+}
+
+function extractDefiActionId(data) {
+  return data?.execution?.ids?.actionId
+    || data?.result?.action?.id
+    || data?.result?.receipt?.action?.id
+    || data?.receipt?.action?.id
+    || data?.action?.id
+    || null;
+}
+
+function shouldPollDefiAction(data) {
+  const action = data?.result?.action || data?.action || data?.receipt?.action || {};
+  const status = String(action.status || data?.execution?.status || "").toLowerCase();
+  const next = [
+    data?.nextAction,
+    data?.execution?.nextAction,
+    data?.result?.nextAction,
+    data?.result?.execution?.nextAction,
+    action.nextAction
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (["settled", "failed", "rejected", "quote_unavailable"].includes(status)) return false;
+  return ["confirmed", "submitted", "queued"].includes(status)
+    || /execution_queued|run_execution_worker|execute_defi_action|execution_provider_pending|reconcile_defi_action|monitor_receipt/.test(next);
+}
+
+function formatDefiReceiptFollowup(receiptData, originalData = {}) {
+  const receipt = receiptData.receipt || {};
+  const action = receipt.action || originalData.result?.action || {};
+  const request = action.request || originalData.planned?.intent || {};
+  const execution = receipt.execution || action.execution || {};
+  const type = action.type || request.action || "action";
+  const status = action.status || execution.status || "pending";
+  const statusType = ["settled", "submitted"].includes(String(status).toLowerCase())
+    ? "ok"
+    : ["failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(String(status).toLowerCase())
+    ? "fail"
+    : "warn";
+  const amount = request.amountUsd || request.amount || originalData.planned?.intent?.amount || "n/a";
+  const fromToken = request.fromToken || request.asset || "USDC";
+  const toToken = request.toToken || (type === "bridge" ? request.fromToken || "USDC" : "n/a");
+  const fromRail = request.fromRail || request.settlementRail || "arc-testnet";
+  const toRail = request.toRail || fromRail;
+  const txHash = receipt.txHash || execution.txHash || action.txHash;
+  const reason = action.reason || execution.reason || execution.error || "";
+  const title = defiReceiptTitle(type, status);
+
+  const rows = [
+    ["Action", `<code>${esc(action.id || extractDefiActionId(originalData) || "n/a")}</code>`],
+    ["Status", statusBadge(status, statusType)],
+    ["Amount", `${esc(amount)} ${esc(fromToken)}`],
+    [type === "bridge" ? "Route" : "Pair", `${esc(fromToken)} -> ${esc(toToken)}${type === "bridge" ? ` (${esc(fromRail)} -> ${esc(toRail)})` : ""}`],
+    ["Protocol", esc(action.protocol || execution.provider || "circle-app-kit")],
+    ["Tx", renderTxLink(txHash, receipt.explorerUrl || execution.explorerUrl)],
+    ["Receipt", receipt.publicUrl ? `<a href="${esc(receipt.publicUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"],
+    ["Next", esc(receipt.nextAction || action.nextAction || "none")],
+  ];
+
+  if (reason) rows.splice(3, 0, ["Reason", esc(reason)]);
+  return `${esc(title)}${renderResultCard(rows)}`;
+}
+
+function defiReceiptTitle(type, status) {
+  const normalizedStatus = String(status || "").toLowerCase();
+  const label = type === "swap" ? "Swap" : type === "bridge" ? "Bridge" : "Action";
+  if (normalizedStatus === "settled") return `${label} executed on-chain.`;
+  if (normalizedStatus === "submitted") return `${label} submitted on-chain.`;
+  if (["failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(normalizedStatus)) return `${label} did not execute.`;
+  return `${label} is still executing.`;
+}
+
+function formatDefiPollingFailure(actionId, error) {
+  return `I queued the action, but could not refresh the final receipt.${renderResultCard([
+    ["Action", `<code>${esc(actionId)}</code>`],
+    ["Status", statusBadge("refresh_failed", "fail")],
+    ["Reason", esc(error?.message || "Receipt polling failed")],
+    ["Next", "open Activity or run the receipt command"],
+  ])}`;
 }
 
 function renderAirdrop(airdrop, data = {}) {
