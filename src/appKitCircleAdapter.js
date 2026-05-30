@@ -87,7 +87,7 @@ export async function executeCircleAppKitBridge(input = {}) {
   const result = await params.kit.bridge(params.request);
   return {
     ok: true,
-    status: normalizeAppKitResultStatus(result?.state || result?.status),
+    status: normalizeAppKitResultStatus(result?.state || result?.status, result),
     provider: "circle-app-kit",
     mode: "real",
     operation: "bridge",
@@ -123,7 +123,7 @@ export async function executeCircleAppKitSwap(input = {}) {
   const result = await params.kit.swap(params.request);
   return {
     ok: true,
-    status: normalizeAppKitResultStatus(result?.state || result?.status),
+    status: normalizeAppKitResultStatus(result?.state || result?.status, result),
     provider: "circle-app-kit",
     mode: "real",
     operation: "swap",
@@ -456,10 +456,11 @@ function normalizeSwapToken(token) {
   return value === "ETH" ? "WETH" : value;
 }
 
-function normalizeAppKitResultStatus(state = "") {
+function normalizeAppKitResultStatus(state = "", context = null) {
   const normalized = String(state).toLowerCase();
   if (["success", "settled", "confirmed", "complete", "completed"].includes(normalized)) return "settled";
   if (["failed", "failure", "error", "reverted"].includes(normalized)) return "failed";
+  if (!normalized && (context?.txHash || context?.transactionHash || context?.hash)) return "settled";
   return "submitted";
 }
 
@@ -481,7 +482,7 @@ function extractSubmissions(result) {
   return steps
     .map((step, index) => ({
       refId: step.name || step.type || `appkit:${index}`,
-      status: normalizeAppKitResultStatus(step.state || step.status),
+      status: normalizeAppKitResultStatus(step.state || step.status, step),
       txHash: step.txHash || step.transactionHash || step.hash || null,
       rawStatus: step.state || step.status || null,
       submittedAt: new Date().toISOString()
