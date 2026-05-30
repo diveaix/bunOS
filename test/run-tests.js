@@ -1270,6 +1270,16 @@ const tests = [
       assert.equal(reverseSwap.plan.arguments.fromToken, "EURC");
       assert.equal(reverseSwap.plan.arguments.toToken, "USDC");
 
+      const naturalSwap = planAgentAction({
+        handle: "@sara",
+        text: "swap $1 of USDC to EURC"
+      });
+      assert.equal(naturalSwap.plan.tool, "quote_defi_route");
+      assert.equal(naturalSwap.intent.fromToken, "USDC");
+      assert.equal(naturalSwap.intent.toToken, "EURC");
+      assert.equal(naturalSwap.plan.arguments.fromToken, "USDC");
+      assert.equal(naturalSwap.plan.arguments.toToken, "EURC");
+
       const providerResolvedSwap = planAgentAction({
         handle: "@sara",
         text: "swap $1 WETH to USDC on arc"
