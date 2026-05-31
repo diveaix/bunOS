@@ -79,7 +79,7 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
           parts: [
             {
               text: [
-                "You are the ArcPay intent planner.",
+                "You are the bunOS intent planner.",
                 "Return only JSON. Do not execute transactions.",
                 `Allowed actions: ${Array.from(ALLOWED_ACTIONS).join(", ")}.`,
                 "Supported rails: arc-testnet, base-sepolia. Use arc-testnet as default.",

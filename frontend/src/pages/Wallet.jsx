@@ -8,7 +8,7 @@ import "./Wallet.css";
 export default function Wallet() {
   const { session, config, currentHandle, wallets, refresh, upsertWallet, login } = useSession();
   const notify = useToast();
-  const [selectedRail, setSelectedRail] = useState(() => localStorage.getItem("arcpay:rail") || "arc-testnet");
+  const [selectedRail, setSelectedRail] = useState(() => localStorage.getItem("bunos:rail") || "arc-testnet");
   const [activeView, setActiveView] = useState("assets");
   const [payments, setPayments] = useState([]);
   const [approvals, setApprovals] = useState([]);

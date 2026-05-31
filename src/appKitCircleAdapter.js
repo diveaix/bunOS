@@ -286,7 +286,7 @@ class CircleWalletEip1193Provider {
         walletId: wallet.id,
         message,
         encodedByHex: typeof message === "string" && message.startsWith("0x"),
-        memo: "ArcPay AppKit message signature"
+        memo: "bunOS AppKit message signature"
       });
       return unwrapSignature(response);
     } catch (error) {
@@ -300,7 +300,7 @@ class CircleWalletEip1193Provider {
       const response = await getCircleDeveloperClient().signTypedData({
         walletId: wallet.id,
         data: typeof data === "string" ? data : JSON.stringify(data),
-        memo: "ArcPay AppKit typed-data signature"
+        memo: "bunOS AppKit typed-data signature"
       });
       return unwrapSignature(response);
     } catch (error) {

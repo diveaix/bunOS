@@ -13,7 +13,7 @@ export function verifyXWebhook({ headers, rawBody = "" }) {
     return { ok: true, mode: "unsigned-demo", signed: false };
   }
 
-  const provided = headers["x-arcpay-signature"] || headers["X-ArcPay-Signature"];
+  const provided = headers["x-bunos-signature"] || headers["X-bunOS-Signature"];
   const expected = `sha256=${createHmac("sha256", config.webhookSecret).update(rawBody).digest("hex")}`;
 
   if (!safeEqual(provided, expected)) {
@@ -104,7 +104,7 @@ export function getXWebhookStatus({ host = "localhost:4317", protocol = "http" }
     eventId: `evt_demo_${Date.now()}`,
     postId: `post_demo_${Date.now()}`,
     actorHandle: "@sara",
-    text: "@ArcPay long BTC with 3 USDC at 2x",
+    text: "@bunOS long BTC with 3 USDC at 2x",
     settlementRail: "arc-testnet"
   };
   const rawBody = JSON.stringify(samplePayload);
@@ -117,7 +117,7 @@ export function getXWebhookStatus({ host = "localhost:4317", protocol = "http" }
     endpointUrl,
     mode: config.webhookSecret ? "hmac-sha256" : "unsigned-demo",
     signed: Boolean(config.webhookSecret),
-    headerName: "x-arcpay-signature",
+    headerName: "x-bunos-signature",
     eventIdHeader: "x-event-id",
     replayProtection: "eventId + normalized command idempotency key",
     received: ledger.xWebhooks.length,
@@ -127,7 +127,7 @@ export function getXWebhookStatus({ host = "localhost:4317", protocol = "http" }
     sample: {
       headers: {
         "content-type": "application/json",
-        ...(signature ? { "x-arcpay-signature": signature } : {})
+        ...(signature ? { "x-bunos-signature": signature } : {})
       },
       body: samplePayload,
       rawBody

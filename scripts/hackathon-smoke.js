@@ -71,7 +71,7 @@ await record("agent_swap_quote", async () => {
 await record("x_perps_command", async () => {
   const result = await processXPaymentEvent({
     actorHandle: handle,
-    text: "@ArcPay long BTC with 5 USDC at 2x",
+    text: "@bunOS long BTC with 5 USDC at 2x",
     postId: `${runId}_perp`,
     eventId: `${runId}:perp`,
     settlementRail: rail,

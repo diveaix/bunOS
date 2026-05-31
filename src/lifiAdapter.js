@@ -113,6 +113,7 @@ function resolveTokenAddress({ token, rail }) {
 
   const symbol = value.toUpperCase();
   if (symbol === "USDC") return rail.usdcAddress;
+  if (symbol === "EURC" && rail.eurcAddress) return rail.eurcAddress;
   if (symbol === "CIRBTC" && rail.cirbtcAddress) return rail.cirbtcAddress;
   if (symbol === "ETH" || symbol === rail.nativeCurrency?.symbol?.toUpperCase()) {
     return NATIVE_EVM_TOKEN;

@@ -96,7 +96,7 @@ const tests = [
   [
     "parses direct X-handle payment commands",
     async () => {
-      assert.deepEqual(parseSocialCommand("@ArcPay send 10 USDC to @alice"), {
+      assert.deepEqual(parseSocialCommand("@bunOS send 10 USDC to @alice"), {
         action: "send_payment",
         amount: 10,
         asset: "USDC",
@@ -107,7 +107,7 @@ const tests = [
   [
     "parses first-commenter bounty commands",
     async () => {
-      assert.deepEqual(parseSocialCommand("@ArcPay pay 10 USDC to whoever comments first"), {
+      assert.deepEqual(parseSocialCommand("@bunOS pay 10 USDC to whoever comments first"), {
         action: "create_social_bounty",
         amount: 10,
         asset: "USDC",
@@ -118,7 +118,7 @@ const tests = [
   [
     "parses X-native perp commands",
     async () => {
-      assert.deepEqual(parseSocialCommand("@ArcPay long BTC with $20 at 2x"), {
+      assert.deepEqual(parseSocialCommand("@bunOS long BTC with $20 at 2x"), {
         action: "propose_perp_trade",
         symbol: "BTC",
         side: "long",
@@ -290,7 +290,7 @@ const tests = [
     async () => {
       const result = await processXPaymentEvent({
         actorHandle: "@sara",
-        text: "@ArcPay send 4 USDC to @bob",
+        text: "@bunOS send 4 USDC to @bob",
         postId: "post_webhook_001",
         settlementRail: "arc-testnet"
       });
@@ -308,7 +308,7 @@ const tests = [
       const before = ledger.payments.length;
       const payload = {
         actorHandle: "@sara",
-        text: "@ArcPay send 2 USDC to @bob",
+        text: "@bunOS send 2 USDC to @bob",
         postId: "post_replay_001",
         eventId: "evt_replay_001",
         settlementRail: "arc-testnet"
@@ -327,7 +327,7 @@ const tests = [
     async () => {
       const result = await processXPaymentEvent({
         actorHandle: "@sara",
-        text: "@ArcPay short ETH with 15 USDC at 2x",
+        text: "@bunOS short ETH with 15 USDC at 2x",
         postId: "post_perp_001",
         eventId: "evt_perp_001",
         settlementRail: "arc-testnet"
@@ -355,7 +355,7 @@ const tests = [
 
       const replay = await processXPaymentEvent({
         actorHandle: "@sara",
-        text: "@ArcPay short ETH with 15 USDC at 2x",
+        text: "@bunOS short ETH with 15 USDC at 2x",
         postId: "post_perp_001",
         eventId: "evt_perp_001",
         settlementRail: "arc-testnet"
@@ -390,7 +390,7 @@ const tests = [
       const signature = `sha256=${createHmac("sha256", "test-secret").update(rawBody).digest("hex")}`;
 
       assert.deepEqual(verifyXWebhook({
-        headers: { "x-arcpay-signature": signature },
+        headers: { "x-bunos-signature": signature },
         rawBody
       }), { ok: true, mode: "hmac-sha256", signed: true });
       config.webhookSecret = "";
@@ -404,18 +404,18 @@ const tests = [
         eventId: "evt_delivery_001",
         postId: "post_delivery_001",
         actorHandle: "@sara",
-        text: "@ArcPay send 1 USDC to @bob",
+        text: "@bunOS send 1 USDC to @bob",
         settlementRail: "arc-testnet"
       };
       const rawBody = JSON.stringify(payload);
       const signature = `sha256=${createHmac("sha256", "test-secret").update(rawBody).digest("hex")}`;
 
       const first = await processXWebhookDelivery({
-        headers: { "x-arcpay-signature": signature },
+        headers: { "x-bunos-signature": signature },
         rawBody
       });
       const second = await processXWebhookDelivery({
-        headers: { "x-arcpay-signature": signature },
+        headers: { "x-bunos-signature": signature },
         rawBody
       });
 
@@ -437,7 +437,7 @@ const tests = [
 
       const result = await runXBotCommand({
         actorHandle: "@sara",
-        text: "@ArcPay long BTC with 12 USDC at 2x",
+        text: "@bunOS long BTC with 12 USDC at 2x",
         postId: "1234567890123456789",
         eventId: "evt_loop_perp_001",
         settlementRail: "arc-testnet",
@@ -464,7 +464,7 @@ const tests = [
         eventId: "evt_loop_replay_001",
         postId: "1234567890123456790",
         actorHandle: "@sara",
-        text: "@ArcPay send 1 USDC to @bob",
+        text: "@bunOS send 1 USDC to @bob",
         settlementRail: "arc-testnet"
       };
       const rawBody = JSON.stringify(payload);

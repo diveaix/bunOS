@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mainframe</title>
+
+    <link rel="stylesheet"
+        href="https://db.onlinewebfonts.com/c/5ac3fe7c6abd2f62067f266d89671492?family=HelveticaNowDisplay-Medium">
+    <link rel="stylesheet"
+        href="https://db.onlinewebfonts.com/c/1aa3377e489837a26d019bba501e779d?family=HelveticaNowDisplayW01-Rg">
+
+    <style>
+        :root {
+            --font-heading: 'HelveticaNowDisplay-Medium', 'Helvetica Neue', Arial, sans-serif;
+            --font-body: 'HelveticaNowDisplayW01-Rg', 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            min-height: 100%;
+            margin: 0;
+        }
+
+        body {
+            font-family: var(--font-body);
+            overflow: hidden;
+            background: #fff;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        button {
+            border: 0;
+            background: none;
+            font-family: inherit;
+            cursor: pointer;
+        }
+
+        .bg-video {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: 70% center;
+            background: #fff;
+        }
+
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 10;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 1.25rem;
+            color: #000;
+        }
+
+        .logo-wrap {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo {
+            font-family: var(--font-heading);
+            font-size: 21px;
+            letter-spacing: -0.03em;
+            line-height: 1;
+            color: #000;
+            white-space: nowrap;
+        }
+
+        .asterisk {
+            user-select: none;
+            font-size: 25px;
+            line-height: 1;
+            color: #000;
+            letter-spacing: -0.02em;
+        }
+
+        .desktop-nav,
+        .desktop-cta {
+            display: none;
+        }
+
+        .hamburger {
+            position: relative;
+            z-index: 11;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            padding: 0.5rem;
+            margin-right: -0.5rem;
+        }
+
+        .hamburger span {
+            display: block;
+            width: 1.5rem;
+            height: 2px;
+            background: #000;
+            transition: transform 300ms ease, opacity 300ms ease;
+            transform-origin: center;
+        }
+
+        .hamburger.is-open span:nth-child(1) {
+            transform: translateY(7px) rotate(45deg);
+        }
+
+        .hamburger.is-open span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger.is-open span:nth-child(3) {
+            transform: translateY(-7px) rotate(-45deg);
+        }
+
+        .mobile-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 9;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 2rem;
+            padding-inline: 2rem;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(8px);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 300ms ease;
+        }
+
+        .mobile-overlay.is-open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .mobile-overlay a {
+            font-size: 32px;
+            font-weight: 500;
+            line-height: 1;
+            color: #000;
+        }
+
+        .mobile-overlay .mobile-touch {
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .hero {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            width: 100%;
+            height: 100vh;
+            height: 100svh;
+            padding: 0 1.25rem 3rem;
+            overflow: hidden;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 10;
+            max-width: 36rem;
+        }
+
+        .intro-label {
+            pointer-events: none;
+            user-select: none;
+            margin: 0 0 1.25rem;
+            font-size: clamp(18px, 4vw, 26px);
+            line-height: 1.3;
+            font-weight: 400;
+            color: #000;
+            filter: blur(4px);
+        }
+
+        .typewriter {
+            min-height: 54px;
+            margin: 0 0 1.25rem;
+            font-size: clamp(18px, 4vw, 26px);
+            line-height: 1.35;
+            font-weight: 400;
+            color: #000;
+        }
+
+        .cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1.1em;
+            margin-left: 2px;
+            vertical-align: middle;
+            background: #000;
+            animation: blink 1s step-end infinite;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
+
+        .pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap-y: 0.25rem;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 0.4s ease, transform 0.4s ease;
+        }
+
+        .pill-row.is-visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 0.2em 0.4em;
+            padding: 0.3em 1rem;
+            border-radius: 9999px;
+            white-space: nowrap;
+            font-size: 13px;
+            line-height: 1.35;
+            transition: color 200ms ease, background-color 200ms ease, border-color 200ms ease;
+        }
+
+        .pill-white {
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            background: #fff;
+            color: #000;
+        }
+
+        .pill-white:hover {
+            background: #000;
+            color: #fff;
+        }
+
+        .pill-outline {
+            gap: 0.5rem;
+            border: 1px solid #fff;
+            background: transparent;
+            color: #fff;
+        }
+
+        .pill-outline:hover {
+            background: #fff;
+            color: #000;
+        }
+
+        .pill-outline .email {
+            text-decoration: underline;
+            text-underline-offset: 1px;
+        }
+
+        .copy-icon {
+            width: 12px;
+            height: 12px;
+            flex: 0 0 auto;
+        }
+
+        @media (min-width: 640px) {
+            .navbar {
+                padding: 1.25rem 2rem;
+            }
+
+            .logo {
+                font-size: 26px;
+            }
+
+            .asterisk {
+                font-size: 30px;
+            }
+
+            .hero {
+                padding-inline: 2rem;
+            }
+
+            .intro-label,
+            .typewriter {
+                margin-bottom: 1.5rem;
+            }
+
+            .pill {
+                padding-inline: 1.25rem;
+                font-size: 15px;
+            }
+
+            .pill-outline {
+                gap: 0.75rem;
+            }
+        }
+
+        @media (min-width: 768px) {
+            .desktop-nav {
+                display: flex;
+                align-items: center;
+                font-size: 23px;
+                line-height: 1;
+                color: #000;
+            }
+
+            .desktop-nav a,
+            .desktop-cta {
+                transition: opacity 200ms ease;
+            }
+
+            .desktop-nav a:hover,
+            .desktop-cta:hover {
+                opacity: 0.6;
+            }
+
+            .desktop-cta {
+                display: block;
+                font-size: 23px;
+                line-height: 1;
+                color: #000;
+                text-decoration: underline;
+                text-underline-offset: 2px;
+            }
+
+            .hamburger,
+            .mobile-overlay {
+                display: none;
+            }
+
+            .hero {
+                justify-content: center;
+                padding: 0 2.5rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <video id="heroVideo" class="bg-video" muted playsinline preload="auto">
+        <source
+            src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260530_042513_df96a13b-6155-4f6e-8b93-c9dee66fba08.mp4"
+            type="video/mp4">
+    </video>
+
+    <header class="navbar">
+        <a class="logo-wrap" href="#" aria-label="Mainframe home">
+            <span class="logo">Mainframe®</span>
+            <span class="asterisk" aria-hidden="true">✳︎</span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="Primary navigation">
+            <a href="#">Labs</a><span>,&nbsp;</span>
+            <a href="#">Studio</a><span>,&nbsp;</span>
+            <a href="#">Openings</a><span>,&nbsp;</span>
+            <a href="#">Shop</a>
+        </nav>
+
+        <a class="desktop-cta" href="mailto:hello@mainframe.co">Get in touch</a>
+
+        <button class="hamburger" id="menuButton" type="button" aria-label="Open menu" aria-expanded="false">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+    </header>
+
+    <nav class="mobile-overlay" id="mobileOverlay" aria-label="Mobile navigation">
+        <a href="#">Labs</a>
+        <a href="#">Studio</a>
+        <a href="#">Openings</a>
+        <a href="#">Shop</a>
+        <a class="mobile-touch" href="mailto:hello@mainframe.co">Get in touch</a>
+    </nav>
+
+    <main class="hero">
+        <section class="hero-content" aria-label="Mainframe introduction">
+            <p class="intro-label">Hey there, meet A.R.I.A,<br>Mainframe's Adaptive Response Interface Agent</p>
+
+            <p class="typewriter" aria-live="polite">
+                <span id="typewriterText"></span><span id="cursor" class="cursor"></span>
+            </p>
+
+            <div class="pill-row" id="pillRow">
+                <a class="pill pill-white" href="#">Pitch us an idea</a>
+                <a class="pill pill-white" href="#">Come work here</a>
+                <a class="pill pill-white" href="#">Send a brief hello</a>
+                <a class="pill pill-white" href="#">See how we operate</a>
+
+                <button class="pill pill-outline" id="copyEmail" type="button" aria-label="Copy hello@mainframe.co">
+                    <span>Reach us: <span class="email">hello@mainframe.co</span></span>
+                    <svg class="copy-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <rect x="8" y="8" width="11" height="11" rx="1.5" stroke="currentColor" stroke-width="2"></rect>
+                        <rect x="5" y="5" width="11" height="11" rx="1.5" stroke="currentColor" stroke-width="2"
+                            opacity="0.55"></rect>
+                    </svg>
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        function clamp(value, min, max) {
+            return Math.min(Math.max(value, min), max);
+        }
+
+        function useTypewriter(text, speed = 38, startDelay = 600) {
+            const output = document.getElementById('typewriterText');
+            const cursor = document.getElementById('cursor');
+            let index = 0;
+
+            window.setTimeout(() => {
+                const interval = window.setInterval(() => {
+                    output.textContent = text.slice(0, index + 1);
+                    index += 1;
+
+                    if (index >= text.length) {
+                        window.clearInterval(interval);
+                        cursor.style.display = 'none';
+                    }
+                }, speed);
+            }, startDelay);
+        }
+
+        function setupMouseScrubVideo() {
+            const video = document.getElementById('heroVideo');
+            const SENSITIVITY = 0.8;
+
+            let prevX = null;
+            let targetTime = 0;
+            let isSeeking = false;
+            let isReady = false;
+
+            video.addEventListener('loadedmetadata', () => {
+                isReady = Number.isFinite(video.duration) && video.duration > 0;
+                targetTime = video.currentTime || 0;
+            });
+
+            function seekToTarget() {
+                if (!isReady || isSeeking) return;
+
+                const diff = Math.abs(video.currentTime - targetTime);
+                if (diff < 0.015) return;
+
+                isSeeking = true;
+                video.currentTime = targetTime;
+            }
+
+            window.addEventListener('mousemove', (event) => {
+                if (!isReady) return;
+
+                if (prevX === null) {
+                    prevX = event.clientX;
+                    return;
+                }
+
+                const delta = event.clientX - prevX;
+                prevX = event.clientX;
+
+                const offset = (delta / window.innerWidth) * SENSITIVITY * video.duration;
+                targetTime = clamp(targetTime + offset, 0, video.duration);
+
+                seekToTarget();
+            }, { passive: true });
+
+            video.addEventListener('seeked', () => {
+                isSeeking = false;
+                seekToTarget();
+            });
+        }
+
+        function setupMobileMenu() {
+            const button = document.getElementById('menuButton');
+            const overlay = document.getElementById('mobileOverlay');
+
+            button.addEventListener('click', () => {
+                const isOpen = button.classList.toggle('is-open');
+                overlay.classList.toggle('is-open', isOpen);
+                button.setAttribute('aria-expanded', String(isOpen));
+                button.setAttribute('aria-label', isOpen ? 'Close menu' : 'Open menu');
+            });
+
+            overlay.querySelectorAll('a').forEach((link) => {
+                link.addEventListener('click', () => {
+                    button.classList.remove('is-open');
+                    overlay.classList.remove('is-open');
+                    button.setAttribute('aria-expanded', 'false');
+                    button.setAttribute('aria-label', 'Open menu');
+                });
+            });
+        }
+
+        function setupCopyEmail() {
+            const button = document.getElementById('copyEmail');
+            const email = 'hello@mainframe.co';
+            const original = button.innerHTML;
+
+            button.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(email);
+                    button.innerHTML = '<span>Copied: <span class="email">' + email + '</span></span>';
+                    window.setTimeout(() => {
+                        button.innerHTML = original;
+                    }, 1200);
+                } catch (error) {
+                    window.location.href = 'mailto:' + email;
+                }
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            useTypewriter('Glad you stopped in. Good taste tends to find us. Now, what are we building?', 38, 600);
+            setupMouseScrubVideo();
+            setupMobileMenu();
+            setupCopyEmail();
+
+            window.setTimeout(() => {
+                document.getElementById('pillRow').classList.add('is-visible');
+            }, 400);
+        });
+    </script>
+</body>
+
+</html>

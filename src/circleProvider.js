@@ -115,7 +115,7 @@ async function provisionRealCircleWallets({ handle, rails }) {
       blockchains: rails.map((rail) => rail.circleBlockchain),
       accountType: "EOA",
       count: 1,
-      metadata: [{ name: `${handle} ArcPay wallet` }]
+      metadata: [{ name: `${handle} bunOS wallet` }]
     });
   } catch (error) {
     throw new Error(circleErrorMessage(error, "Circle wallet creation failed"));

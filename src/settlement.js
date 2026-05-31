@@ -12,6 +12,7 @@ const rails = {
     circleBlockchain: "ARC-TESTNET",
     nativeCurrency: { symbol: "USDC", decimals: 18 },
     usdcAddress: "0x3600000000000000000000000000000000000000",
+    eurcAddress: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
     cirbtcAddress: "0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF",
     cctpDomain: 26,
     rpcUrl: config.arc.rpcUrl,

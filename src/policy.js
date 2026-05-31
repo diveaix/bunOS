@@ -5,7 +5,7 @@ export function evaluatePolicy({ sender, amount, asset, settlementRail }) {
 
   const policy = sender.policy;
   if (!policy) {
-    return deny("Sender does not have an ArcPay spending policy");
+    return deny("Sender does not have an bunOS spending policy");
   }
 
   if (!policy.allowedAssets.includes(asset)) {

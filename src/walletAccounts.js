@@ -305,7 +305,7 @@ export function toWalletProfile(user) {
     wallets: enabledChainWallets(user),
     walletSetId: user.walletSetId,
     xConnected: Boolean(user.xOAuth?.connected),
-    receiveLabel: `${user.handle} on ArcPay`
+    receiveLabel: `${user.handle} on bunOS`
   };
 }
 

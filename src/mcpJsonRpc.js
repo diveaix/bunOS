@@ -11,7 +11,7 @@ export async function handleMcpJsonRpc(body, context = {}) {
       result: {
         protocolVersion: "2025-06-18",
         serverInfo: {
-          name: "ArcPay Social Agent",
+          name: "bunOS Social Agent",
           version: "0.1.0"
         },
         capabilities: {

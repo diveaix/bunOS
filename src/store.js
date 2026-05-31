@@ -7,8 +7,8 @@ import { syncIdCounters } from "./ids.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const dbFile = process.env.SQLITE_FILE || (process.env.VERCEL
-  ? "/tmp/arcpay.sqlite"
-  : join(root, ".data", "arcpay.sqlite"));
+  ? "/tmp/bunos.sqlite"
+  : join(root, ".data", "bunos.sqlite"));
 
 let db;
 

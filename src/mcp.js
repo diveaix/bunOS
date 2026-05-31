@@ -273,7 +273,7 @@ export const mcpTools = [
   },
   {
     name: "get_balance",
-    description: "Read a user's Circle wallet balances across ArcPay settlement rails.",
+    description: "Read a user's Circle wallet balances across bunOS settlement rails.",
     inputSchema: {
       type: "object",
       properties: {
@@ -295,7 +295,7 @@ export const mcpTools = [
   },
   {
     name: "sync_circle_balances",
-    description: "Refresh a user's real Circle wallet token balances into the ArcPay ledger.",
+    description: "Refresh a user's real Circle wallet token balances into the bunOS ledger.",
     inputSchema: {
       type: "object",
       properties: {
@@ -402,7 +402,7 @@ export const mcpTools = [
   },
   {
     name: "get_receipt",
-    description: "Get a payment receipt and timeline for an ArcPay action.",
+    description: "Get a payment receipt and timeline for an bunOS action.",
     inputSchema: {
       type: "object",
       properties: {
@@ -727,7 +727,7 @@ export const mcpTools = [
   },
   {
     name: "resolve_x_handle",
-    description: "Resolve an X handle into an ArcPay payment identity.",
+    description: "Resolve an X handle into an bunOS payment identity.",
     inputSchema: {
       type: "object",
       properties: {
@@ -768,7 +768,7 @@ export const mcpTools = [
   },
   {
     name: "list_defi_tools",
-    description: "List ArcPay DeFi tool adapters and their risk/execution status.",
+    description: "List bunOS DeFi tool adapters and their risk/execution status.",
     inputSchema: {
       type: "object",
       properties: {}

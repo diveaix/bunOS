@@ -31,7 +31,7 @@ export default function Terminal() {
   const [latestApprovalId, setLatestApprovalId] = useState(null);
   const chatRef = useRef(null);
   const inputRef = useRef(null);
-  const handleRef = useRef(currentHandle || localStorage.getItem("arcpay:handle") || "");
+  const handleRef = useRef(currentHandle || localStorage.getItem("bunos:handle") || "");
   const defiPollersRef = useRef(new Map());
 
   useEffect(() => {
@@ -83,7 +83,7 @@ export default function Terminal() {
       }
 
       handleRef.current = handle;
-      localStorage.setItem("arcpay:handle", handle);
+      localStorage.setItem("bunos:handle", handle);
 
       const wallet = wallets.find((w) => w.handle === handle);
       setWalletLabel(
@@ -143,7 +143,7 @@ export default function Terminal() {
         body: JSON.stringify({
           handle: handleRef.current,
           text: value,
-          defaultSettlementRail: localStorage.getItem("arcpay:rail") || "arc-testnet",
+          defaultSettlementRail: localStorage.getItem("bunos:rail") || "arc-testnet",
           source: "terminal",
           fast: true,
         }),
@@ -221,7 +221,9 @@ export default function Terminal() {
         const receiptData = await fetchJson(`/api/defi/actions/${encodeURIComponent(actionId)}/receipt`);
         updateMessageHtml(messageId, formatDefiReceiptFollowup(receiptData, data));
         const status = String(receiptData.receipt?.action?.status || "").toLowerCase();
-        const done = ["settled", "failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(status);
+        const jobStatus = String(receiptData.receipt?.executionJob?.status || "").toLowerCase();
+        const done = ["settled", "failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(status)
+          || jobStatus === "failed";
         if (done || attempt >= 30) {
           defiPollersRef.current.delete(actionId);
           return;
@@ -393,8 +395,9 @@ function formatDefiReceiptFollowup(receiptData, originalData = {}) {
   const action = receipt.action || originalData.result?.action || {};
   const request = action.request || originalData.planned?.intent || {};
   const execution = receipt.execution || action.execution || {};
+  const executionJob = receipt.executionJob || null;
   const type = action.type || request.action || "action";
-  const status = action.status || execution.status || "pending";
+  const status = action.status || execution.status || executionJob?.status || "pending";
   const statusType = ["settled", "submitted"].includes(String(status).toLowerCase())
     ? "ok"
     : ["failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(String(status).toLowerCase())
@@ -406,7 +409,7 @@ function formatDefiReceiptFollowup(receiptData, originalData = {}) {
   const fromRail = request.fromRail || request.settlementRail || "arc-testnet";
   const toRail = request.toRail || fromRail;
   const txHash = receipt.txHash || execution.txHash || action.txHash;
-  const reason = action.reason || execution.reason || execution.error || "";
+  const reason = action.reason || execution.reason || execution.error || executionJob?.lastError || action.lastExecutionError || "";
   const title = defiReceiptTitle(type, status);
 
   const rows = [
@@ -421,6 +424,7 @@ function formatDefiReceiptFollowup(receiptData, originalData = {}) {
   ];
 
   if (reason) rows.splice(3, 0, ["Reason", esc(reason)]);
+  if (executionJob) rows.splice(4, 0, ["Job", `<code>${esc(executionJob.id)}</code> ${statusBadge(executionJob.status, executionJob.status === "failed" ? "fail" : "warn")} ${esc(`${executionJob.attempts}/${executionJob.maxAttempts}`)}`]);
   return `${esc(title)}${renderResultCard(rows)}`;
 }
 
@@ -728,6 +732,6 @@ async function runAutomationCommand(text, handle) {
   }
   return requestJson("/api/automations", {
     method: "POST",
-    body: { handle, text, intervalMinutes, defaultSettlementRail: localStorage.getItem("arcpay:rail") || "arc-testnet" },
+    body: { handle, text, intervalMinutes, defaultSettlementRail: localStorage.getItem("bunos:rail") || "arc-testnet" },
   });
 }

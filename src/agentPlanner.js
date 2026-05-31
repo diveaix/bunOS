@@ -437,11 +437,25 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
   }
 
   if (plan.tool === "arc_perps_readiness") {
-    return getArcPerpsReadiness();
+    const readiness = getArcPerpsReadiness();
+    return {
+      ok: true,
+      status: readiness.ok ? "ready" : "not_configured",
+      readiness,
+      reason: readiness.ok ? "ArcPerps contracts are configured." : `ArcPerps contracts are not configured: ${readiness.missing.join(", ")}`,
+      nextAction: readiness.ok ? "inspect_arc_perps_status" : "configure_arc_perps_contracts"
+    };
   }
 
   if (plan.tool === "arc_perps_status") {
-    return await getArcPerpsStatus(args);
+    const status = await getArcPerpsStatus(args);
+    return {
+      ok: true,
+      status: status.ok ? "ready" : "not_configured",
+      arcPerps: status,
+      reason: status.ok ? "ArcPerps status loaded." : `ArcPerps contracts are not configured: ${status.missing?.join(", ") || "missing configuration"}`,
+      nextAction: status.ok ? "review_status" : "configure_arc_perps_contracts"
+    };
   }
 
   if (plan.tool === "quote_arc_perp_position") {
@@ -1072,7 +1086,7 @@ function planFromIntent({ intent, handle, defaultSettlementRail, source }) {
         requiresUserApproval: false,
         executionStatus: "policy_checked"
       }),
-      reason: "The agent can quote and immediately execute the bridge from the user's Circle wallet."
+      reason: "The agent will request a live bridge route from the configured user-wallet providers and fail closed if no provider route exists."
     };
   }
 
@@ -1097,7 +1111,7 @@ function planFromIntent({ intent, handle, defaultSettlementRail, source }) {
         requiresUserApproval: false,
         executionStatus: "policy_checked"
       }),
-      reason: "The agent can quote and immediately execute the swap from the user's Circle wallet."
+      reason: "The agent will request a live swap route from the configured user-wallet providers and fail closed if no provider route exists."
     };
   }
 
@@ -1263,7 +1277,8 @@ function buildAgentExecutionReport({ planned, result = {} } = {}) {
     "position_lookup_failed",
     "wallet_not_found",
     "user_wallet_signing_required",
-    "execution_not_enabled"
+    "execution_not_enabled",
+    "quote_unavailable"
   ]);
   const ok = result.ok !== false && !failureStatuses.has(String(status || "").toLowerCase());
   const nextAction = ok
@@ -1317,6 +1332,8 @@ function nextActionForStatus(status, planned) {
   if (value === "position_not_found") return "list_arc_perps_positions";
   if (value === "user_wallet_signing_required") return "connect_or_enable_user_wallet_signing";
   if (value === "execution_not_enabled") return "enable_execution_or_check_provider";
+  if (value === "quote_unavailable") return "choose_supported_route";
+  if (value === "not_configured") return "configure_required_environment";
   if (value === "failed" || value === "rejected") return "inspect_reason";
   return planned?.nextAction || "review_result";
 }
@@ -1357,7 +1374,7 @@ function upgradeTerminalPlan(planned) {
       canExecuteNow: true,
       requiresConfirmation: false,
       signer,
-      reason: `The agent can create a live ${planned.intent.action === "quote_bridge" ? "bridge" : "swap"} route and execute it immediately from the user's Circle wallet.`
+      reason: `The agent will create a live ${planned.intent.action === "quote_bridge" ? "bridge" : "swap"} route through configured user-wallet providers and fail closed if no route exists.`
     },
     signer,
     policy: {

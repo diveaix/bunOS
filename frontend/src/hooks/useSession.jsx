@@ -13,7 +13,7 @@ export function SessionProvider({ children }) {
     x: {},
   });
   const [currentHandle, setCurrentHandle] = useState(
-    () => new URLSearchParams(location.search).get("handle") || localStorage.getItem("arcpay:handle") || ""
+    () => new URLSearchParams(location.search).get("handle") || localStorage.getItem("bunos:handle") || ""
   );
   const [wallets, setWallets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -32,7 +32,7 @@ export function SessionProvider({ children }) {
 
       const queryParams = new URLSearchParams(location.search);
       const explicitHandle = queryParams.has("handle");
-      const loggedOut = localStorage.getItem("arcpay:loggedOut") === "1" && !explicitHandle && !sessionData.session?.handle;
+      const loggedOut = localStorage.getItem("bunos:loggedOut") === "1" && !explicitHandle && !sessionData.session?.handle;
       const realMode = appConfig.providerMode === "real";
       const sessionHandle = normalizeHandle(sessionData.session?.handle || "");
       const allWallets = walletData.wallets || [];
@@ -53,10 +53,10 @@ export function SessionProvider({ children }) {
       }
 
       if (handle) {
-        localStorage.setItem("arcpay:handle", handle);
-        localStorage.removeItem("arcpay:loggedOut");
+        localStorage.setItem("bunos:handle", handle);
+        localStorage.removeItem("bunos:loggedOut");
       } else if (realMode) {
-        localStorage.removeItem("arcpay:handle");
+        localStorage.removeItem("bunos:handle");
       }
 
       setCurrentHandle(handle);
@@ -80,22 +80,22 @@ export function SessionProvider({ children }) {
     const h = normalizeHandle(handle || "@demo");
     await post("/api/auth/x/mock", { handle: h });
     setCurrentHandle(h);
-    localStorage.setItem("arcpay:handle", h);
-    localStorage.removeItem("arcpay:loggedOut");
+    localStorage.setItem("bunos:handle", h);
+    localStorage.removeItem("bunos:loggedOut");
     await refresh();
   }, [config, refresh]);
 
   const logout = useCallback(async () => {
     await post("/api/auth/logout", {}).catch(() => null);
-    localStorage.removeItem("arcpay:handle");
-    localStorage.setItem("arcpay:loggedOut", "1");
+    localStorage.removeItem("bunos:handle");
+    localStorage.setItem("bunos:loggedOut", "1");
     setSession(null);
     setCurrentHandle("");
   }, []);
 
   const switchHandle = useCallback((handle) => {
     setCurrentHandle(handle);
-    localStorage.setItem("arcpay:handle", handle);
+    localStorage.setItem("bunos:handle", handle);
   }, []);
 
   const upsertWallet = useCallback((wallet) => {

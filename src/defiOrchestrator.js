@@ -50,8 +50,10 @@ export async function quoteDefiRoute(input) {
     quote = await getPreferredRouteQuote({ input: action, fromAddress, toAddress });
     record.protocol = quote.provider;
   } catch (error) {
+    const routeHelp = buildRouteUnavailableHelp({ action, error });
     record.status = "quote_unavailable";
-    record.reason = error.message;
+    record.reason = routeHelp.reason;
+    record.suggestions = routeHelp.suggestions;
     record.signer = userWalletSigningRequired({
       operation: record.type,
       settlementRail: action.fromRail,
@@ -63,7 +65,9 @@ export async function quoteDefiRoute(input) {
       ok: false,
       action: record,
       policy,
-      reason: error.message,
+      reason: routeHelp.reason,
+      providerError: error.message,
+      suggestions: routeHelp.suggestions,
       nextAction: "choose_supported_route"
     };
   }
@@ -239,25 +243,78 @@ export function getDefiActionReceipt({ actionId, host, protocol = "http" } = {})
     throw new Error("DeFi action not found");
   }
 
+  const executionJob = action.executionJobId
+    ? ledger.jobs.find((job) => job.id === action.executionJobId) || null
+    : null;
+  const receiptAction = actionForReceipt(action, executionJob);
   const events = ledger.events.filter((event) => event.defiActionId === action.id);
   const approval = action.approvalId
     ? ledger.approvals.find((item) => item.id === action.approvalId) || null
     : null;
-  const txHash = action.txHash || action.execution?.txHash || null;
-  const rail = safeRail(action.request?.fromRail);
+  const txHash = receiptAction.txHash || receiptAction.execution?.txHash || null;
+  const rail = safeRail(receiptAction.request?.fromRail);
 
   return {
     ok: true,
     receipt: {
-      action,
+      action: receiptAction,
       approval,
-      execution: action.execution || null,
+      execution: receiptAction.execution || null,
+      executionJob: executionJob ? publicJobSnapshot(executionJob) : null,
       txHash,
       explorerUrl: txHash && rail?.explorerBaseUrl ? `${rail.explorerBaseUrl}${txHash}` : null,
       publicUrl: host ? `${protocol}://${host}/defi/actions/${action.id}` : null,
-      timeline: buildDefiTimeline(action, events),
-      nextAction: nextActionForDefiAction(action)
+      timeline: buildDefiTimeline(receiptAction, events),
+      nextAction: nextActionForDefiAction(receiptAction)
     }
+  };
+}
+
+function actionForReceipt(action, executionJob) {
+  if (!executionJob) return action;
+
+  if (action.status === "confirmed" && executionJob.status === "failed") {
+    return {
+      ...action,
+      status: "failed",
+      failedAt: executionJob.updatedAt,
+      failureReason: executionJob.lastError || action.failureReason || "Execution job failed",
+      execution: {
+        ...(action.execution || {}),
+        ok: false,
+        status: "failed",
+        provider: action.protocol || action.execution?.provider || "unknown",
+        mode: action.execution?.mode || "real",
+        backendSignerAllowed: false,
+        reason: executionJob.lastError || action.failureReason || "Execution job failed",
+        jobId: executionJob.id,
+        attempts: executionJob.attempts
+      }
+    };
+  }
+
+  if (action.status === "confirmed" && executionJob.lastError) {
+    return {
+      ...action,
+      lastExecutionError: executionJob.lastError,
+      lastExecutionAttemptAt: executionJob.updatedAt,
+      nextAction: executionJob.status === "queued" ? "retry_execution_worker" : action.nextAction
+    };
+  }
+
+  return action;
+}
+
+function publicJobSnapshot(job) {
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    attempts: job.attempts,
+    maxAttempts: job.maxAttempts,
+    runAfter: job.runAfter,
+    lastError: job.lastError,
+    updatedAt: job.updatedAt
   };
 }
 
@@ -321,6 +378,29 @@ function createDefiAction({ user, action, policy }) {
   ledger.defiActions.push(record);
   recordEvent("defi_action_created", record);
   return record;
+}
+
+function buildRouteUnavailableHelp({ action, error }) {
+  const pair = `${action.fromToken || "USDC"} -> ${action.toToken || "USDC"}`;
+  const route = action.type === "bridge"
+    ? `${action.fromRail} -> ${action.toRail}`
+    : action.fromRail;
+  const providerReason = error?.message || "No provider returned a route";
+  const suggestions = action.type === "swap"
+    ? [
+      "Try a token contract address for a pair with known Arc liquidity.",
+      "Try a larger test amount; some providers reject tiny routes.",
+      "Use bridge 1 USDC from arc to base if you need a currently proven live route."
+    ]
+    : [
+      "Try bridge 1 USDC from arc to base.",
+      "Check that both source and destination wallets are funded and supported."
+    ];
+
+  return {
+    reason: `No live ${action.type} route is currently available for ${pair} on ${route}. Provider details: ${providerReason}`,
+    suggestions
+  };
 }
 
 function normalizeAction(action) {

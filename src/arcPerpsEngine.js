@@ -209,7 +209,11 @@ export async function quoteArcPerpPosition({
 }
 
 export async function readArcPerpsOraclePrice({ symbol = "BTC" } = {}) {
-  assertReadReady();
+  const readiness = getArcPerpsReadiness();
+  const readMissing = readiness.missing.filter((item) => item !== "ARC_SETTLEMENT_PRIVATE_KEY");
+  if (readMissing.length) {
+    return readBlocked("read_arc_perps_oracle_price", readiness, { symbol: symbol.toUpperCase() });
+  }
   const oracle = await getOracleArtifact();
   const { publicClient } = getPublicClient();
   const [price, timestamp] = await publicClient.readContract({
@@ -578,7 +582,14 @@ export async function syncArcPerpsOracleFromHyperliquid({ symbols = config.arcPe
 }
 
 export async function listArcPerpsPositions({ ownerAddress, limit = 25 } = {}) {
-  assertReadReady();
+  const readiness = getArcPerpsReadiness();
+  const readMissing = readiness.missing.filter((item) => item !== "ARC_SETTLEMENT_PRIVATE_KEY");
+  if (readMissing.length) {
+    return {
+      ...readBlocked("list_arc_perps_positions", readiness, { ownerAddress: ownerAddress || null }),
+      positions: []
+    };
+  }
   const vault = await getVaultArtifact();
   const { publicClient } = getPublicClient();
   const nextPositionId = await publicClient.readContract({
@@ -606,7 +617,11 @@ export async function listArcPerpsPositions({ ownerAddress, limit = 25 } = {}) {
 }
 
 export async function getArcPerpsPosition({ positionId } = {}) {
-  assertReadReady();
+  const readiness = getArcPerpsReadiness();
+  const readMissing = readiness.missing.filter((item) => item !== "ARC_SETTLEMENT_PRIVATE_KEY");
+  if (readMissing.length) {
+    return readBlocked("get_arc_perps_position", readiness, { positionId: Number(positionId || 0) || null, position: null });
+  }
   const vault = await getVaultArtifact();
   const { publicClient } = getPublicClient();
   const position = await readPosition({ publicClient, vault, positionId });
@@ -655,6 +670,19 @@ async function readPosition({ publicClient, vault, positionId }) {
   }
   delete position.rawEntryPrice;
   return position;
+}
+
+function readBlocked(operation, readiness, extra = {}) {
+  return {
+    ok: false,
+    status: "not_configured",
+    operation,
+    backendSignerAllowed: false,
+    readiness,
+    signer: readOnlySigner({ operation, settlementRail: "arc-testnet" }),
+    reason: `ArcPerps contracts are not configured: ${readiness.missing.join(", ")}`,
+    ...extra
+  };
 }
 
 function assertAdminExecutionReady() {

@@ -107,6 +107,7 @@ export async function runJob({ jobId }) {
     job.status = job.attempts >= job.maxAttempts ? "failed" : "queued";
     job.runAfter = new Date(Date.now() + backoffMs(job.attempts)).toISOString();
     job.updatedAt = new Date().toISOString();
+    markJobTargetFailure(job, error);
     ledger.events.push({
       id: nextEventId(),
       at: new Date().toISOString(),
@@ -118,6 +119,34 @@ export async function runJob({ jobId }) {
       status: job.status
     });
     return { ok: false, job, error: error.message };
+  }
+}
+
+function markJobTargetFailure(job, error) {
+  if (job.type !== "execute_defi_action") return;
+  const action = ledger.defiActions.find((item) => item.id === job.payload?.actionId);
+  if (!action) return;
+
+  action.lastExecutionError = error.message;
+  action.lastExecutionAttemptAt = job.updatedAt;
+  if (job.status === "failed") {
+    action.status = "failed";
+    action.failedAt = job.updatedAt;
+    action.failureReason = error.message;
+    action.nextAction = "review_failed_execution";
+    action.execution = {
+      ...(action.execution || {}),
+      ok: false,
+      status: "failed",
+      provider: action.protocol || action.execution?.provider || "unknown",
+      mode: action.execution?.mode || "real",
+      backendSignerAllowed: false,
+      reason: error.message,
+      jobId: job.id,
+      attempts: job.attempts
+    };
+  } else {
+    action.nextAction = "retry_execution_worker";
   }
 }
 

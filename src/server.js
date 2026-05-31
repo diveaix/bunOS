@@ -213,7 +213,7 @@ export const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/session") {
-      const session = getSession(readCookie(req, "arcpay_session"));
+      const session = getSession(readCookie(req, "bunos_session"));
       return json(res, { ok: true, session });
     }
 
@@ -242,7 +242,7 @@ export const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
-      const result = destroySession(readCookie(req, "arcpay_session"));
+      const result = destroySession(readCookie(req, "bunos_session"));
       return json(res, result, 200, clearSessionCookieHeader());
     }
 
@@ -554,7 +554,7 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/mcp") {
       return json(res, {
-        name: "ArcPay MCP",
+        name: "bunOS MCP",
         transport: "json-rpc-over-http",
         endpoints: {
           http: "/mcp",
@@ -956,7 +956,7 @@ let backgroundWorkerRunning = false;
 
 if (!process.env.VERCEL) {
   server.listen(port, () => {
-    console.log(`ArcPay prototype running on http://localhost:${port}`);
+    console.log(`bunOS prototype running on http://localhost:${port}`);
   });
   startBackgroundWorker();
 }
@@ -1093,7 +1093,7 @@ function renderPublicXCommandReceipt(receipt) {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(title)} | ArcPay Receipt</title>
+    <title>${escapeHtml(title)} | bunOS Receipt</title>
     <style>
       :root { color-scheme: light; --bg:#f7f6f3; --ink:#171717; --muted:#706e69; --line:#e4e0d8; --surface:#fff; --green:#2f6759; --yellow:#8a640f; }
       * { box-sizing: border-box; }
@@ -1117,7 +1117,7 @@ function renderPublicXCommandReceipt(receipt) {
   </head>
   <body>
     <main>
-      <div class="brand"><span class="mark">A</span><span>ArcPay Receipt</span></div>
+      <div class="brand"><span class="mark">A</span><span>bunOS Receipt</span></div>
       <article>
         <span class="kicker">${escapeHtml(command.id)}</span>
         <h1>${escapeHtml(summary)}</h1>
@@ -1229,7 +1229,7 @@ function renderPublicDefiActionReceipt(receipt) {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(title)} | ArcPay DeFi Receipt</title>
+    <title>${escapeHtml(title)} | bunOS DeFi Receipt</title>
     <style>
       :root { color-scheme: light; --bg:#f7f6f3; --ink:#171717; --muted:#706e69; --line:#e4e0d8; --surface:#fff; --green:#2f6759; --amber:#8a640f; }
       * { box-sizing: border-box; }
@@ -1255,7 +1255,7 @@ function renderPublicDefiActionReceipt(receipt) {
   </head>
   <body>
     <main>
-      <div class="brand"><span class="mark">A</span><span>ArcPay DeFi Receipt</span></div>
+      <div class="brand"><span class="mark">A</span><span>bunOS DeFi Receipt</span></div>
       <article>
         <span class="kicker">${escapeHtml(action.id)}</span>
         <h1>${escapeHtml(title)}</h1>
@@ -1561,7 +1561,7 @@ function getMcpAuthContext(req) {
 }
 
 function requireSession(req) {
-  const session = getSession(readCookie(req, "arcpay_session"));
+  const session = getSession(readCookie(req, "bunos_session"));
   if (!session?.handle) {
     const error = new Error("Sign in with X before managing MCP API keys.");
     error.status = 401;
@@ -1592,13 +1592,13 @@ function setSessionCookie(res, session, extraHeaders = {}) {
 
 function sessionCookieHeader(session) {
   return {
-    "set-cookie": `arcpay_session=${encodeURIComponent(session.id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 24 * 60 * 60}`
+    "set-cookie": `bunos_session=${encodeURIComponent(session.id)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 24 * 60 * 60}`
   };
 }
 
 function clearSessionCookieHeader() {
   return {
-    "set-cookie": "arcpay_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    "set-cookie": "bunos_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
   };
 }
 

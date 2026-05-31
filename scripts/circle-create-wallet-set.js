@@ -4,7 +4,7 @@ import "../src/env.js";
 
 const apiKey = process.env.CIRCLE_API_KEY;
 const entitySecret = process.env.CIRCLE_ENTITY_SECRET;
-const name = process.env.CIRCLE_WALLET_SET_NAME || "ArcPay Hackathon";
+const name = process.env.CIRCLE_WALLET_SET_NAME || "bunOS Hackathon";
 
 if (!apiKey) {
   throw new Error("CIRCLE_API_KEY is required. Add it to .env first.");
