@@ -55,7 +55,8 @@ export function buildTradeSimulation({ user, wallet, action, quote = null, provi
     warnings.push(`Estimated route fees are about ${(feeRatio * 100).toFixed(1)}% of the trade amount.`);
   }
 
-  if (feeRatio >= policy.blockFeeRatio) {
+  const tinyBridge = action?.type === "bridge" && amount > 0 && amount <= policy.smallBridgeUsd;
+  if (feeRatio >= policy.blockFeeRatio && !tinyBridge) {
     blockers.push(`Estimated route fees are too high for this policy: ${(feeRatio * 100).toFixed(1)}% of the trade amount.`);
   }
 

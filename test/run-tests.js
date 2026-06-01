@@ -1040,6 +1040,35 @@ const tests = [
       assert.equal(appKitBridgeSimulation.requiredSourceAmount, 1.204683);
       assert.equal(appKitBridgeSimulation.estimatedFeeUsd, 0.204683);
 
+      const expensiveTinyBridge = buildTradeSimulation({
+        user: users.get("@sara"),
+        wallet: getWalletProfile("@sara"),
+        action: {
+          type: "bridge",
+          amount: 1,
+          amountUsd: 1,
+          fromToken: "USDC",
+          toToken: "USDC",
+          fromRail: "arc-testnet",
+          toRail: "base-sepolia"
+        },
+        quote: {
+          estimate: {
+            fees: [
+              {
+                type: "forwarder",
+                amount: "1.204",
+                token: { symbol: "USDC", decimals: 6 }
+              }
+            ]
+          }
+        }
+      });
+      assert.equal(expensiveTinyBridge.ok, true);
+      assert.equal(expensiveTinyBridge.recommendation, "route_is_possible_but_uneconomical");
+      assert.match(expensiveTinyBridge.warnings.join(" "), /120\.4%|Small bridges/);
+      assert.equal(expensiveTinyBridge.blockers.length, 0);
+
       users.set("@thin", {
         handle: "@thin",
         xUserId: "x_thin",
