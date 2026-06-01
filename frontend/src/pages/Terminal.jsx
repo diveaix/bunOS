@@ -366,81 +366,6 @@ function renderTxLink(txHash, explorerUrl) {
   return `<a href="${esc(explorerUrl)}" target="_blank" rel="noreferrer" style="color:var(--green);font-weight:800">${esc(compact)}</a>`;
 }
 
-function renderAgentDecision(decision) {
-  if (!decision) return "";
-  const checks = Array.isArray(decision.checks) ? decision.checks : [];
-  const warnings = Array.isArray(decision.warnings) ? decision.warnings : [];
-  const checkText = checks.slice(0, 4).map((item) => {
-    const symbol = item.ok === true ? "ok" : item.ok === false ? "fail" : "watch";
-    return `${esc(symbol)}: ${esc(item.message)}`;
-  }).join("<br>");
-  const warningText = warnings.slice(0, 3).map((item) => `! ${esc(item)}`).join("<br>");
-
-  return `Decision details.${renderResultCard([
-    ["Stance", `<code>${esc(decision.stance || "review")}</code>`],
-    ["Objective", esc(decision.objective || "n/a")],
-    ["Risk", esc(decision.riskLevel || "unknown")],
-    ["Confidence", esc(decision.confidence || "unknown")],
-    ["Rationale", esc(decision.rationale || "n/a")],
-    ["Checks", checkText || "n/a"],
-    ["Warnings", warningText || "none"],
-  ])}`;
-}
-
-function renderAgentNarrative(narrative) {
-  if (!narrative?.summary) return "";
-  const checks = Array.isArray(narrative.whatChecked) ? narrative.whatChecked : [];
-  const warnings = Array.isArray(narrative.warnings) ? narrative.warnings : [];
-  const receipt = narrative.receipt || {};
-  const checkedText = checks.length
-    ? checks.slice(0, 4).map((item) => `${esc(item.status || "watch")}: ${esc(item.message)}`).join("<br>")
-    : "wallet, signer policy, route, and execution state";
-  const warningText = warnings.length ? warnings.slice(0, 3).map(esc).join("<br>") : "none";
-
-  const rows = [
-    ["Status", statusBadge(narrative.status || narrative.mode || "review", narrativeStatusType(narrative))],
-    ["Why", esc(narrative.why || "Checked policy and current execution state.")],
-    ["Checked", checkedText],
-    ["Tx", renderTxLink(narrative.txHash || receipt.txHash, narrative.explorerUrl)],
-    ["Receipt", receipt.url ? `<a href="${esc(receipt.url)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"],
-    ["Next", esc(narrative.nextAction || "review")],
-  ];
-
-  if (narrative.whatHappened) rows.splice(1, 0, ["Result", esc(narrative.whatHappened)]);
-  if (warningText !== "none") rows.push(["Warnings", warningText]);
-
-  return `<strong>${esc(narrative.summary)}</strong>${renderResultCard(rows)}`;
-}
-
-function narrativeStatusType(narrative) {
-  const mode = String(narrative?.mode || "").toLowerCase();
-  const status = String(narrative?.status || "").toLowerCase();
-  if (["failed", "refused", "clarifying"].includes(mode) || ["failed", "rejected", "quote_unavailable", "position_not_found"].includes(status)) return "fail";
-  if (["monitoring", "needs_approval", "waiting"].includes(mode) || ["queued", "submitted", "confirmed", "requires_confirmation", "execution_not_enabled"].includes(status)) return "warn";
-  return "ok";
-}
-
-function renderTradeSimulation(simulation) {
-  if (!simulation) return "";
-  const warnings = Array.isArray(simulation.warnings) ? simulation.warnings : [];
-  const blockers = Array.isArray(simulation.blockers) ? simulation.blockers : [];
-  const output = simulation.output || {};
-  const outputText = output.amount
-    ? `${esc(output.amount)} ${esc(output.token || "")}${output.minAmount ? ` min ${esc(output.minAmount)}` : ""}`
-    : "provider did not return a readable output amount";
-  const feeRatio = Number(simulation.feeRatio || 0);
-
-  return renderResultCard([
-    ["Route check", `<code>${esc(simulation.recommendation || "review")}</code>`],
-    ["Required", `${esc(simulation.requiredSourceAmount ?? "n/a")} ${esc(simulation.sourceBalance?.token || "")}`],
-    ["Available", simulation.sourceBalance?.known ? `${esc(simulation.sourceBalance.amount)} ${esc(simulation.sourceBalance.token)}` : "not synced"],
-    ["Est. fee", `US$${esc(simulation.estimatedFeeUsd ?? 0)} (${esc((feeRatio * 100).toFixed(1))}%)`],
-    ["Output", outputText],
-    ["Warnings", warnings.length ? warnings.slice(0, 3).map(esc).join("<br>") : "none"],
-    ["Blocks", blockers.length ? blockers.slice(0, 2).map(esc).join("<br>") : "none"],
-  ]);
-}
-
 function renderMarketIntelligence(market) {
   if (!market) return "";
   const regime = market.regime || {};
@@ -624,20 +549,6 @@ function formatExecutionMonitorFollowup(refreshed, originalData = {}) {
   return formatSimpleMonitor(monitor);
 }
 
-function renderExecutionMonitorCard(monitor = {}) {
-  const job = monitor.job || {};
-  const rows = [
-    ["Lifecycle", statusBadge(monitor.lifecycle || monitor.status || "unknown", monitorStatusType(monitor))],
-    ["Target", `<code>${esc(monitor.kind || "action")}:${esc(monitor.id || "n/a")}</code>`],
-    ["Tx", renderTxLink(monitor.txHash, monitor.explorerUrl)],
-    ["Reason", esc(monitor.reason || "n/a")],
-    ["Job", job.id ? `<code>${esc(job.id)}</code> ${statusBadge(job.status, job.status === "failed" ? "fail" : "warn")} ${esc(`${job.attempts}/${job.maxAttempts}`)}` : "n/a"],
-    ["Receipt", monitor.receiptUrl ? `<a href="${esc(monitor.receiptUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"],
-    ["Next", esc(monitor.nextAction || "review")],
-  ];
-  return renderResultCard(rows);
-}
-
 function executionMonitorTitle(monitor = {}) {
   const kind = monitor.kind === "payment" ? "Payment" : monitor.kind === "perp_proposal" ? "Perp execution" : "Execution";
   if (monitor.lifecycle === "settled") return `${kind} settled.`;
@@ -645,13 +556,6 @@ function executionMonitorTitle(monitor = {}) {
   if (monitor.lifecycle === "needs_user_signature") return `${kind} needs user wallet approval.`;
   if (monitor.terminal) return `${kind} reached ${monitor.lifecycle || "final"} state.`;
   return `${kind} is still being monitored.`;
-}
-
-function monitorStatusType(monitor = {}) {
-  const status = String(monitor.lifecycle || monitor.status || "").toLowerCase();
-  if (["failed", "rejected", "expired", "execution_not_enabled"].includes(status)) return "fail";
-  if (["queued", "submitted", "needs_user_signature", "quoted"].includes(status)) return "warn";
-  return "ok";
 }
 
 function formatSimpleMonitor(monitor = {}) {
@@ -828,12 +732,7 @@ function defiReceiptTitle(type, status) {
 }
 
 function formatDefiPollingFailure(actionId, error) {
-  return `I queued the action, but could not refresh the final receipt.${renderResultCard([
-    ["Action", `<code>${esc(actionId)}</code>`],
-    ["Status", statusBadge("refresh_failed", "fail")],
-    ["Reason", esc(error?.message || "Receipt polling failed")],
-    ["Next", "open Activity or run the receipt command"],
-  ])}`;
+  return `I sent the action, but I could not refresh the final receipt yet.${renderSimpleNext("Check Activity, or ask me to check the receipt again.")}`;
 }
 
 function renderAirdrop(airdrop, data = {}) {
@@ -868,20 +767,13 @@ function renderPrimitiveList(primitives = []) {
 
 function formatExecutionResult(data) {
   const execution = data.execution || {};
-  const ids = execution.ids || {};
   const ok = execution.ok !== false;
   const rows = [
-    ["Tool", `<code>${esc(execution.tool || data.planned?.plan?.tool || "agent")}</code>`],
     ["Status", statusBadge(execution.status || (ok ? "completed" : "failed"), executionStatusType(execution))],
-    ["Reason", esc(execution.reason || data.reason || data.error || "n/a")],
+    ["Reason", esc(friendlyReason(execution.reason || data.reason || data.error || "n/a"))],
     ["Tx", renderTxLink(execution.txHash || data.txHash, execution.explorerUrl || data.explorerUrl)],
     ["Receipt", execution.receiptUrl ? `<a href="${esc(execution.receiptUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"],
-    ["Next", esc(execution.nextAction || data.nextAction || "n/a")],
   ];
-
-  if (ids.positionId) rows.splice(3, 0, ["Position", `<code>${esc(ids.positionId)}</code>`]);
-  if (ids.actionId) rows.splice(3, 0, ["Action", `<code>${esc(ids.actionId)}</code>`]);
-  if (ids.paymentId) rows.splice(3, 0, ["Payment", `<code>${esc(ids.paymentId)}</code>`]);
 
   return `${esc(executionTitle(execution))}${renderResultCard(rows)}`;
 }
@@ -975,35 +867,25 @@ function formatResult(data) {
   } else if (intent.action === "quote_bridge") {
     const action = result.action || {};
     const bridgeToken = intent.fromToken || intent.asset || "USDC";
-    const simulation = result.simulation || action.simulation;
     summary = `Bridge quote for <code>${intent.amount} ${esc(bridgeToken)}</code> from <code>${esc(intent.fromRail)}</code> to <code>${esc(intent.toRail)}</code>.`;
     summary += renderResultCard([
       ["Status", statusBadge(action.status || "quoted", "warn")],
       ["Amount", `${intent.amount} ${esc(bridgeToken)}`],
       ["Route", `${esc(intent.fromRail)} → ${esc(intent.toRail)}`],
-      ["Protocol", esc(action.protocol || "lifi")],
-      ["Route check", `<code>${esc(simulation?.recommendation || "pending")}</code>`],
       ["Tx", renderTxLink(action.txHash || action.execution?.txHash, action.explorerUrl)],
       ["Next", esc(data.nextAction || "—")],
     ]);
-    summary += renderTradeSimulation(simulation);
-    summary += renderMarketIntelligence(result.marketIntelligence || action.marketIntelligence);
     summary += renderApprovalButton(action.approvalId, "Approve bridge");
   } else if (intent.action === "quote_swap") {
     const action = result.action || {};
-    const simulation = result.simulation || action.simulation;
     summary = `Swap quote for <code>${intent.amount} ${esc(intent.fromToken || "USDC")}</code> → <code>${esc(intent.toToken)}</code>.`;
     summary += renderResultCard([
       ["Status", statusBadge(action.status || "quoted", "warn")],
       ["Amount", `${intent.amount} ${esc(intent.fromToken || "USDC")}`],
       ["To token", esc(intent.toToken || "—")],
-      ["Protocol", esc(action.protocol || "lifi")],
-      ["Route check", `<code>${esc(simulation?.recommendation || "pending")}</code>`],
       ["Tx", renderTxLink(action.txHash || action.execution?.txHash, action.explorerUrl)],
       ["Next", esc(data.nextAction || "—")],
     ]);
-    summary += renderTradeSimulation(simulation);
-    summary += renderMarketIntelligence(result.marketIntelligence || action.marketIntelligence);
     summary += renderApprovalButton(action.approvalId, "Approve swap");
   } else if (intent.action === "propose_perp_trade") {
     const proposal = result.proposal || {};
@@ -1040,10 +922,6 @@ function formatResult(data) {
       ["Status", statusBadge(data.ok ? "ok" : "failed", data.ok ? "ok" : "fail")],
       ["Next", esc(data.nextAction || "n/a")],
     ])}`;
-  }
-
-  if (data.timing) {
-    summary += `<div style="margin-top:6px;font-size:11px;color:var(--ink-muted)">Timing: ${Number(data.timing.totalMs || 0)}ms total · planning ${Number(data.timing.planningMs || 0)}ms · execution ${Number(data.timing.executionMs || 0)}ms</div>`;
   }
 
   return summary;
@@ -1203,3 +1081,4 @@ async function runAutomationCommand(text, handle) {
     body: { handle, text, intervalMinutes, defaultSettlementRail: localStorage.getItem("bunos:rail") || "arc-testnet" },
   });
 }
+
