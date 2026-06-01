@@ -221,7 +221,7 @@ export default function Terminal() {
     const poll = async () => {
       attempt += 1;
       try {
-        const refreshed = await post(`/api/execution-monitor/${encodeURIComponent(target.kind)}/${encodeURIComponent(target.id)}`, { runWorker: true });
+        const refreshed = await post(`/api/execution-monitor/${encodeURIComponent(target.kind)}/${encodeURIComponent(target.id)}`, { runWorker: true, source: "terminal" });
         updateMessageHtml(messageId, formatExecutionMonitorFollowup(refreshed, data));
         const monitor = refreshed.monitor || {};
         const done = Boolean(monitor.terminal);

@@ -391,11 +391,13 @@ export const server = http.createServer(async (req, res) => {
 
     const paymentRefreshMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/refresh$/);
     if (req.method === "POST" && paymentRefreshMatch) {
-      return jsonPersisted(res, await refreshExecutionMonitor({
+      const body = await readJson(req);
+      const refreshed = await refreshExecutionMonitor({
         kind: "payment",
         id: paymentRefreshMatch[1],
         runWorker: true
-      }));
+      });
+      return jsonPersisted(res, publicExecutionMonitorResponse(body, refreshed));
     }
 
     const monitorMatch = url.pathname.match(/^\/api\/execution-monitor\/([^/]+)\/([^/]+)$/);
@@ -413,13 +415,14 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && monitorMatch) {
       const body = await readJson(req);
-      return jsonPersisted(res, await refreshExecutionMonitor({
+      const refreshed = await refreshExecutionMonitor({
         kind: monitorMatch[1],
         id: decodeURIComponent(monitorMatch[2]),
         host: req.headers.host,
         protocol: req.headers["x-forwarded-proto"] || "http",
         runWorker: body.runWorker !== false
-      }));
+      });
+      return jsonPersisted(res, publicExecutionMonitorResponse(body, refreshed));
     }
 
     if (req.method === "GET" && url.pathname === "/api/claims") {
@@ -1014,13 +1017,15 @@ export const server = http.createServer(async (req, res) => {
 
     const defiRefreshMatch = url.pathname.match(/^\/api\/defi\/actions\/([^/]+)\/refresh$/);
     if (req.method === "POST" && defiRefreshMatch) {
-      return jsonPersisted(res, await refreshExecutionMonitor({
+      const body = await readJson(req);
+      const refreshed = await refreshExecutionMonitor({
         kind: "defi_action",
         id: defiRefreshMatch[1],
         host: req.headers.host,
         protocol: req.headers["x-forwarded-proto"] || "http",
         runWorker: true
-      }));
+      });
+      return jsonPersisted(res, publicExecutionMonitorResponse(body, refreshed));
     }
 
     if (req.method === "POST" && url.pathname === "/api/x/webhook") {
@@ -1738,6 +1743,26 @@ function terminalAgentResponse(requestBody = {}, payload = {}) {
     nextAction: payload.nextAction,
     timing: payload.timing
   };
+}
+
+function publicExecutionMonitorResponse(requestBody = {}, payload = {}) {
+  if (requestBody.debug === true) {
+    return payload;
+  }
+
+  return dropUndefined({
+    ...payload,
+    receipt: payload.receipt ? sanitizeExecutionMonitorReceipt(payload.receipt) : undefined
+  });
+}
+
+function sanitizeExecutionMonitorReceipt(receipt = {}) {
+  return dropUndefined({
+    ...receipt,
+    action: receipt.action ? sanitizeDefiAction(receipt.action) : undefined,
+    simulation: undefined,
+    marketIntelligence: undefined
+  });
 }
 
 function sanitizeAgentResult(result = {}) {
