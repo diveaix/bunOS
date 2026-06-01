@@ -47,6 +47,14 @@ import {
   syncWalletBalances
 } from "./walletAccounts.js";
 import {
+  createAutomation,
+  deleteAutomation,
+  listAutomations,
+  runAutomation,
+  runDueAutomations,
+  updateAutomation
+} from "./automations.js";
+import {
   awardAirdrop,
   createAirdrop,
   getAirdropReceipt,
@@ -55,6 +63,31 @@ import {
 import { listArcTradingPrimitives } from "./arcTradingPrimitives.js";
 import { circleUserSigner, readOnlySigner, userWalletSigningRequired } from "./signerPolicy.js";
 import { getAgentModelReadiness, planIntentWithModel } from "./modelPlanner.js";
+import {
+  buildAgentDecision,
+  buildAgentStateSnapshot,
+  rememberAgentExecution
+} from "./agentMemory.js";
+import { buildAgentNarrative } from "./agentNarrator.js";
+import { recordAgentDecisionEvent } from "./agentObservability.js";
+import {
+  createStrategyPolicy,
+  listStrategyPolicies,
+  planRebalanceStrategy,
+  reduceRiskStrategy,
+  runStrategyCheck
+} from "./strategyAgent.js";
+import { getMarketIntelligence } from "./marketIntelligence.js";
+import { executionMonitorFromAgentResult } from "./executionMonitor.js";
+import { analyzePortfolio } from "./portfolioBrain.js";
+import { refreshMarketFeedSnapshot } from "./marketFeeds.js";
+import {
+  createMandate,
+  deleteMandate,
+  listMandates,
+  parseMandateText,
+  updateMandate
+} from "./mandates.js";
 
 const ALLOWED_TOOLS = new Set([
   "get_balance",
@@ -100,7 +133,26 @@ const ALLOWED_TOOLS = new Set([
   "confirm_defi_action",
   "reconcile_defi_action",
   "get_defi_action_receipt",
-  "list_perp_markets"
+  "list_perp_markets",
+  "get_market_intelligence",
+  "get_market_feed_snapshot",
+  "analyze_portfolio",
+  "create_strategy_policy",
+  "list_strategy_policies",
+  "plan_rebalance_strategy",
+  "reduce_risk_strategy",
+  "run_strategy_check",
+  "create_mandate",
+  "list_mandates",
+  "update_mandate",
+  "delete_mandate",
+  "create_automation",
+  "list_automations",
+  "run_automation",
+  "run_due_automations",
+  "pause_automation",
+  "resume_automation",
+  "delete_automation"
 ]);
 
 const TOKEN_PATTERN = "(?:0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{1,20})";
@@ -245,6 +297,10 @@ export async function runAgentAction({
     source
   });
   const plannedAt = Date.now();
+  const agentState = buildAgentStateSnapshot({
+    handle: planned.handle,
+    planned
+  });
 
   if (!planned.plan.tool) {
     const execution = buildAgentExecutionReport({
@@ -256,14 +312,56 @@ export async function runAgentAction({
         nextAction: "ask_for_clarification"
       }
     });
+    const decision = buildAgentDecision({ planned, execution, state: agentState });
+    const narrative = buildAgentNarrative({
+      planned,
+      result: {
+        ok: false,
+        status: "clarification_required",
+        reason: planned.plan.reason,
+        nextAction: "ask_for_clarification"
+      },
+      execution,
+      decision,
+      state: agentState
+    });
+    rememberAgentExecution({ handle: planned.handle, planned, execution, decision });
+    recordAgentDecisionEvent({
+      handle: planned.handle,
+      source,
+      planned,
+      result: {
+        ok: false,
+        status: "clarification_required",
+        reason: planned.plan.reason
+      },
+      execution,
+      decision,
+      narrative,
+      timing: {
+        planningMs: plannedAt - startedAt,
+        executionMs: 0,
+        totalMs: Date.now() - startedAt,
+        fast
+      }
+    });
     return {
       ok: false,
       planned,
+      agentState,
+      decision,
+      narrative,
       status: "clarification_required",
       clarification: planned.plan.reason,
       signer: planned.signer,
       execution,
       reason: execution.reason,
+      summary: narrative.summary,
+      whatChecked: narrative.whatChecked,
+      whatHappened: narrative.whatHappened,
+      why: narrative.why,
+      warnings: narrative.warnings,
+      receipt: narrative.receipt,
       nextAction: "ask_for_clarification"
     };
   }
@@ -288,25 +386,68 @@ export async function runAgentAction({
   }
   const finishedAt = Date.now();
   const execution = buildAgentExecutionReport({ planned, result });
+  const decision = buildAgentDecision({
+    planned,
+    result,
+    execution,
+    state: agentState
+  });
+  const agentMemory = rememberAgentExecution({
+    handle: planned.handle,
+    planned,
+    result,
+    execution,
+    decision
+  });
+  const narrative = buildAgentNarrative({
+    planned,
+    result,
+    execution,
+    decision,
+    state: agentState
+  });
+  const executionMonitor = executionMonitorFromAgentResult({ result, execution });
+  const timing = {
+    planningMs: plannedAt - startedAt,
+    executionMs: finishedAt - plannedAt,
+    totalMs: finishedAt - startedAt,
+    fast: Boolean(fast)
+  };
+  recordAgentDecisionEvent({
+    handle: planned.handle,
+    source,
+    planned,
+    result,
+    execution,
+    decision,
+    narrative,
+    timing
+  });
 
   return {
     ok: execution.ok,
     status: execution.status,
     reason: execution.reason,
     planned,
+    agentState,
+    decision,
+    narrative,
+    agentMemory,
     result,
     execution,
+    executionMonitor,
     signer: result.payment?.signer || result.action?.signer || result.proposal?.signer || planned.signer,
     txHash: execution.txHash,
     explorerUrl: execution.explorerUrl,
     receiptUrl: execution.receiptUrl,
+    summary: narrative.summary,
+    whatChecked: narrative.whatChecked,
+    whatHappened: narrative.whatHappened,
+    why: narrative.why,
+    warnings: narrative.warnings,
+    receipt: narrative.receipt,
     nextAction: execution.nextAction || result.nextAction || planned.nextAction,
-    timing: {
-      planningMs: plannedAt - startedAt,
-      executionMs: finishedAt - plannedAt,
-      totalMs: finishedAt - startedAt,
-      fast: Boolean(fast)
-    }
+    timing
   };
 }
 
@@ -554,6 +695,96 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
     return await listPerpMarkets(args);
   }
 
+  if (plan.tool === "get_market_intelligence") {
+    if (args.refresh) {
+      await refreshMarketFeedSnapshot({
+        settlementRail: args.settlementRail || "arc-testnet",
+        force: true
+      });
+    }
+    return getMarketIntelligence({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "get_market_feed_snapshot") {
+    return await refreshMarketFeedSnapshot({
+      assets: args.assets,
+      settlementRail: args.settlementRail || "arc-testnet",
+      force: args.force !== false
+    });
+  }
+
+  if (plan.tool === "analyze_portfolio") {
+    return analyzePortfolio({
+      ...args,
+      handle: args.handle || handle,
+      includeRecommendations: args.includeRecommendations !== false
+    });
+  }
+
+  if (plan.tool === "create_mandate") {
+    return createMandate({ ...args, handle: args.handle || handle, source });
+  }
+
+  if (plan.tool === "list_mandates") {
+    return listMandates({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "update_mandate") {
+    return updateMandate({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "delete_mandate") {
+    return deleteMandate({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "create_automation") {
+    return createAutomation({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "list_automations") {
+    return listAutomations({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "run_automation") {
+    return await runAutomation(args);
+  }
+
+  if (plan.tool === "run_due_automations") {
+    return await runDueAutomations(args);
+  }
+
+  if (plan.tool === "pause_automation") {
+    return updateAutomation({ automationId: args.automationId, status: "paused" });
+  }
+
+  if (plan.tool === "resume_automation") {
+    return updateAutomation({ automationId: args.automationId, status: "active" });
+  }
+
+  if (plan.tool === "delete_automation") {
+    return deleteAutomation(args);
+  }
+
+  if (plan.tool === "create_strategy_policy") {
+    return createStrategyPolicy({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "list_strategy_policies") {
+    return listStrategyPolicies({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "plan_rebalance_strategy") {
+    return planRebalanceStrategy({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "reduce_risk_strategy") {
+    return reduceRiskStrategy({ ...args, handle: args.handle || handle });
+  }
+
+  if (plan.tool === "run_strategy_check") {
+    return runStrategyCheck({ ...args, handle: args.handle || handle });
+  }
+
   throw new Error(`Agent runner cannot execute tool: ${plan.tool}`);
 }
 
@@ -679,6 +910,87 @@ function parseToolCommand(text, defaultSettlementRail) {
   const raw = String(text || "").trim();
   const lower = raw.toLowerCase();
 
+  const targetAllocations = parseTargetAllocations(raw);
+  const mandateId = raw.match(/\b(mandate_[a-zA-Z0-9_:-]+)\b/i)?.[1];
+  if (mandateId && /\b(delete|remove|disable|cancel)\b/.test(lower)) {
+    return toolIntent("delete_mandate", { mandateId });
+  }
+  if (mandateId && /\b(update|change|edit)\b/.test(lower)) {
+    const textAfterId = raw.slice(raw.toLowerCase().indexOf(mandateId.toLowerCase()) + mandateId.length).replace(/^\s*(?:to|as|:|-)\s*/i, "").trim();
+    return toolIntent("update_mandate", {
+      mandateId,
+      ...(textAfterId ? { text: textAfterId } : {})
+    });
+  }
+  if (/\b(mandates?|standing rules?|trading rules?|risk rules?)\b/.test(lower) && /\b(list|show|current|status)\b/.test(lower)) {
+    return toolIntent("list_mandates", { limit: extractLimit(raw) || 10 });
+  }
+  const mandate = parseMandateText(raw);
+  if (mandate && /\b(remember|rule|mandate|never|do not|don't|only|allow|allowed|max|maximum|limit|dca|keep me|close perps if|stop[-\s]?loss|take[-\s]?profit)\b/.test(lower)) {
+    return toolIntent("create_mandate", {
+      text: raw,
+      kind: mandate.kind,
+      rules: mandate.rules
+    });
+  }
+
+  const automationId = raw.match(/\b(auto_[a-zA-Z0-9_:-]+)\b/i)?.[1];
+  if (automationId && /\b(delete|remove|cancel)\b/.test(lower)) {
+    return toolIntent("delete_automation", { automationId });
+  }
+  if (automationId && /\b(pause|stop|disable)\b/.test(lower)) {
+    return toolIntent("pause_automation", { automationId });
+  }
+  if (automationId && /\b(resume|start|enable)\b/.test(lower)) {
+    return toolIntent("resume_automation", { automationId });
+  }
+  if (automationId && /\b(run|execute|trigger)\b/.test(lower)) {
+    return toolIntent("run_automation", { automationId });
+  }
+  if (/\b(automations?|scheduled tasks?|recurring tasks?)\b/.test(lower) && /\b(list|show|current|status)\b/.test(lower)) {
+    return toolIntent("list_automations", { limit: extractLimit(raw) || 10 });
+  }
+  if (/\b(run|execute|trigger)\b.*\bdue\b.*\b(automations?|scheduled tasks?)\b|\bdue\b.*\b(automations?|scheduled tasks?)\b/.test(lower)) {
+    return toolIntent("run_due_automations", { limit: extractLimit(raw) || 20 });
+  }
+  if (isAutomationRequest(raw)) {
+    return toolIntent("create_automation", {
+      text: raw,
+      intervalMinutes: extractAutomationIntervalMinutes(raw),
+      defaultSettlementRail
+    });
+  }
+
+  if (/\b(analy[sz]e|review|what should i do|am i overexposed|overexposed|changed since last trade|portfolio brain|portfolio intelligence)\b/.test(lower)
+    && /\b(portfolio|wallet|bags?|exposure|trade)\b/.test(lower)) {
+    return toolIntent("analyze_portfolio", {
+      settlementRail: extractRail(raw) || undefined
+    });
+  }
+
+  if (targetAllocations && /\b(keep|target|allocate|allocation|portfolio|strategy)\b/.test(lower)) {
+    return toolIntent("create_strategy_policy", {
+      targetAllocations,
+      settlementRail: extractRail(raw) || defaultSettlementRail
+    });
+  }
+
+  if (/\b(rebalance|balance)\b.*\b(wallet|portfolio|strategy|bags?)\b|\b(wallet|portfolio|strategy|bags?)\b.*\brebalance\b/.test(lower)) {
+    return toolIntent("plan_rebalance_strategy", {
+      settlementRail: extractRail(raw) || defaultSettlementRail
+    });
+  }
+
+  if (/\b(reduce risk|de-risk|derisk|risk off|move to stables?|protect portfolio)\b/.test(lower)) {
+    return toolIntent("reduce_risk_strategy", {
+      settlementRail: extractRail(raw) || defaultSettlementRail
+    });
+  }
+
+  if (/\b(strategy|strategies|allocation policy|target allocations?)\b/.test(lower) && /\b(list|show|current|status)\b/.test(lower)) {
+    return toolIntent("list_strategy_policies", { limit: extractLimit(raw) || 10 });
+  }
+
   if (/\b(sync|refresh)\b.*\bbalances?\b|\bbalances?\b.*\b(sync|refresh)\b/.test(lower)) {
     return toolIntent("sync_circle_balances");
   }
@@ -789,8 +1101,19 @@ function parseToolCommand(text, defaultSettlementRail) {
   if (/\b(perp|hyperliquid)\b.*\bmarkets?\b|\bmarkets?\b.*\b(perp|hyperliquid)\b/.test(lower)) {
     return toolIntent("list_perp_markets", { limit: extractLimit(raw) || 10 });
   }
-  if (/\bperp intelligence|funding rates?|market intelligence/.test(lower)) {
+  if (/\bperp intelligence|funding rates?/.test(lower)) {
     return toolIntent("list_perp_intelligence", { limit: extractLimit(raw) || 10 });
+  }
+  if (/\b(market intelligence|route health|route history|why.*route.*fail|why.*swap.*fail|why.*bridge.*fail|market regime)\b/.test(lower)) {
+    return toolIntent("get_market_intelligence", {
+      settlementRail: extractRail(raw) || defaultSettlementRail,
+      limit: extractLimit(raw) || 20
+    });
+  }
+  if (/\b(market feeds?|price feeds?|token prices?|price context|fresh market data)\b/.test(lower)) {
+    return toolIntent("get_market_feed_snapshot", {
+      settlementRail: extractRail(raw) || defaultSettlementRail
+    });
   }
   if (/\bperp proposals?\b/.test(lower)) {
     return toolIntent("list_perp_proposals", { limit: extractLimit(raw) || 10 });
@@ -892,7 +1215,7 @@ function riskForTool(tool) {
   if (["send_usdc", "create_social_bounty", "create_airdrop", "award_airdrop", "quote_defi_route", "appkit_bridge_usdc", "appkit_swap", "appkit_send_usdc", "confirm_action", "confirm_defi_action", "request_testnet_usdc"].includes(tool)) {
     return "high";
   }
-  if (["propose_perp_trade", "propose_copy_trade", "assess_liquidation_risk", "quote_arc_perp_position", "close_arc_perp_user_position"].includes(tool)) {
+  if (["propose_perp_trade", "propose_copy_trade", "assess_liquidation_risk", "quote_arc_perp_position", "close_arc_perp_user_position", "create_strategy_policy", "plan_rebalance_strategy", "reduce_risk_strategy", "run_strategy_check", "create_mandate", "update_mandate", "delete_mandate", "create_automation", "run_automation", "run_due_automations", "pause_automation", "resume_automation", "delete_automation"].includes(tool)) {
     return "medium";
   }
   return "low";
@@ -923,6 +1246,11 @@ function reasonForTool(tool) {
   if (tool.includes("airdrop")) return "The agent will use the Arc airdrop campaign ledger and Circle user-wallet payment path.";
   if (tool.startsWith("appkit")) return "The agent will use the Arc AppKit/Circle user-wallet path when configured.";
   if (tool.includes("perp")) return "The agent will use the perps analysis/proposal surface without backend signer execution.";
+  if (tool === "analyze_portfolio") return "The agent will inspect wallet exposure, pending actions, perps risk, and strategy drift without executing trades.";
+  if (tool === "get_market_feed_snapshot") return "The agent will refresh external market feeds and mark unavailable data as stale instead of inventing prices.";
+  if (tool.includes("mandate")) return "The agent will save or inspect standing trading rules and enforce them before future trades.";
+  if (tool.includes("automation")) return "The agent will create or manage a recurring automation through the same policy-gated execution path.";
+  if (tool.includes("strategy") || tool.includes("rebalance")) return "The agent will create a portfolio strategy plan without executing trades automatically.";
   if (tool.includes("defi")) return "The agent will use the DeFi action ledger and user-wallet execution provider.";
   return "The agent will call the matching allowlisted tool.";
 }
@@ -955,6 +1283,22 @@ function extractLimit(text) {
   return match ? Number(match[1]) : null;
 }
 
+function isAutomationRequest(text) {
+  const lower = String(text || "").toLowerCase();
+  return /\b(auto(?:mate)?|automation|schedule|scheduled|repeat|recurring|every\s+\d+(?:\.\d+)?\s*(?:minute|minutes|min|hour|hours|hr|hrs|day|days))\b/.test(lower);
+}
+
+function extractAutomationIntervalMinutes(text) {
+  const raw = String(text || "").toLowerCase();
+  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(minute|minutes|min|hour|hours|hr|hrs|day|days)\b/);
+  if (!match) return 60;
+  const amount = Number(match[1]);
+  const unit = match[2];
+  if (unit.startsWith("day")) return amount * 24 * 60;
+  if (unit.startsWith("hour") || unit.startsWith("hr")) return amount * 60;
+  return amount;
+}
+
 function extractRail(text) {
   if (/\bbase(?:-sepolia)?\b/i.test(text)) return "base-sepolia";
   if (/\barc(?:-testnet)?\b/i.test(text)) return "arc-testnet";
@@ -971,6 +1315,16 @@ function extractSymbol(text) {
   const ignored = new Set(["ARC", "BASE", "USDC", "EURC", "CIRBTC", "PRICE", "ORACLE", "PERP"]);
   const match = String(text || "").toUpperCase().match(/\b[A-Z]{2,12}\b/g)?.find((item) => !ignored.has(item));
   return match || null;
+}
+
+function parseTargetAllocations(text) {
+  const allocations = {};
+  const matches = String(text || "").matchAll(/(\d+(?:\.\d+)?)\s*%\s*(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{1,20})/g);
+  for (const match of matches) {
+    const token = normalizeSwapToken(match[2]);
+    if (token) allocations[token] = Number(match[1]);
+  }
+  return Object.keys(allocations).length ? allocations : null;
 }
 
 function appKitBridgeArgs(text, defaultSettlementRail) {

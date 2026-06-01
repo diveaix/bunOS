@@ -12,6 +12,7 @@ const ALLOWED_ACTIONS = new Set([
   "quote_swap",
   "propose_perp_trade",
   "get_balance",
+  "analyze_portfolio",
   "sync_circle_balances",
   "request_testnet_usdc",
   "list_approvals",
@@ -42,7 +43,19 @@ const ALLOWED_ACTIONS = new Set([
   "list_defi_actions",
   "reconcile_defi_action",
   "get_defi_action_receipt",
+  "get_market_feed_snapshot",
   "list_perp_markets",
+  "create_mandate",
+  "list_mandates",
+  "update_mandate",
+  "delete_mandate",
+  "create_automation",
+  "list_automations",
+  "run_automation",
+  "run_due_automations",
+  "pause_automation",
+  "resume_automation",
+  "delete_automation",
   "clarify"
 ]);
 
@@ -98,6 +111,13 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
                 "{\"action\":\"propose_perp_trade\",\"symbol\":\"BTC\",\"side\":\"long\",\"collateralUsd\":1,\"leverage\":2}",
                 "{\"action\":\"close_arc_perp_user_position\",\"positionId\":12}",
                 "{\"action\":\"get_balance\"}",
+                "{\"action\":\"analyze_portfolio\"}",
+                "{\"action\":\"get_market_feed_snapshot\",\"settlementRail\":\"arc-testnet\"}",
+                "{\"action\":\"create_mandate\",\"text\":\"never bridge if fee is over 3%\"}",
+                "{\"action\":\"list_mandates\"}",
+                "{\"action\":\"create_automation\",\"text\":\"sync balances every 10 minutes\",\"intervalMinutes\":10}",
+                "{\"action\":\"list_automations\"}",
+                "{\"action\":\"pause_automation\",\"automationId\":\"auto_0001\"}",
                 "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
                 "{\"action\":\"get_defi_action_receipt\",\"actionId\":\"defi_0001\"}",
                 "{\"action\":\"clarify\",\"question\":\"Which token do you want to buy?\"}"
@@ -165,6 +185,12 @@ function intentSchema() {
       approvalId: { type: ["string", "null"] },
       paymentId: { type: ["string", "null"] },
       actionId: { type: ["string", "null"] },
+      mandateId: { type: ["string", "null"] },
+      automationId: { type: ["string", "null"] },
+      intervalMinutes: { type: ["number", "null"] },
+      everyMinutes: { type: ["number", "null"] },
+      kind: { type: ["string", "null"] },
+      text: { type: ["string", "null"] },
       positionId: { type: ["number", "null"] },
       marginUsd: { type: ["number", "null"] },
       limit: { type: ["number", "null"] },
@@ -194,6 +220,12 @@ function intentSchema() {
       "approvalId",
       "paymentId",
       "actionId",
+      "mandateId",
+      "automationId",
+      "intervalMinutes",
+      "everyMinutes",
+      "kind",
+      "text",
       "positionId",
       "marginUsd",
       "limit",
@@ -223,6 +255,12 @@ function intentSchema() {
       "approvalId",
       "paymentId",
       "actionId",
+      "mandateId",
+      "automationId",
+      "intervalMinutes",
+      "everyMinutes",
+      "kind",
+      "text",
       "positionId",
       "marginUsd",
       "limit",
@@ -389,6 +427,7 @@ function isSupportedSwapPair({ settlementRail, fromToken, toToken }) {
 
 const MODEL_TOOL_ACTIONS = new Set([
   "get_balance",
+  "analyze_portfolio",
   "sync_circle_balances",
   "request_testnet_usdc",
   "list_airdrops",
@@ -421,7 +460,19 @@ const MODEL_TOOL_ACTIONS = new Set([
   "list_defi_actions",
   "reconcile_defi_action",
   "get_defi_action_receipt",
-  "list_perp_markets"
+  "get_market_feed_snapshot",
+  "list_perp_markets",
+  "create_mandate",
+  "list_mandates",
+  "update_mandate",
+  "delete_mandate",
+  "create_automation",
+  "list_automations",
+  "run_automation",
+  "run_due_automations",
+  "pause_automation",
+  "resume_automation",
+  "delete_automation"
 ]);
 
 function sanitizeToolIntent(intent, defaultSettlementRail) {
@@ -438,6 +489,12 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
   if (intent.approvalId) args.approvalId = String(intent.approvalId);
   if (intent.paymentId) args.paymentId = String(intent.paymentId);
   if (intent.actionId) args.actionId = String(intent.actionId);
+  if (intent.mandateId) args.mandateId = String(intent.mandateId);
+  if (intent.automationId) args.automationId = String(intent.automationId);
+  if (positive(intent.intervalMinutes)) args.intervalMinutes = Number(intent.intervalMinutes);
+  if (positive(intent.everyMinutes)) args.everyMinutes = Number(intent.everyMinutes);
+  if (intent.kind) args.kind = String(intent.kind);
+  if (intent.text) args.text = String(intent.text);
   if (positive(intent.positionId)) args.positionId = Number(intent.positionId);
   if (positive(intent.marginUsd)) args.marginUsd = Number(intent.marginUsd);
   if (intent.symbol) args.symbol = String(intent.symbol).toUpperCase();
@@ -453,6 +510,10 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
   if (tool === "confirm_action" && !args.approvalId) return clarify("Which approval ID should I confirm?");
   if (tool === "get_receipt" && !args.paymentId) return clarify("Which payment ID should I look up?");
   if (["reconcile_defi_action", "get_defi_action_receipt"].includes(tool) && !args.actionId) return clarify("Which DeFi action ID should I use?");
+  if (tool === "create_mandate" && !args.text) return clarify("What standing trading rule should I save?");
+  if (["update_mandate", "delete_mandate"].includes(tool) && !args.mandateId) return clarify("Which mandate ID should I change?");
+  if (tool === "create_automation" && !args.text && !args.kind) return clarify("What recurring automation should I create?");
+  if (["run_automation", "pause_automation", "resume_automation", "delete_automation"].includes(tool) && !args.automationId) return clarify("Which automation ID should I use?");
   if (tool === "propose_copy_trade" && (!args.traderHandle || !positive(args.capitalUsd))) return clarify("Which trader should I copy, and with how much capital?");
   if (["assess_liquidation_risk", "quote_arc_perp_position"].includes(tool) && (!args.symbol || !args.side || !positive(args.leverage))) {
     return clarify("Tell me the symbol, side, collateral or margin, and leverage.");

@@ -52,6 +52,12 @@ export function listArcTradingPrimitives() {
         status: config.automations.workerEnabled ? "worker_enabled" : "manual_run_only",
         provider: "bunOS-agent-worker",
         blockers: config.automations.workerEnabled ? [] : ["Set AUTOMATION_WORKER_ENABLED=1 for background execution"]
+      }),
+      primitive("strategy", {
+        tools: ["create_strategy_policy", "plan_rebalance_strategy", "reduce_risk_strategy", "run_strategy_check"],
+        status: "planning_ready",
+        provider: "bunOS-strategy-engine",
+        blockers: []
       })
     ],
     counts: {

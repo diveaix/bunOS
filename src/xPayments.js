@@ -1,12 +1,10 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
-import { planAgentAction } from "./agentPlanner.js";
-import { createAirdrop } from "./airdrops.js";
-import { quoteDefiRoute, searchPredictionMarkets } from "./defiOrchestrator.js";
+import { planAgentAction, runAgentAction } from "./agentPlanner.js";
+import { refreshExecutionMonitor } from "./executionMonitor.js";
 import { ledger } from "./fixtures.js";
 import { nextXCommandId } from "./ids.js";
-import { createPaymentIntent, createSocialBounty } from "./orchestrator.js";
-import { proposePerpTrade } from "./perpsAgent.js";
+import { createApprovalToken } from "./securityGuards.js";
 
 export function verifyXWebhook({ headers, rawBody = "" }) {
   if (!config.webhookSecret) {
@@ -212,6 +210,9 @@ export async function processXPaymentEvent({
     completedAt: null,
     intent: null,
     plan: null,
+    agentState: null,
+    decision: null,
+    narrative: null,
     resultRefs: {},
     result: null,
     reply: null,
@@ -248,80 +249,21 @@ export async function processXPaymentEvent({
     });
   }
 
-  let result;
-  const args = planned.plan.arguments || {};
-
-  if (planned.plan.tool === "create_social_bounty") {
-    result = await createSocialBounty({
-      ...args,
-      senderHandle: normalizedActor,
-      postId,
-      settlementRail: settlementRail || args.settlementRail,
-      idempotencyKey: canonicalIdempotencyKey,
-      source
-    });
-    return completeCommand(command, result);
-  }
-
-  if (planned.plan.tool === "create_airdrop") {
-    result = await createAirdrop({
-      ...args,
-      senderHandle: normalizedActor,
-      postId: postId || args.postId,
-      settlementRail: settlementRail || args.settlementRail,
-      idempotencyKey: canonicalIdempotencyKey,
-      source
-    });
-    return completeCommand(command, result);
-  }
-
-  if (planned.plan.tool === "propose_perp_trade") {
-    result = proposePerpTrade({
-      ...args,
-      handle: normalizedActor,
-      settlementRail: settlementRail || "arc-testnet",
-      postId,
-      idempotencyKey: canonicalIdempotencyKey,
-      source
-    });
-    return completeCommand(command, result);
-  }
-
-  if (planned.plan.tool === "quote_defi_route") {
-    result = await quoteDefiRoute({
-      ...args,
-      handle: normalizedActor,
-      idempotencyKey: canonicalIdempotencyKey,
-      source
-    });
-    return completeCommand(command, result);
-  }
-
-  if (planned.plan.tool === "search_prediction_markets") {
-    result = await searchPredictionMarkets({
-      ...args,
-      handle: normalizedActor
-    });
-    return completeCommand(command, result);
-  }
-
-  if (planned.plan.tool === "send_usdc") {
-    result = await createPaymentIntent({
-      ...args,
-      senderHandle: normalizedActor,
-      settlementRail: settlementRail || args.settlementRail,
-      idempotencyKey: canonicalIdempotencyKey,
-      source
-    });
-    return completeCommand(command, result);
-  }
-
-  return completeCommand(command, {
-    ok: false,
-    error: `Planned X tool is not executable from X loop: ${planned.plan.tool}`,
-    plan: planned.plan,
-    signer: planned.signer
+  const result = await runAgentAction({
+    handle: normalizedActor,
+    text,
+    defaultSettlementRail: settlementRail || "arc-testnet",
+    source,
+    postId,
+    idempotencyKey: canonicalIdempotencyKey,
+    fast: true
   });
+  command.agentState = result.agentState || null;
+  command.decision = result.decision || null;
+  command.narrative = result.narrative || null;
+  command.intent = result.planned?.intent || command.intent;
+  command.plan = result.planned?.plan || command.plan;
+  return completeCommand(command, result);
 }
 
 export function normalizeXWebhookPayload({ body = {}, headers = {} } = {}) {
@@ -416,94 +358,194 @@ export function getXCommandReceipt({ commandId, host, protocol = "http" } = {}) 
 }
 
 function completeCommand(command, result) {
-  command.status = result?.ok === false ? "rejected" : "completed";
+  const core = unwrapAgentResult(result);
+  const hasUsefulResult = Boolean(core.payment || core.airdrop || core.proposal || core.action || core.claim || core.markets || core.automation || core.automations);
+  command.status = result?.ok === false && !hasUsefulResult ? "rejected" : "completed";
   command.completedAt = new Date().toISOString();
   command.resultRefs = resultRefs(result);
   command.result = summarizeResult(result);
+  command.decision = result.decision || command.decision || null;
+  command.agentState = result.agentState || command.agentState || null;
+  command.narrative = result.narrative || command.narrative || null;
   command.reply = buildXCommandReply(command, result);
-  return { ...result, command };
+  return { ...result, ...core, command };
+}
+
+function unwrapAgentResult(result = {}) {
+  if (result.result && (result.planned || result.execution || result.decision)) {
+    return {
+      ...result.result,
+      execution: result.execution,
+      decision: result.decision,
+      agentState: result.agentState
+    };
+  }
+  return result;
 }
 
 export function buildXCommandReply(command, result = {}, { publicUrl, approvalUrl } = {}) {
+  const core = unwrapAgentResult(result);
+  const execution = result.execution || core.execution || null;
+  const narrative = result.narrative || core.narrative || command.narrative || null;
   const status = command.result?.status
-    || result.execution?.status
-    || result.payment?.status
-    || result.proposal?.status
-    || result.action?.status
-    || result.approval?.status
+    || execution?.status
+    || core.payment?.status
+    || core.proposal?.status
+    || core.action?.status
+    || core.approval?.status
     || command.status;
   const signer = result.payment?.signer
-    || result.proposal?.signer
-    || result.action?.signer
+    || core.payment?.signer
+    || core.proposal?.signer
+    || core.action?.signer
     || result.signer
     || command.plan?.signer;
   const urlSuffix = [
     approvalUrl ? `Approve: ${approvalUrl}` : "",
     publicUrl ? `Receipt: ${publicUrl}` : ""
   ].filter(Boolean).join(" ");
-  const signerLabel = signer?.backendSignerAllowed === false ? "No backend signer used." : "Signer policy checked.";
+  const signerLabel = signer?.backendSignerAllowed === false ? "bunOS safety: No backend signer used." : "bunOS safety: signer policy checked.";
+
+  if (core.automation) {
+    const every = core.automation.intervalMinutes ? ` every ${core.automation.intervalMinutes}m` : "";
+    return `Automation ${core.automation.status}: ${core.automation.name || core.automation.kind}${every}. It will run through policy-gated user-wallet paths. ${signerLabel} ${urlSuffix}`.trim();
+  }
+
+  if (Array.isArray(core.automations)) {
+    return `Found ${core.automations.length} automation${core.automations.length === 1 ? "" : "s"}. No funds moved. ${signerLabel} ${urlSuffix}`.trim();
+  }
+
+  if (narrative?.summary) {
+    return `${narrative.summary} ${signerLabel} ${urlSuffix}`.trim();
+  }
 
   if (command.status === "rejected" || result.ok === false) {
-    const reason = result.execution?.reason || result.clarification || result.error || command.error || command.plan?.reason || "I need a clearer command.";
+    const reason = execution?.reason || result.reason || result.clarification || core.reason || core.error || command.error || command.plan?.reason || "I need a clearer command.";
     return `Could not run this yet: ${reason} ${signerLabel} ${urlSuffix}`.trim();
   }
 
-  if (result.execution) {
-    const tx = result.execution.txHash ? ` Tx: ${result.execution.txHash}` : "";
-    return `Agent ${result.execution.status || "completed"}: ${result.execution.reason || "action completed."}${tx} ${signerLabel} ${urlSuffix}`.trim();
+  if (execution && !core.payment && !core.action && !core.proposal && !core.airdrop) {
+    const tx = execution.txHash ? ` Tx: ${execution.txHash}` : "";
+    return `Agent ${execution.status || "completed"}: ${execution.reason || "action completed."}${tx} ${signerLabel} ${urlSuffix}`.trim();
   }
 
-  if (result.payment) {
-    if (result.payment.status === "claimable") {
-      return `Created claimable ${formatAmount(result.payment.amount, result.payment.asset)} for ${result.payment.recipientHandle}. Recipient needs to connect X to claim. ${signerLabel} ${urlSuffix}`.trim();
+  if (core.payment) {
+    if (core.payment.status === "claimable") {
+      return `Created claimable ${formatAmount(core.payment.amount, core.payment.asset)} for ${core.payment.recipientHandle}. Recipient needs to connect X to claim. ${signerLabel} ${urlSuffix}`.trim();
     }
-    if (result.payment.status === "requires_confirmation") {
-      return `Payment needs approval: ${formatAmount(result.payment.amount, result.payment.asset)} to ${result.payment.recipientHandle}. ${signerLabel} ${urlSuffix}`.trim();
+    if (core.payment.status === "requires_confirmation") {
+      return `Payment needs approval: ${formatAmount(core.payment.amount, core.payment.asset)} to ${core.payment.recipientHandle}. ${signerLabel} ${urlSuffix}`.trim();
     }
-    return `Payment accepted: ${formatAmount(result.payment.amount, result.payment.asset)} to ${result.payment.recipientHandle} on ${result.payment.settlementRail || "arc-testnet"}. ${signerLabel} ${urlSuffix}`.trim();
+    return `Payment accepted: ${formatAmount(core.payment.amount, core.payment.asset)} to ${core.payment.recipientHandle} on ${core.payment.settlementRail || "arc-testnet"}. ${signerLabel} ${urlSuffix}`.trim();
   }
 
-  if (result.airdrop) {
-    return `Airdrop ${result.airdrop.status}: ${formatAmount(result.airdrop.amountPerRecipient, result.airdrop.asset)} each for up to ${result.airdrop.maxRecipients} recipient(s). ${signerLabel} ${urlSuffix}`.trim();
+  if (core.airdrop) {
+    return `Airdrop ${core.airdrop.status}: ${formatAmount(core.airdrop.amountPerRecipient, core.airdrop.asset)} each for up to ${core.airdrop.maxRecipients} recipient(s). ${signerLabel} ${urlSuffix}`.trim();
   }
 
-  if (result.action) {
-    const type = result.action.type === "swap" ? "swap" : "bridge";
-    return `Created ${type} quote for ${formatAmount(result.action.amount, result.action.fromToken || "USDC")}. User approval/signing is required before execution. ${signerLabel} ${urlSuffix}`.trim();
+  if (core.action) {
+    const type = core.action.type === "swap" ? "swap" : "bridge";
+    const amount = core.action.request?.amount || core.action.request?.amountUsd || core.action.amount || 0;
+    const token = core.action.request?.fromToken || core.action.fromToken || "USDC";
+    const routeCheck = core.action.simulation?.recommendation ? ` Route check: ${core.action.simulation.recommendation}.` : "";
+    return `Created ${type} quote for ${formatAmount(amount, token)}.${routeCheck} User approval/signing is required before execution. ${signerLabel} ${urlSuffix}`.trim();
   }
 
-  if (result.proposal) {
-    return `Perps proposal ready: ${result.proposal.side} ${result.proposal.symbol} with ${formatAmount(result.proposal.collateralUsd, "USDC")} at ${result.proposal.leverage}x. User approval/signing is required before execution. ${signerLabel} ${urlSuffix}`.trim();
+  if (core.proposal) {
+    return `Perps proposal ready: ${core.proposal.side} ${core.proposal.symbol} with ${formatAmount(core.proposal.collateralUsd, "USDC")} at ${core.proposal.leverage}x. User approval/signing is required before execution. ${signerLabel} ${urlSuffix}`.trim();
   }
 
-  if (result.markets) {
-    return `Found ${result.markets.length} market${result.markets.length === 1 ? "" : "s"}. Read-only search, no funds moved. ${signerLabel} ${urlSuffix}`.trim();
+  if (core.markets) {
+    return `Found ${core.markets.length} market${core.markets.length === 1 ? "" : "s"}. Read-only search, no funds moved. ${signerLabel} ${urlSuffix}`.trim();
   }
 
   return `Command ${status || "completed"}. ${signerLabel} ${urlSuffix}`.trim();
 }
 
 function resultRefs(result = {}) {
+  const core = unwrapAgentResult(result);
+  const execution = result.execution || core.execution || {};
   return {
-    paymentId: result.payment?.id || null,
-    airdropId: result.airdrop?.id || null,
-    approvalId: result.approval?.id || result.payment?.approvalId || result.airdrop?.approvalId || null,
-    proposalId: result.proposal?.id || null,
-    defiActionId: result.action?.id || null,
-    positionId: result.execution?.ids?.positionId || result.position?.id || null,
-    txHash: result.execution?.txHash || result.txHash || null,
-    jobId: result.job?.id || result.proposal?.execution?.jobId || null,
-    claimId: result.claim?.paymentId || null
+    paymentId: core.payment?.id || null,
+    airdropId: core.airdrop?.id || null,
+    automationId: core.automation?.id || null,
+    approvalId: core.approval?.id || core.payment?.approvalId || core.airdrop?.approvalId || core.action?.approvalId || core.proposal?.approvalId || execution.ids?.approvalId || null,
+    proposalId: core.proposal?.id || execution.ids?.proposalId || null,
+    defiActionId: core.action?.id || execution.ids?.actionId || null,
+    positionId: execution.ids?.positionId || core.position?.id || null,
+    txHash: execution.txHash || core.txHash || result.txHash || null,
+    jobId: core.job?.id || core.execution?.jobId || core.proposal?.execution?.jobId || null,
+    claimId: core.claim?.paymentId || null
+  };
+}
+
+export async function refreshXCommandExecution({
+  commandId,
+  host,
+  protocol = "http",
+  runWorker = true
+} = {}) {
+  const command = ledger.xCommands.find((item) => item.id === commandId);
+  if (!command) {
+    throw new Error("X command not found");
+  }
+
+  const target = commandMonitorTarget(command);
+  if (!target) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "This X command has no monitorable execution target.",
+      command,
+      receipt: getXCommandReceipt({ commandId, host, protocol }).receipt
+    };
+  }
+
+  const refreshed = await refreshExecutionMonitor({
+    ...target,
+    host,
+    protocol,
+    runWorker
+  });
+  command.executionMonitor = refreshed.monitor;
+  command.lastExecutionRefreshAt = new Date().toISOString();
+  if (refreshed.monitor?.txHash) {
+    command.resultRefs = {
+      ...(command.resultRefs || {}),
+      txHash: refreshed.monitor.txHash
+    };
+  }
+  command.finalReply = buildXCommandFinalReply(command, refreshed.monitor, {
+    publicUrl: host ? `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}` : null
+  });
+
+  return {
+    ok: true,
+    command,
+    monitor: refreshed.monitor,
+    receipt: getXCommandReceipt({ commandId, host, protocol }).receipt
   };
 }
 
 function summarizeResult(result = {}) {
+  const core = unwrapAgentResult(result);
+  const execution = result.execution || core.execution || {};
   return {
     ok: result.ok !== false,
-    kind: result.execution?.tool || (result.payment ? "payment" : result.airdrop ? "airdrop" : result.proposal ? "perp_proposal" : result.action ? "defi_action" : result.claim ? "claim" : "action"),
-    status: result.execution?.status || result.payment?.status || result.airdrop?.status || result.proposal?.status || result.action?.status || result.claim?.status || result.approval?.status || null,
+    kind: execution.tool || (core.payment ? "payment" : core.airdrop ? "airdrop" : core.automation ? "automation" : Array.isArray(core.automations) ? "automation_list" : core.proposal ? "perp_proposal" : core.action ? "defi_action" : core.claim ? "claim" : "action"),
+    status: execution.status || core.payment?.status || core.airdrop?.status || core.automation?.status || core.proposal?.status || core.action?.status || core.claim?.status || core.approval?.status || result.status || null,
     idempotentReplay: Boolean(result.idempotentReplay),
-    resultRefs: resultRefs(result)
+    decision: result.decision ? {
+      stance: result.decision.stance,
+      confidence: result.decision.confidence,
+      nextAction: result.decision.nextAction
+    } : null,
+    resultRefs: resultRefs(result),
+    narrative: result.narrative ? {
+      mode: result.narrative.mode,
+      summary: result.narrative.summary,
+      nextAction: result.narrative.nextAction
+    } : null
   };
 }
 
@@ -512,6 +554,7 @@ function resolveRelated(command) {
   return {
     payment: refs.paymentId ? ledger.payments.find((item) => item.id === refs.paymentId) || null : null,
     airdrop: refs.airdropId ? ledger.airdrops.find((item) => item.id === refs.airdropId) || null : null,
+    automation: refs.automationId ? ledger.automations.find((item) => item.id === refs.automationId) || null : null,
     approval: refs.approvalId ? ledger.approvals.find((item) => item.id === refs.approvalId) || null : null,
     defiAction: refs.defiActionId ? ledger.defiActions.find((item) => item.id === refs.defiActionId) || null : null,
     proposal: refs.proposalId ? ledger.perpProposals.find((item) => item.id === refs.proposalId) || null : null,
@@ -525,11 +568,33 @@ function replayResult(command) {
     ...(command.result || {}),
     payment: related.payment,
     airdrop: related.airdrop,
+    automation: related.automation,
     approval: related.approval,
     action: related.defiAction,
     proposal: related.proposal,
-    job: related.job
+    job: related.job,
+    narrative: command.narrative || command.result?.narrative || null
   };
+}
+
+function commandMonitorTarget(command) {
+  const refs = command.resultRefs || {};
+  if (refs.defiActionId) return { kind: "defi_action", id: refs.defiActionId };
+  if (refs.paymentId) return { kind: "payment", id: refs.paymentId };
+  if (refs.proposalId) return { kind: "perp_proposal", id: refs.proposalId };
+  return null;
+}
+
+function buildXCommandFinalReply(command, monitor, { publicUrl } = {}) {
+  if (!monitor) return null;
+  const status = monitor.lifecycle || monitor.status || "unknown";
+  const tx = monitor.txHash ? ` Tx: ${monitor.txHash}` : "";
+  const reason = monitor.reason ? ` Reason: ${monitor.reason}` : "";
+  const receipt = publicUrl ? ` Receipt: ${publicUrl}` : "";
+  if (monitor.terminal) {
+    return `Final status for ${command.id}: ${status}.${tx}${reason}${receipt}`.trim();
+  }
+  return `Update for ${command.id}: ${status}. I am still monitoring this action.${tx}${reason}${receipt}`.trim();
 }
 
 function findExistingXCommand({
@@ -590,7 +655,10 @@ function relatedApprovalUrl(command, { host, protocol = "http" } = {}) {
     return null;
   }
 
-  return `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}/approve`;
+  const approval = ledger.approvals.find((item) => item.id === approvalId);
+  const token = approval ? createApprovalToken({ approval, commandId: command.id }) : null;
+  const suffix = token ? `?approvalToken=${encodeURIComponent(token)}` : "";
+  return `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}/approve${suffix}`;
 }
 
 function normalizeCommandText(text) {

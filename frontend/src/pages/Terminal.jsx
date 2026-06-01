@@ -14,6 +14,13 @@ const SUGGESTIONS = [
   "drop $0.50 to first 10 replies",
   "long BTC 2x with $1",
   "close my last perp",
+  "analyze my portfolio",
+  "what should I do with my wallet",
+  "never bridge if fee is over 3%",
+  "max trade $10",
+  "list mandates",
+  "keep 70% USDC, 20% EURC, 10% cirBTC",
+  "rebalance my Arc wallet",
   "list arc trading primitives",
   "show my balance",
   "sync balances every 10 minutes",
@@ -205,43 +212,37 @@ export default function Terminal() {
   };
 
   const followDefiExecution = useCallback((data, messageId) => {
-    const actionId = extractDefiActionId(data);
-    if (!actionId || !shouldPollDefiAction(data)) return;
-    if (defiPollersRef.current.has(actionId)) clearTimeout(defiPollersRef.current.get(actionId));
+    const target = extractExecutionMonitorTarget(data);
+    if (!target || !shouldPollExecution(data, target)) return;
+    const targetKey = `${target.kind}:${target.id}`;
+    if (defiPollersRef.current.has(targetKey)) clearTimeout(defiPollersRef.current.get(targetKey));
 
     let attempt = 0;
     const poll = async () => {
       attempt += 1;
       try {
-        if (attempt > 1) {
-          try {
-            await post("/api/jobs/run-due", { limit: 10 });
-          } catch {}
-        }
-        const receiptData = await fetchJson(`/api/defi/actions/${encodeURIComponent(actionId)}/receipt`);
-        updateMessageHtml(messageId, formatDefiReceiptFollowup(receiptData, data));
-        const status = String(receiptData.receipt?.action?.status || "").toLowerCase();
-        const jobStatus = String(receiptData.receipt?.executionJob?.status || "").toLowerCase();
-        const done = ["settled", "failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(status)
-          || jobStatus === "failed";
+        const refreshed = await post(`/api/execution-monitor/${encodeURIComponent(target.kind)}/${encodeURIComponent(target.id)}`, { runWorker: true });
+        updateMessageHtml(messageId, formatExecutionMonitorFollowup(refreshed, data));
+        const monitor = refreshed.monitor || {};
+        const done = Boolean(monitor.terminal);
         if (done || attempt >= 30) {
-          defiPollersRef.current.delete(actionId);
+          defiPollersRef.current.delete(targetKey);
           return;
         }
       } catch (error) {
         if (attempt >= 30) {
-          updateMessageHtml(messageId, formatDefiPollingFailure(actionId, error));
-          defiPollersRef.current.delete(actionId);
+          updateMessageHtml(messageId, formatDefiPollingFailure(target.id, error));
+          defiPollersRef.current.delete(targetKey);
           return;
         }
       }
 
       const timer = window.setTimeout(poll, attempt < 3 ? 1200 : 2500);
-      defiPollersRef.current.set(actionId, timer);
+      defiPollersRef.current.set(targetKey, timer);
     };
 
     const timer = window.setTimeout(poll, 900);
-    defiPollersRef.current.set(actionId, timer);
+    defiPollersRef.current.set(targetKey, timer);
   }, [updateMessageHtml]);
 
   const trackApproval = (data) => {
@@ -365,6 +366,200 @@ function renderTxLink(txHash, explorerUrl) {
   return `<a href="${esc(explorerUrl)}" target="_blank" rel="noreferrer" style="color:var(--green);font-weight:800">${esc(compact)}</a>`;
 }
 
+function renderAgentDecision(decision) {
+  if (!decision) return "";
+  const checks = Array.isArray(decision.checks) ? decision.checks : [];
+  const warnings = Array.isArray(decision.warnings) ? decision.warnings : [];
+  const checkText = checks.slice(0, 4).map((item) => {
+    const symbol = item.ok === true ? "ok" : item.ok === false ? "fail" : "watch";
+    return `${esc(symbol)}: ${esc(item.message)}`;
+  }).join("<br>");
+  const warningText = warnings.slice(0, 3).map((item) => `! ${esc(item)}`).join("<br>");
+
+  return `Decision details.${renderResultCard([
+    ["Stance", `<code>${esc(decision.stance || "review")}</code>`],
+    ["Objective", esc(decision.objective || "n/a")],
+    ["Risk", esc(decision.riskLevel || "unknown")],
+    ["Confidence", esc(decision.confidence || "unknown")],
+    ["Rationale", esc(decision.rationale || "n/a")],
+    ["Checks", checkText || "n/a"],
+    ["Warnings", warningText || "none"],
+  ])}`;
+}
+
+function renderAgentNarrative(narrative) {
+  if (!narrative?.summary) return "";
+  const checks = Array.isArray(narrative.whatChecked) ? narrative.whatChecked : [];
+  const warnings = Array.isArray(narrative.warnings) ? narrative.warnings : [];
+  const receipt = narrative.receipt || {};
+  const checkedText = checks.length
+    ? checks.slice(0, 4).map((item) => `${esc(item.status || "watch")}: ${esc(item.message)}`).join("<br>")
+    : "wallet, signer policy, route, and execution state";
+  const warningText = warnings.length ? warnings.slice(0, 3).map(esc).join("<br>") : "none";
+
+  const rows = [
+    ["Status", statusBadge(narrative.status || narrative.mode || "review", narrativeStatusType(narrative))],
+    ["Why", esc(narrative.why || "Checked policy and current execution state.")],
+    ["Checked", checkedText],
+    ["Tx", renderTxLink(narrative.txHash || receipt.txHash, narrative.explorerUrl)],
+    ["Receipt", receipt.url ? `<a href="${esc(receipt.url)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"],
+    ["Next", esc(narrative.nextAction || "review")],
+  ];
+
+  if (narrative.whatHappened) rows.splice(1, 0, ["Result", esc(narrative.whatHappened)]);
+  if (warningText !== "none") rows.push(["Warnings", warningText]);
+
+  return `<strong>${esc(narrative.summary)}</strong>${renderResultCard(rows)}`;
+}
+
+function narrativeStatusType(narrative) {
+  const mode = String(narrative?.mode || "").toLowerCase();
+  const status = String(narrative?.status || "").toLowerCase();
+  if (["failed", "refused", "clarifying"].includes(mode) || ["failed", "rejected", "quote_unavailable", "position_not_found"].includes(status)) return "fail";
+  if (["monitoring", "needs_approval", "waiting"].includes(mode) || ["queued", "submitted", "confirmed", "requires_confirmation", "execution_not_enabled"].includes(status)) return "warn";
+  return "ok";
+}
+
+function renderTradeSimulation(simulation) {
+  if (!simulation) return "";
+  const warnings = Array.isArray(simulation.warnings) ? simulation.warnings : [];
+  const blockers = Array.isArray(simulation.blockers) ? simulation.blockers : [];
+  const output = simulation.output || {};
+  const outputText = output.amount
+    ? `${esc(output.amount)} ${esc(output.token || "")}${output.minAmount ? ` min ${esc(output.minAmount)}` : ""}`
+    : "provider did not return a readable output amount";
+  const feeRatio = Number(simulation.feeRatio || 0);
+
+  return renderResultCard([
+    ["Route check", `<code>${esc(simulation.recommendation || "review")}</code>`],
+    ["Required", `${esc(simulation.requiredSourceAmount ?? "n/a")} ${esc(simulation.sourceBalance?.token || "")}`],
+    ["Available", simulation.sourceBalance?.known ? `${esc(simulation.sourceBalance.amount)} ${esc(simulation.sourceBalance.token)}` : "not synced"],
+    ["Est. fee", `US$${esc(simulation.estimatedFeeUsd ?? 0)} (${esc((feeRatio * 100).toFixed(1))}%)`],
+    ["Output", outputText],
+    ["Warnings", warnings.length ? warnings.slice(0, 3).map(esc).join("<br>") : "none"],
+    ["Blocks", blockers.length ? blockers.slice(0, 2).map(esc).join("<br>") : "none"],
+  ]);
+}
+
+function renderMarketIntelligence(market) {
+  if (!market) return "";
+  const regime = market.regime || {};
+  const routes = Array.isArray(market.routeStats) ? market.routeStats : [];
+  const warnings = Array.isArray(market.warnings) ? market.warnings : [];
+  const routeText = routes.length
+    ? routes.slice(0, 4).map((route) => {
+      const failure = Number(route.failureRate || 0) * 100;
+      const fee = Number(route.averageFeeRatio || 0) * 100;
+      return `${esc(route.label || route.key)} - ${esc(route.attempts || 0)} attempts, ${esc(failure.toFixed(0))}% fail, ${esc(fee.toFixed(1))}% fee`;
+    }).join("<br>")
+    : "no route history yet";
+
+  return `Market intelligence.${renderResultCard([
+    ["Regime", `<code>${esc(regime.status || market.status || "neutral")}</code>`],
+    ["Reason", esc(regime.reason || market.reason || "n/a")],
+    ["Feed", market.feeds?.freshness ? `${statusBadge(market.feeds.freshness.status, market.feeds.freshness.status === "fresh" ? "ok" : "warn")} ${esc(market.feeds.freshness.reason || "")}` : "not loaded"],
+    ["Recommendation", esc(market.recommendation || "review")],
+    ["Routes", routeText],
+    ["Warnings", warnings.length ? warnings.slice(0, 4).map(esc).join("<br>") : "none"],
+  ])}${market.feeds ? renderMarketFeedSnapshot(market.feeds) : ""}`;
+}
+
+function renderMarketFeedSnapshot(feed) {
+  if (!feed) return "";
+  const prices = Object.values(feed.prices || {});
+  const priceText = prices.length
+    ? prices.slice(0, 6).map((price) => `${esc(price.symbol)} ${price.priceUsd === null ? "unavailable" : `US$${esc(price.priceUsd)}`} - ${esc(price.freshness || "unknown")}`).join("<br>")
+    : "no price feed rows";
+  const perps = Array.isArray(feed.perps?.markets) ? feed.perps.markets : [];
+  const perpsText = perps.length
+    ? perps.slice(0, 4).map((market) => `${esc(market.symbol)} mark ${esc(market.markPrice ?? "n/a")} funding ${esc(market.funding ?? "n/a")} OI ${esc(market.openInterest ?? "n/a")}`).join("<br>")
+    : feed.perps?.reason || "perps feed unavailable";
+  const warnings = Array.isArray(feed.warnings) ? feed.warnings : [];
+  return `Market feeds.${renderResultCard([
+    ["Regime", `<code>${esc(feed.regime?.status || "unknown")}</code>`],
+    ["Freshness", `${statusBadge(feed.freshness?.status || "unknown", feed.freshness?.status === "fresh" ? "ok" : "warn")} ${esc(feed.freshness?.reason || "")}`],
+    ["Prices", priceText],
+    ["Perps", perpsText],
+    ["Liquidity", `${statusBadge(feed.liquidity?.status || "unknown", feed.liquidity?.status === "healthy" ? "ok" : "warn")} ${esc(feed.liquidity?.reason || "")}`],
+    ["Warnings", warnings.length ? warnings.slice(0, 5).map(esc).join("<br>") : "none"],
+  ])}`;
+}
+
+function renderStrategyPlan(result = {}) {
+  const strategy = result.strategy || {};
+  const plan = result.strategyPlan || {};
+  const portfolio = result.portfolio || {};
+  const targets = Object.entries(strategy.targetAllocations || {})
+    .map(([symbol, weight]) => `${esc(symbol)} ${esc(Math.round(Number(weight) * 100))}%`)
+    .join(" · ") || "n/a";
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const stepText = steps.length
+    ? steps.slice(0, 5).map((step) => `${esc(step.fromToken)} -> ${esc(step.toToken)} · US$${esc(step.amountUsd)}`).join("<br>")
+    : "none";
+  const warnings = Array.isArray(plan.warnings) ? plan.warnings : [];
+
+  return `Strategy plan.${renderResultCard([
+    ["Strategy", `<code>${esc(strategy.id || "adhoc")}</code> ${esc(strategy.name || "")}`],
+    ["Status", statusBadge(result.status || plan.status || "planned", steps.length ? "warn" : "ok")],
+    ["Targets", targets],
+    ["Rail", esc(strategy.settlementRail || portfolio.settlementRail || "arc-testnet")],
+    ["Portfolio", `US$${esc(portfolio.totalValueUsd ?? plan.totalValueUsd ?? 0)}`],
+    ["Steps", stepText],
+    ["Warnings", warnings.length ? warnings.slice(0, 3).map(esc).join("<br>") : "none"],
+    ["Market", result.marketGuard?.reason ? esc(result.marketGuard.reason) : "checked"],
+    ["Next", esc(result.nextAction || plan.nextAction || "review")],
+  ])}`;
+}
+
+function renderPortfolioAnalysis(result = {}) {
+  const portfolio = result.portfolio || {};
+  const exposure = portfolio.exposure || {};
+  const perps = portfolio.perps || {};
+  const pending = portfolio.pending || {};
+  const strategy = portfolio.strategy || {};
+  const rec = result.recommendation || {};
+  const assets = Object.values(portfolio.assetsByToken || {});
+  const assetText = assets.length
+    ? assets.slice(0, 6).map((asset) => `${esc(asset.symbol)} US$${esc(asset.valueUsd)} (${esc(Math.round(Number(asset.weight || 0) * 100))}%)`).join("<br>")
+    : "no funded assets found";
+  const pendingText = pending.items?.length
+    ? pending.items.slice(0, 4).map((item) => `${esc(item.kind)} ${esc(item.id)} - ${esc(item.status)}`).join("<br>")
+    : "none";
+
+  return `Portfolio analysis.${renderResultCard([
+    ["Total", `US$${esc(portfolio.totalValueUsd ?? 0)}`],
+    ["Exposure", `stables ${esc(Math.round(Number(exposure.stableWeight || 0) * 100))}% / volatile ${esc(Math.round(Number(exposure.volatileWeight || 0) * 100))}%`],
+    ["Assets", assetText],
+    ["Perps", `${esc(perps.activeCount || 0)} active / US$${esc(perps.activeNotionalUsd || 0)} notional`],
+    ["Pending", pendingText],
+    ["Strategy", strategy.status ? `${statusBadge(strategy.status, strategy.status === "drifted" ? "warn" : "ok")} ${esc(strategy.strategyName || strategy.reason || "")}` : "none"],
+    ["Recommendation", esc(rec.reason || "Hold and monitor.")],
+    ["Next", esc(rec.nextAction || result.nextAction || "monitor_portfolio")],
+  ])}`;
+}
+
+function renderMandates(result = {}) {
+  const mandate = result.mandate || null;
+  const mandates = mandate ? [mandate] : (Array.isArray(result.mandates) ? result.mandates : []);
+  const conflicts = mandate?.conflicts || result.conflicts || [];
+  if (mandate) {
+    return `Mandate saved.${renderResultCard([
+      ["Mandate", `<code>${esc(mandate.id)}</code>`],
+      ["Status", statusBadge(result.status || mandate.status || "saved", conflicts.length ? "warn" : "ok")],
+      ["Kind", esc(mandate.kind)],
+      ["Rule", esc(mandate.sourceText || "n/a")],
+      ["Conflicts", conflicts.length ? conflicts.map((item) => esc(item.reason)).join("<br>") : "none"],
+      ["Next", esc(result.nextAction || "enforce_on_next_trade")],
+    ])}`;
+  }
+  if (!mandates.length) return `No standing trading mandates found.`;
+  const rows = mandates.slice(0, 8).map((item) => [
+    `<code>${esc(item.id)}</code>`,
+    `${statusBadge(item.status || "active", item.status === "active" ? "ok" : "warn")} ${esc(item.kind)} - ${esc(item.sourceText || "")}`,
+  ]);
+  return `Standing mandates loaded.${renderResultCard(rows)}`;
+}
+
 function extractDefiActionId(data) {
   return data?.execution?.ids?.actionId
     || data?.result?.action?.id
@@ -372,6 +567,22 @@ function extractDefiActionId(data) {
     || data?.receipt?.action?.id
     || data?.action?.id
     || null;
+}
+
+function extractExecutionMonitorTarget(data) {
+  const monitor = data?.executionMonitor || data?.monitor;
+  if (monitor?.kind && monitor?.id) return { kind: monitor.kind, id: monitor.id };
+
+  const paymentId = data?.execution?.ids?.paymentId || data?.result?.payment?.id || data?.payment?.id;
+  if (paymentId) return { kind: "payment", id: paymentId };
+
+  const actionId = extractDefiActionId(data);
+  if (actionId) return { kind: "defi_action", id: actionId };
+
+  const proposalId = data?.execution?.ids?.proposalId || data?.result?.proposal?.id || data?.proposal?.id;
+  if (proposalId) return { kind: "perp_proposal", id: proposalId };
+
+  return null;
 }
 
 function shouldPollDefiAction(data) {
@@ -388,6 +599,59 @@ function shouldPollDefiAction(data) {
   if (["settled", "failed", "rejected", "quote_unavailable"].includes(status)) return false;
   return ["confirmed", "submitted", "queued"].includes(status)
     || /execution_queued|run_execution_worker|execute_defi_action|execution_provider_pending|reconcile_defi_action|monitor_receipt/.test(next);
+}
+
+function shouldPollExecution(data, target) {
+  const monitor = data?.executionMonitor || data?.monitor || {};
+  if (monitor.terminal) return false;
+  if (target.kind === "defi_action") return shouldPollDefiAction(data) || ["queued", "submitted"].includes(String(monitor.lifecycle || "").toLowerCase());
+  if (target.kind === "payment") {
+    const status = String(monitor.lifecycle || data?.result?.payment?.status || data?.payment?.status || "").toLowerCase();
+    return ["queued", "submitted", "pending"].includes(status);
+  }
+  if (target.kind === "perp_proposal") {
+    const status = String(monitor.lifecycle || data?.result?.proposal?.status || data?.proposal?.status || "").toLowerCase();
+    return ["queued", "submitted", "confirmed"].includes(status);
+  }
+  return false;
+}
+
+function formatExecutionMonitorFollowup(refreshed, originalData = {}) {
+  const monitor = refreshed.monitor || {};
+  if (monitor.kind === "defi_action" && refreshed.receipt) {
+    return `${formatDefiReceiptFollowup({ receipt: refreshed.receipt }, originalData)}${renderExecutionMonitorCard(monitor)}`;
+  }
+  return `${executionMonitorTitle(monitor)}${renderExecutionMonitorCard(monitor)}`;
+}
+
+function renderExecutionMonitorCard(monitor = {}) {
+  const job = monitor.job || {};
+  const rows = [
+    ["Lifecycle", statusBadge(monitor.lifecycle || monitor.status || "unknown", monitorStatusType(monitor))],
+    ["Target", `<code>${esc(monitor.kind || "action")}:${esc(monitor.id || "n/a")}</code>`],
+    ["Tx", renderTxLink(monitor.txHash, monitor.explorerUrl)],
+    ["Reason", esc(monitor.reason || "n/a")],
+    ["Job", job.id ? `<code>${esc(job.id)}</code> ${statusBadge(job.status, job.status === "failed" ? "fail" : "warn")} ${esc(`${job.attempts}/${job.maxAttempts}`)}` : "n/a"],
+    ["Receipt", monitor.receiptUrl ? `<a href="${esc(monitor.receiptUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"],
+    ["Next", esc(monitor.nextAction || "review")],
+  ];
+  return renderResultCard(rows);
+}
+
+function executionMonitorTitle(monitor = {}) {
+  const kind = monitor.kind === "payment" ? "Payment" : monitor.kind === "perp_proposal" ? "Perp execution" : "Execution";
+  if (monitor.lifecycle === "settled") return `${kind} settled.`;
+  if (monitor.lifecycle === "failed") return `${kind} failed.`;
+  if (monitor.lifecycle === "needs_user_signature") return `${kind} needs user wallet approval.`;
+  if (monitor.terminal) return `${kind} reached ${monitor.lifecycle || "final"} state.`;
+  return `${kind} is still being monitored.`;
+}
+
+function monitorStatusType(monitor = {}) {
+  const status = String(monitor.lifecycle || monitor.status || "").toLowerCase();
+  if (["failed", "rejected", "expired", "execution_not_enabled"].includes(status)) return "fail";
+  if (["queued", "submitted", "needs_user_signature", "quoted"].includes(status)) return "warn";
+  return "ok";
 }
 
 function formatDefiReceiptFollowup(receiptData, originalData = {}) {
@@ -410,6 +674,8 @@ function formatDefiReceiptFollowup(receiptData, originalData = {}) {
   const toRail = request.toRail || fromRail;
   const txHash = receipt.txHash || execution.txHash || action.txHash;
   const reason = action.reason || execution.reason || execution.error || executionJob?.lastError || action.lastExecutionError || "";
+  const simulation = receipt.simulation || action.simulation || originalData.simulation || originalData.result?.simulation || null;
+  const market = receipt.marketIntelligence || action.marketIntelligence || originalData.marketIntelligence || originalData.result?.marketIntelligence || null;
   const title = defiReceiptTitle(type, status);
 
   const rows = [
@@ -424,8 +690,9 @@ function formatDefiReceiptFollowup(receiptData, originalData = {}) {
   ];
 
   if (reason) rows.splice(3, 0, ["Reason", esc(reason)]);
+  if (simulation?.recommendation) rows.splice(3, 0, ["Route check", `<code>${esc(simulation.recommendation)}</code>`]);
   if (executionJob) rows.splice(4, 0, ["Job", `<code>${esc(executionJob.id)}</code> ${statusBadge(executionJob.status, executionJob.status === "failed" ? "fail" : "warn")} ${esc(`${executionJob.attempts}/${executionJob.maxAttempts}`)}`]);
-  return `${esc(title)}${renderResultCard(rows)}`;
+  return `${esc(title)}${renderResultCard(rows)}${renderTradeSimulation(simulation)}${renderMarketIntelligence(market)}`;
 }
 
 function defiReceiptTitle(type, status) {
@@ -525,6 +792,14 @@ function formatResult(data) {
     summary = formatExecutionResult(data);
   } else if (tool === "list_arc_trading_primitives" || Array.isArray(result.primitives)) {
     summary = renderPrimitiveList(result.primitives || []);
+  } else if (tool === "get_market_feed_snapshot" || result.prices || result.freshness) {
+    summary = renderMarketFeedSnapshot(result);
+  } else if (tool === "get_market_intelligence" || result.routeStats || result.regime) {
+    summary = renderMarketIntelligence(result);
+  } else if (tool === "analyze_portfolio" || result.portfolio?.exposure) {
+    summary = renderPortfolioAnalysis(result);
+  } else if (tool?.includes("mandate") || result.mandate || Array.isArray(result.mandates)) {
+    summary = renderMandates(result);
   } else if (tool === "create_airdrop") {
     summary = renderAirdrop(result.airdrop, data);
   } else if (tool === "award_airdrop") {
@@ -573,27 +848,35 @@ function formatResult(data) {
   } else if (intent.action === "quote_bridge") {
     const action = result.action || {};
     const bridgeToken = intent.fromToken || intent.asset || "USDC";
+    const simulation = result.simulation || action.simulation;
     summary = `Bridge quote for <code>${intent.amount} ${esc(bridgeToken)}</code> from <code>${esc(intent.fromRail)}</code> to <code>${esc(intent.toRail)}</code>.`;
     summary += renderResultCard([
       ["Status", statusBadge(action.status || "quoted", "warn")],
       ["Amount", `${intent.amount} ${esc(bridgeToken)}`],
       ["Route", `${esc(intent.fromRail)} → ${esc(intent.toRail)}`],
       ["Protocol", esc(action.protocol || "lifi")],
+      ["Route check", `<code>${esc(simulation?.recommendation || "pending")}</code>`],
       ["Tx", renderTxLink(action.txHash || action.execution?.txHash, action.explorerUrl)],
       ["Next", esc(data.nextAction || "—")],
     ]);
+    summary += renderTradeSimulation(simulation);
+    summary += renderMarketIntelligence(result.marketIntelligence || action.marketIntelligence);
     summary += renderApprovalButton(action.approvalId, "Approve bridge");
   } else if (intent.action === "quote_swap") {
     const action = result.action || {};
+    const simulation = result.simulation || action.simulation;
     summary = `Swap quote for <code>${intent.amount} ${esc(intent.fromToken || "USDC")}</code> → <code>${esc(intent.toToken)}</code>.`;
     summary += renderResultCard([
       ["Status", statusBadge(action.status || "quoted", "warn")],
       ["Amount", `${intent.amount} ${esc(intent.fromToken || "USDC")}`],
       ["To token", esc(intent.toToken || "—")],
       ["Protocol", esc(action.protocol || "lifi")],
+      ["Route check", `<code>${esc(simulation?.recommendation || "pending")}</code>`],
       ["Tx", renderTxLink(action.txHash || action.execution?.txHash, action.explorerUrl)],
       ["Next", esc(data.nextAction || "—")],
     ]);
+    summary += renderTradeSimulation(simulation);
+    summary += renderMarketIntelligence(result.marketIntelligence || action.marketIntelligence);
     summary += renderApprovalButton(action.approvalId, "Approve swap");
   } else if (intent.action === "propose_perp_trade") {
     const proposal = result.proposal || {};
@@ -606,6 +889,8 @@ function formatResult(data) {
       ["Next", esc(data.nextAction || "approval_required")],
     ]);
     summary += renderApprovalButton(proposal.approvalId, "Approve perp proposal");
+  } else if (result.strategyPlan || result.strategy || tool.includes("strategy")) {
+    summary = renderStrategyPlan(result);
   } else if (tool === "get_balance" || tool === "sync_circle_balances") {
     const wallet = result.wallet || {};
     const formatLine = (railId) => {
@@ -634,7 +919,10 @@ function formatResult(data) {
     summary += `<div style="margin-top:6px;font-size:11px;color:var(--ink-muted)">Timing: ${Number(data.timing.totalMs || 0)}ms total · planning ${Number(data.timing.planningMs || 0)}ms · execution ${Number(data.timing.executionMs || 0)}ms</div>`;
   }
 
-  return summary;
+  const narrative = renderAgentNarrative(data.narrative);
+  const decision = renderAgentDecision(data.decision);
+  const parts = [narrative, decision, summary ? `<div style="margin-top:10px">${summary}</div>` : ""].filter(Boolean);
+  return parts.join(`<div style="height:10px"></div>`);
 }
 
 function formatApprovalResult(data) {
@@ -664,10 +952,14 @@ function formatHelp() {
 <div><code>drop $0.50 to first 10 replies</code> - Create a social reward flow that can be completed later</div>
 <div><code>list arc trading primitives</code> - Show live primitive readiness</div>
 <div><code>show my balance</code> - Read wallet balances</div>
+<div><code>never bridge if fee is over 3%</code> - Save a standing trading mandate</div>
+<div><code>list mandates</code> - Review rules the agent enforces before trades</div>
 <div><code>sync balances every 10 minutes</code> - Create automation</div>
 <div><code>list automations</code> - Show automations</div>
 <div><code>long BTC 2x with $1</code> - Prepare perp proposal</div>
 <div><code>close my last perp</code> - Close the latest open ArcPerps position when one exists</div>
+<div><code>keep 70% USDC, 20% EURC, 10% cirBTC</code> - Save a planning-only target allocation strategy</div>
+<div><code>rebalance my Arc wallet</code> - Build a rebalance plan without executing trades</div>
 </div></div>`;
 }
 

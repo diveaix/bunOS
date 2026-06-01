@@ -44,6 +44,8 @@ import {
   getAirdropReceipt,
   listAirdrops
 } from "./airdrops.js";
+import { refreshExecutionMonitor } from "./executionMonitor.js";
+import { analyzePortfolio } from "./portfolioBrain.js";
 import { listArcTradingPrimitives } from "./arcTradingPrimitives.js";
 import {
   assessLiquidationRisk,
@@ -66,6 +68,21 @@ import {
   getAppKitUnifiedBalance,
   listAppKitCapabilities
 } from "./appKitAgentTools.js";
+import {
+  createStrategyPolicy,
+  listStrategyPolicies,
+  planRebalanceStrategy,
+  reduceRiskStrategy,
+  runStrategyCheck
+} from "./strategyAgent.js";
+import { getMarketIntelligence } from "./marketIntelligence.js";
+import { refreshMarketFeedSnapshot } from "./marketFeeds.js";
+import {
+  createMandate,
+  deleteMandate,
+  listMandates,
+  updateMandate
+} from "./mandates.js";
 
 export const mcpTools = [
   {
@@ -179,7 +196,7 @@ export const mcpTools = [
       properties: {
         handle: { type: "string" },
         name: { type: "string" },
-        kind: { type: "string", enum: ["sync_circle_balances", "run_agent_action", "reconcile_defi_action"] },
+        kind: { type: "string", enum: ["sync_circle_balances", "run_agent_action", "reconcile_defi_action", "run_strategy_check"] },
         prompt: { type: "string" },
         text: { type: "string" },
         actionId: { type: "string" },
@@ -188,6 +205,89 @@ export const mcpTools = [
         defaultSettlementRail: { type: "string" },
         status: { type: "string" },
         nextRunAt: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "create_strategy_policy",
+    description: "Create a portfolio target-allocation strategy for a user's Arc wallet. This stores policy only; it does not execute trades.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        name: { type: "string" },
+        targetAllocations: { type: "object" },
+        settlementRail: { type: "string" },
+        allowedRails: { type: "array", items: { type: "string" } },
+        preferredAssets: { type: "array", items: { type: "string" } },
+        forbiddenAssets: { type: "array", items: { type: "string" } }
+      },
+      required: ["handle", "targetAllocations"]
+    }
+  },
+  {
+    name: "list_strategy_policies",
+    description: "List stored target-allocation strategies for a user.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        status: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "plan_rebalance_strategy",
+    description: "Build a policy-aware rebalance plan from wallet balances and a strategy. Returns planned quote steps only; does not execute swaps.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        strategyId: { type: "string" },
+        targetAllocations: { type: "object" },
+        settlementRail: { type: "string" },
+        maxSteps: { type: "number" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "reduce_risk_strategy",
+    description: "Create a planning-only risk reduction rebalance toward stable assets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        settlementRail: { type: "string" },
+        stableTarget: { type: "number" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "run_strategy_check",
+    description: "Run a strategy drift check for automations. It returns a plan and never executes trades automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        strategyId: { type: "string" },
+        settlementRail: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "get_market_intelligence",
+    description: "Summarize route health, recent swap/bridge failure reasons, fee trends, liquidity warnings, and the current simple market regime for a user's Arc wallet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        settlementRail: { type: "string" },
+        limit: { type: "number" }
       },
       required: ["handle"]
     }
@@ -203,6 +303,72 @@ export const mcpTools = [
         kind: { type: "string" },
         limit: { type: "number" }
       }
+    }
+  },
+  {
+    name: "get_market_feed_snapshot",
+    description: "Refresh external token/perps market feeds and return prices, freshness, liquidity, and regime labels. Read-only; unavailable feeds are marked stale/unavailable.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        assets: { type: "array", items: { type: "string" } },
+        settlementRail: { type: "string" },
+        force: { type: "boolean" }
+      }
+    }
+  },
+  {
+    name: "create_mandate",
+    description: "Save a persistent standing trading rule for a user's agent. Mandates are enforced before swaps, bridges, and perp proposals.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        text: { type: "string" },
+        kind: { type: "string" },
+        rules: { type: "object" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "list_mandates",
+    description: "List the user's active or historical standing trading rules.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        status: { type: "string" },
+        limit: { type: "number" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "update_mandate",
+    description: "Update a standing trading rule by mandate id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        mandateId: { type: "string" },
+        text: { type: "string" },
+        rules: { type: "object" },
+        status: { type: "string" }
+      },
+      required: ["handle", "mandateId"]
+    }
+  },
+  {
+    name: "delete_mandate",
+    description: "Delete a standing trading rule so it is no longer enforced.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        mandateId: { type: "string" }
+      },
+      required: ["handle", "mandateId"]
     }
   },
   {
@@ -278,6 +444,19 @@ export const mcpTools = [
       type: "object",
       properties: {
         handle: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
+    name: "analyze_portfolio",
+    description: "Analyze a user's portfolio across rails, tokens, perps exposure, pending actions, strategy drift, and recommended next action. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        settlementRail: { type: "string" },
+        includeRecommendations: { type: "boolean" }
       },
       required: ["handle"]
     }
@@ -840,6 +1019,21 @@ export const mcpTools = [
     }
   },
   {
+    name: "refresh_execution_monitor",
+    description: "Refresh a payment, DeFi action, or perp proposal lifecycle and return settled/failed/monitoring status with tx hash when available.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["payment", "defi_action", "perp_proposal"] },
+        id: { type: "string" },
+        runWorker: { type: "boolean" },
+        host: { type: "string" },
+        protocol: { type: "string" }
+      },
+      required: ["kind", "id"]
+    }
+  },
+  {
     name: "list_perp_markets",
     description: "List Hyperliquid market data. Read-only; no order placement.",
     inputSchema: {
@@ -892,6 +1086,50 @@ export async function callMcpTool(tool, args) {
     return createAutomation(args);
   }
 
+  if (tool === "create_strategy_policy") {
+    return createStrategyPolicy(args);
+  }
+
+  if (tool === "list_strategy_policies") {
+    return listStrategyPolicies(args);
+  }
+
+  if (tool === "plan_rebalance_strategy") {
+    return planRebalanceStrategy(args);
+  }
+
+  if (tool === "reduce_risk_strategy") {
+    return reduceRiskStrategy(args);
+  }
+
+  if (tool === "run_strategy_check") {
+    return runStrategyCheck(args);
+  }
+
+  if (tool === "get_market_intelligence") {
+    return getMarketIntelligence(args);
+  }
+
+  if (tool === "get_market_feed_snapshot") {
+    return await refreshMarketFeedSnapshot(args);
+  }
+
+  if (tool === "create_mandate") {
+    return createMandate({ ...args, source: "mcp" });
+  }
+
+  if (tool === "list_mandates") {
+    return listMandates(args);
+  }
+
+  if (tool === "update_mandate") {
+    return updateMandate(args);
+  }
+
+  if (tool === "delete_mandate") {
+    return deleteMandate(args);
+  }
+
   if (tool === "list_automations") {
     return listAutomations(args);
   }
@@ -922,6 +1160,10 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "get_balance") {
     return { ok: true, wallet: getWalletProfile(args.handle) };
+  }
+
+  if (tool === "analyze_portfolio") {
+    return analyzePortfolio(args);
   }
 
   if (tool === "get_wallet_capabilities") {
@@ -968,16 +1210,25 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "demo_bridge_arc_to_base") {
     const handle = args.handle || "@sara";
+    const amount = Number(args.amount || 5);
     const wallet = await createWallet({
       handle,
       settlementRails: ["arc-testnet", "base-sepolia"]
     });
+    if (Number(wallet.wallet?.balances?.["arc-testnet"] || 0) < amount + 0.25) {
+      await fundWallet({
+        handle,
+        amount: amount + 1,
+        source: "mcp_demo_prefund",
+        settlementRail: "arc-testnet"
+      });
+    }
     const quote = await quoteDefiRoute({
       handle,
       type: "bridge",
       fromRail: "arc-testnet",
       toRail: "base-sepolia",
-      amount: args.amount || 5,
+      amount,
       fromToken: "USDC",
       toToken: "USDC",
       slippage: args.slippage ?? 0.005,
@@ -988,7 +1239,7 @@ export async function callMcpTool(tool, args) {
       ok: quote.ok,
       demo: "arc_to_base_sepolia_bridge",
       backendSignerAllowed: false,
-      wallet: wallet.wallet,
+      wallet: getWalletProfile(handle),
       quote,
       approvalId: quote.action?.approvalId || null,
       nextAction: quote.ok
@@ -1183,6 +1434,13 @@ export async function callMcpTool(tool, args) {
       actionId: args.actionId,
       host: args.host,
       protocol: args.protocol || "http"
+    });
+  }
+
+  if (tool === "refresh_execution_monitor") {
+    return await refreshExecutionMonitor({
+      ...args,
+      runWorker: args.runWorker !== false
     });
   }
 

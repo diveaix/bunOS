@@ -37,17 +37,28 @@ export function getXReplyReadiness({ handle } = {}) {
   };
 }
 
-export async function postXCommandReply({ commandId, publicUrl, force = false } = {}) {
+export async function postXCommandReply({ commandId, publicUrl, force = false, textOverride, deliveryField = "replyDelivery" } = {}) {
   const command = ledger.xCommands.find((item) => item.id === commandId);
   if (!command) {
     throw new Error("X command not found");
   }
 
+  const existingDelivery = command[deliveryField];
+  if (existingDelivery?.status === "posted" && !force) {
+    return {
+      ok: true,
+      status: "already_posted",
+      skipped: true,
+      command,
+      delivery: existingDelivery,
+      message: "Reply already posted for this command."
+    };
+  }
+
   const readiness = getXReplyReadiness({ handle: command.actorHandle });
   const approvalUrl = command.links?.approvalUrl || buildApprovalUrlFromReceiptUrl(command, publicUrl);
-  const text = command.reply
-    ? appendReplyLinks(command.reply, { publicUrl, approvalUrl })
-    : buildXCommandReply(command, command.result || {}, { publicUrl, approvalUrl });
+  const baseText = textOverride || command.reply || buildXCommandReply(command, command.result || {}, { publicUrl, approvalUrl });
+  const text = appendReplyLinks(baseText, { publicUrl, approvalUrl });
   const delivery = {
     status: "not_sent",
     replyAuthor: readiness.authorMode,
@@ -60,7 +71,7 @@ export async function postXCommandReply({ commandId, publicUrl, force = false } 
   };
 
   if (!readiness.enabled && !force) {
-    command.replyDelivery = {
+    command[deliveryField] = {
       ...delivery,
       status: "x_reply_not_enabled",
       readiness
@@ -75,7 +86,7 @@ export async function postXCommandReply({ commandId, publicUrl, force = false } 
   }
 
   if (!readiness.ready) {
-    command.replyDelivery = {
+    command[deliveryField] = {
       ...delivery,
       status: "x_reply_not_ready",
       readiness
@@ -90,7 +101,7 @@ export async function postXCommandReply({ commandId, publicUrl, force = false } 
   }
 
   if (!TWEET_ID_PATTERN.test(String(command.postId || ""))) {
-    command.replyDelivery = {
+    command[deliveryField] = {
       ...delivery,
       status: "invalid_reply_target",
       error: "X reply posting requires a numeric postId from a real X webhook."
@@ -99,7 +110,7 @@ export async function postXCommandReply({ commandId, publicUrl, force = false } 
       ok: false,
       status: "invalid_reply_target",
       command,
-      message: command.replyDelivery.error
+      message: command[deliveryField].error
     };
   }
 
@@ -120,7 +131,7 @@ export async function postXCommandReply({ commandId, publicUrl, force = false } 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    command.replyDelivery = {
+    command[deliveryField] = {
       ...delivery,
       status: "failed",
       error: data.detail || data.title || data.error || `X API returned ${response.status}`,
@@ -130,11 +141,11 @@ export async function postXCommandReply({ commandId, publicUrl, force = false } 
       ok: false,
       status: "failed",
       command,
-      delivery: command.replyDelivery
+      delivery: command[deliveryField]
     };
   }
 
-  command.replyDelivery = {
+  command[deliveryField] = {
     ...delivery,
     status: "posted",
     tweetId: data.data?.id || null,
@@ -147,7 +158,7 @@ export async function postXCommandReply({ commandId, publicUrl, force = false } 
     ok: true,
     status: "posted",
     command,
-    delivery: command.replyDelivery
+    delivery: command[deliveryField]
   };
 }
 

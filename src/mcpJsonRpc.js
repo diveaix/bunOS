@@ -1,5 +1,7 @@
 import { callMcpTool, mcpTools } from "./mcp.js";
-import { applyMcpApiKeyContext } from "./mcpApiKeys.js";
+import { applyMcpApiKeyContext, assertMcpToolResultSafe } from "./mcpApiKeys.js";
+import { redactSensitive } from "./redaction.js";
+import { isMcpToolAllowed } from "./securityPolicy.js";
 
 export async function handleMcpJsonRpc(body, context = {}) {
   const id = body.id ?? null;
@@ -38,14 +40,18 @@ export async function handleMcpJsonRpc(body, context = {}) {
       jsonrpc: "2.0",
       id,
       result: {
-        tools: mcpTools
+        tools: mcpTools.filter((tool) => isMcpToolAllowed(tool.name, context))
       }
     };
   }
 
   if (body.method === "tools/call") {
     const { name, arguments: args = {} } = body.params || {};
-    const result = await callMcpTool(name, applyMcpApiKeyContext(name, args, context));
+    const result = assertMcpToolResultSafe(
+      name,
+      await callMcpTool(name, applyMcpApiKeyContext(name, args, context)),
+      context
+    );
 
     return {
       jsonrpc: "2.0",
@@ -54,7 +60,7 @@ export async function handleMcpJsonRpc(body, context = {}) {
         content: [
           {
             type: "text",
-            text: JSON.stringify(result, null, 2)
+            text: JSON.stringify(redactSensitive(result), null, 2)
           }
         ],
         isError: false

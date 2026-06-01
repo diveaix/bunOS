@@ -1,5 +1,14 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { users } from "./fixtures.js";
+import {
+  assertMcpToolAuthorized,
+  recordSecurityEvent,
+  securityTrace
+} from "./securityPolicy.js";
+import {
+  assertNoBackendSignerSpend,
+  enforceMcpRateLimit
+} from "./securityGuards.js";
 
 const KEY_PREFIX = "bunos_mcp_";
 
@@ -28,6 +37,12 @@ export function createMcpApiKey({ handle, name = "MCP key", scopes = ["mcp:tools
 
   user.mcpApiKeys ||= [];
   user.mcpApiKeys.push(key);
+  recordSecurityEvent("mcp_api_key_created", {
+    handle: user.handle,
+    keyId: key.id,
+    scopes: key.scopes,
+    prefix: key.prefix
+  });
 
   return {
     ok: true,
@@ -45,6 +60,10 @@ export function revokeMcpApiKey({ handle, keyId }) {
   }
 
   key.revokedAt = new Date().toISOString();
+  recordSecurityEvent("mcp_api_key_revoked", {
+    handle: user.handle,
+    keyId: key.id
+  });
   return { ok: true, apiKey: redactKey(key) };
 }
 
@@ -61,6 +80,11 @@ export function authenticateMcpApiKey(secret) {
       const actual = Buffer.from(key.secretHash);
       if (actual.length === expected.length && timingSafeEqual(actual, expected)) {
         key.lastUsedAt = new Date().toISOString();
+        recordSecurityEvent("mcp_api_key_authenticated", {
+          handle: user.handle,
+          keyId: key.id,
+          scopes: key.scopes || ["mcp:tools"]
+        });
         return {
           ok: true,
           handle: user.handle,
@@ -78,15 +102,37 @@ export function applyMcpApiKeyContext(tool, args = {}, context = {}) {
   if (!context.handle) {
     return args || {};
   }
+  assertMcpToolAuthorized(tool, context);
+  enforceMcpRateLimit(tool, context);
 
   const next = { ...(args || {}) };
   next.handle = context.handle;
 
-  if ("senderHandle" in next || ["send_usdc", "create_payment_intent", "create_social_bounty"].includes(tool)) {
+  if ("senderHandle" in next || [
+    "send_usdc",
+    "create_payment_intent",
+    "create_social_bounty",
+    "create_airdrop",
+    "award_airdrop"
+  ].includes(tool)) {
     next.senderHandle = context.handle;
   }
+  recordSecurityEvent("mcp_tool_authorized", securityTrace({
+    handle: context.handle,
+    tool,
+    context
+  }));
 
   return next;
+}
+
+export function assertMcpToolResultSafe(tool, result, context = {}) {
+  if (!context.handle) return result;
+  assertNoBackendSignerSpend(result, {
+    handle: context.handle,
+    tool
+  });
+  return result;
 }
 
 function redactKey(key) {

@@ -69,7 +69,7 @@ async function attachReceiptAndReplyDelivery({
   const receipt = receiptResult.receipt;
   let replyDelivery = null;
 
-  if (postReply && !result.duplicate) {
+  if (postReply && !result.duplicate && !result.idempotentReplay) {
     replyDelivery = await postXCommandReply({
       commandId,
       publicUrl: receipt.publicUrl

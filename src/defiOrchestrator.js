@@ -14,6 +14,12 @@ import { enqueueJob, runJob } from "./jobs.js";
 import { config } from "./config.js";
 import { getSettlementRail } from "./settlement.js";
 import { circleUserSigner, readOnlySigner, userWalletSigningRequired } from "./signerPolicy.js";
+import { buildTradeSimulation } from "./tradeRisk.js";
+import {
+  analyzeRouteIntelligence,
+  applyRouteIntelligenceToSimulation
+} from "./marketIntelligence.js";
+import { evaluateMandatesForAction } from "./mandates.js";
 
 export function listDefiTools() {
   return {
@@ -32,15 +38,42 @@ export async function quoteDefiRoute(input) {
     protocol: config.defi.liveAdapters ? "circle-app-kit" : "lifi",
     amountUsd: Number(input.amount || input.amountUsd || 0)
   });
-  const policy = evaluateDefiPolicy({ user, action });
+  let simulation = buildTradeSimulation({ user, wallet, action });
+  let policy = evaluateDefiPolicy({ user, action, simulation });
   const record = createDefiAction({ user, action, policy });
+  record.simulation = simulation;
+  record.mandateCheck = evaluateMandatesForAction({
+    handle: user.handle,
+    action,
+    simulation,
+    type: action.type
+  });
+
+  if (!record.mandateCheck.approved) {
+    record.status = "rejected";
+    record.reason = record.mandateCheck.reason;
+    attachMarketIntelligence({ user, record });
+    record.completedAt = new Date().toISOString();
+    recordEvent("defi_action_rejected_by_mandate", record);
+    return {
+      ok: false,
+      action: record,
+      policy,
+      simulation: record.simulation,
+      mandateCheck: record.mandateCheck,
+      marketIntelligence: record.marketIntelligence,
+      reason: record.mandateCheck.reason,
+      nextAction: "review_mandates"
+    };
+  }
 
   if (!policy.approved) {
     record.status = "rejected";
     record.reason = policy.reason;
+    attachMarketIntelligence({ user, record });
     record.completedAt = new Date().toISOString();
     recordEvent("defi_action_rejected", record);
-    return { ok: false, action: record, policy };
+    return { ok: false, action: record, policy, simulation: record.simulation, marketIntelligence: record.marketIntelligence, reason: policy.reason, nextAction: "adjust_trade_or_fund_wallet" };
   }
 
   const fromAddress = input.fromAddress || walletForRail(wallet, action.fromRail)?.address || wallet.walletAddress;
@@ -51,6 +84,7 @@ export async function quoteDefiRoute(input) {
     record.protocol = quote.provider;
   } catch (error) {
     const routeHelp = buildRouteUnavailableHelp({ action, error });
+    record.simulation = buildTradeSimulation({ user, wallet, action, providerError: error });
     record.status = "quote_unavailable";
     record.reason = routeHelp.reason;
     record.suggestions = routeHelp.suggestions;
@@ -60,11 +94,14 @@ export async function quoteDefiRoute(input) {
       reason: "No executable route was returned by the live quote provider."
     });
     record.completedAt = new Date().toISOString();
+    attachMarketIntelligence({ user, record });
     recordEvent("defi_action_quote_unavailable", record);
     return {
       ok: false,
       action: record,
       policy,
+      simulation: record.simulation,
+      marketIntelligence: record.marketIntelligence,
       reason: routeHelp.reason,
       providerError: error.message,
       suggestions: routeHelp.suggestions,
@@ -73,8 +110,55 @@ export async function quoteDefiRoute(input) {
   }
 
   const executionReadiness = getDefiExecutionReadiness();
-  record.status = policy.requiresConfirmation ? "requires_confirmation" : "quoted";
+  simulation = buildTradeSimulation({ user, wallet, action, quote });
+  policy = evaluateDefiPolicy({ user, action, simulation });
+  record.policy = policy;
+  record.simulation = simulation;
   record.quote = quote;
+  record.mandateCheck = evaluateMandatesForAction({
+    handle: user.handle,
+    action,
+    simulation,
+    quote,
+    type: action.type
+  });
+  if (!record.mandateCheck.approved) {
+    record.status = "rejected";
+    record.reason = record.mandateCheck.reason;
+    attachMarketIntelligence({ user, record });
+    record.completedAt = new Date().toISOString();
+    recordEvent("defi_action_rejected_by_mandate_after_quote", record);
+    return {
+      ok: false,
+      action: record,
+      policy,
+      quote,
+      simulation: record.simulation,
+      mandateCheck: record.mandateCheck,
+      marketIntelligence: record.marketIntelligence,
+      reason: record.mandateCheck.reason,
+      nextAction: "review_mandates"
+    };
+  }
+  if (!policy.approved) {
+    record.status = "rejected";
+    record.reason = policy.reason;
+    attachMarketIntelligence({ user, record });
+    record.completedAt = new Date().toISOString();
+    recordEvent("defi_action_rejected_after_simulation", record);
+    return {
+      ok: false,
+      action: record,
+      policy,
+      quote,
+      simulation: record.simulation,
+      marketIntelligence: record.marketIntelligence,
+      reason: policy.reason,
+      nextAction: "adjust_trade_or_fund_wallet"
+    };
+  }
+
+  record.status = policy.requiresConfirmation ? "requires_confirmation" : "quoted";
   record.executionReadiness = executionReadiness;
   record.signer = executionReadiness.ready
     ? circleUserSigner({
@@ -88,6 +172,7 @@ export async function quoteDefiRoute(input) {
       reason: executionReadiness.blockers.join("; ")
     });
   record.completedAt = new Date().toISOString();
+  attachMarketIntelligence({ user, record });
   if (policy.requiresConfirmation) {
     const approval = createApproval({
       handle: user.handle,
@@ -118,6 +203,8 @@ export async function quoteDefiRoute(input) {
       action: record,
       policy,
       quote,
+      simulation: record.simulation,
+      marketIntelligence: record.marketIntelligence,
       execution,
       fast: Boolean(input.fast),
       nextAction: input.fast
@@ -133,8 +220,21 @@ export async function quoteDefiRoute(input) {
     action: record,
     policy,
     quote,
+    simulation: record.simulation,
+    marketIntelligence: record.marketIntelligence,
     nextAction: policy.requiresConfirmation ? "confirm_defi_action" : "display_quote"
   };
+}
+
+function attachMarketIntelligence({ user, record }) {
+  const intelligence = analyzeRouteIntelligence({
+    handle: user.handle,
+    action: record.request,
+    simulation: record.simulation
+  });
+  record.marketIntelligence = intelligence;
+  record.simulation = applyRouteIntelligenceToSimulation(record.simulation, intelligence);
+  return intelligence;
 }
 
 async function autoExecuteDefiAction(action) {
@@ -261,6 +361,8 @@ export function getDefiActionReceipt({ actionId, host, protocol = "http" } = {})
       approval,
       execution: receiptAction.execution || null,
       executionJob: executionJob ? publicJobSnapshot(executionJob) : null,
+      simulation: receiptAction.simulation || null,
+      marketIntelligence: receiptAction.marketIntelligence || null,
       txHash,
       explorerUrl: txHash && rail?.explorerBaseUrl ? `${rail.explorerBaseUrl}${txHash}` : null,
       publicUrl: host ? `${protocol}://${host}/defi/actions/${action.id}` : null,

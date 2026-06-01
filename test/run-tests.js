@@ -24,9 +24,11 @@ import {
   listXCommands,
   processXPaymentEvent,
   processXWebhookDelivery,
+  refreshXCommandExecution,
   verifyXWebhook
 } from "../src/xPayments.js";
 import { runXBotCommand, runXBotWebhookDelivery } from "../src/xBotLoop.js";
+import { postXCommandReply } from "../src/xReplyPoster.js";
 import { reconcileCircleNotification } from "../src/transferProvider.js";
 import {
   getOperations,
@@ -56,6 +58,8 @@ import {
   quoteDefiRoute,
   searchPredictionMarkets
 } from "../src/defiOrchestrator.js";
+import { getMarketIntelligence } from "../src/marketIntelligence.js";
+import { refreshMarketFeedSnapshot } from "../src/marketFeeds.js";
 import { getDefiExecutionReadiness } from "../src/defiExecution.js";
 import {
   getArcPerpsReadiness,
@@ -69,6 +73,20 @@ import {
   listMcpApiKeys,
   revokeMcpApiKey
 } from "../src/mcpApiKeys.js";
+import { redactSensitive } from "../src/redaction.js";
+import {
+  assertNoBackendSignerSpend,
+  assertPublicPayloadSafe,
+  createApprovalToken,
+  enforceMcpRateLimit,
+  verifyApprovalToken
+} from "../src/securityGuards.js";
+import {
+  categorizeFailure,
+  getAgentHealth,
+  getAgentMetrics,
+  listAgentDecisionEvents
+} from "../src/agentObservability.js";
 
 config.providerMode = "mock";
 config.transferProvider = "mock";
@@ -449,11 +467,138 @@ const tests = [
       assert.equal(result.loop.status, "processed");
       assert.equal(result.loop.replyPostStatus, "x_reply_not_enabled");
       assert.equal(result.receipt.publicUrl, `https://bunos.xyz/x/commands/${result.command.id}`);
-      assert.equal(result.receipt.approvalUrl, `https://bunos.xyz/x/commands/${result.command.id}/approve`);
+      assert.equal(result.receipt.approvalUrl.startsWith(`https://bunos.xyz/x/commands/${result.command.id}/approve?approvalToken=`), true);
       assert.match(result.reply, /Approve: https:\/\/bunos\.xyz\/x\/commands\//);
       assert.match(result.replyDelivery.message, /X_REPLY_ENABLED=1/);
 
       config.x.replyEnabled = previousReplyEnabled;
+    }
+  ],
+  [
+    "routes X bot swaps through the shared agent decision layer",
+    async () => {
+      const result = await runXBotCommand({
+        actorHandle: "@sara",
+        text: "@bunOS swap 1 USDC to EURC on arc",
+        postId: "1234567890123456791",
+        eventId: "evt_loop_swap_001",
+        settlementRail: "arc-testnet",
+        host: "bunos.xyz",
+        protocol: "https",
+        postReply: false
+      });
+
+      assert.equal(result.command.plan.tool, "quote_defi_route");
+      assert.equal(result.command.decision.mode, "arc_trading_agent");
+      assert.ok(["failed", "monitoring", "executed", "needs_approval"].includes(result.command.narrative.mode));
+      assert.match(result.command.narrative.summary, /swap|execute|queued|prepared/i);
+      assert.equal(result.command.resultRefs.defiActionId, result.action.id);
+      assert.equal(result.receipt.related.defiAction.id, result.action.id);
+      assert.equal(result.receipt.publicUrl, `https://bunos.xyz/x/commands/${result.command.id}`);
+      assert.match(result.reply, /Receipt: https:\/\/bunos\.xyz\/x\/commands\//);
+      assert.match(result.reply, /swap|I found|I queued|I am not taking|No funds moved/i);
+
+      const refreshed = await refreshXCommandExecution({
+        commandId: result.command.id,
+        host: "bunos.xyz",
+        protocol: "https",
+        runWorker: true
+      });
+      assert.equal(refreshed.ok, true);
+      assert.equal(refreshed.monitor.kind, "defi_action");
+      assert.ok(["queued", "submitted", "settled", "failed", "execution_not_enabled"].includes(refreshed.monitor.lifecycle));
+      assert.match(refreshed.command.finalReply, /Final status|Update/);
+
+      const replay = await runXBotCommand({
+        actorHandle: "@sara",
+        text: "@bunOS swap 1 USDC to EURC on arc",
+        postId: "1234567890123456791",
+        eventId: "evt_loop_swap_001",
+        settlementRail: "arc-testnet",
+        host: "bunos.xyz",
+        protocol: "https",
+        postReply: false
+      });
+      assert.equal(replay.idempotentReplay, true);
+      assert.equal(replay.command.id, result.command.id);
+      assert.equal(replay.loop.status, "processed");
+    }
+  ],
+  [
+    "routes X bot automations through the shared agent decision layer",
+    async () => {
+      const result = await runXBotCommand({
+        actorHandle: "@sara",
+        text: "@bunOS sync balances every 10 minutes",
+        postId: "1234567890123456792",
+        eventId: "evt_loop_automation_001",
+        settlementRail: "arc-testnet",
+        host: "bunos.xyz",
+        protocol: "https",
+        postReply: false
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.command.plan.tool, "create_automation");
+      assert.equal(result.automation.kind, "sync_circle_balances");
+      assert.equal(result.automation.status, "active");
+      assert.equal(result.automation.intervalMinutes, 10);
+      assert.equal(result.command.resultRefs.automationId, result.automation.id);
+      assert.equal(result.receipt.related.automation.id, result.automation.id);
+      assert.match(result.reply, /Automation active/);
+      assert.match(result.reply, /No backend signer used|signer policy checked/);
+
+      const receipt = getXCommandReceipt({
+        commandId: result.command.id,
+        host: "bunos.xyz",
+        protocol: "https"
+      });
+      assert.equal(receipt.receipt.related.automation.id, result.automation.id);
+      assert.match(receipt.receipt.reply, /Receipt: https:\/\/bunos\.xyz\/x\/commands\//);
+
+      const replay = await runXBotCommand({
+        actorHandle: "@sara",
+        text: "@bunOS sync balances every 10 minutes",
+        postId: "1234567890123456792",
+        eventId: "evt_loop_automation_001",
+        settlementRail: "arc-testnet",
+        host: "bunos.xyz",
+        protocol: "https",
+        postReply: false
+      });
+      assert.equal(replay.idempotentReplay, true);
+      assert.equal(replay.automation.id, result.automation.id);
+    }
+  ],
+  [
+    "does not repost an already-delivered X reply",
+    async () => {
+      const result = await runXBotCommand({
+        actorHandle: "@sara",
+        text: "@bunOS analyze my portfolio",
+        postId: "1234567890123456793",
+        eventId: "evt_loop_reply_idempotent_001",
+        settlementRail: "arc-testnet",
+        host: "bunos.xyz",
+        protocol: "https",
+        postReply: false
+      });
+
+      result.command.replyDelivery = {
+        status: "posted",
+        tweetId: "987654321",
+        postedText: "already posted"
+      };
+
+      const skipped = await postXCommandReply({
+        commandId: result.command.id,
+        publicUrl: result.receipt.publicUrl
+      });
+
+      assert.equal(skipped.ok, true);
+      assert.equal(skipped.status, "already_posted");
+      assert.equal(skipped.skipped, true);
+      assert.equal(skipped.delivery.tweetId, "987654321");
     }
   ],
   [
@@ -653,8 +798,13 @@ const tests = [
       const jobs = listJobs({ status: "queued", type: "submit_transfer" });
       assert.ok(jobs.jobs.find((job) => job.id === result.payment.transferJobId));
 
-      const ran = await runDueJobs({ limit: 50 });
-      assert.ok(ran.ran.find((item) => item.job.id === result.payment.transferJobId));
+      const monitored = await callMcpTool("refresh_execution_monitor", {
+        kind: "payment",
+        id: result.payment.id,
+        runWorker: true
+      });
+      assert.equal(monitored.monitor.lifecycle, "settled");
+      assert.equal(monitored.monitor.terminal, true);
       assert.equal(result.payment.status, "settled");
     }
   ],
@@ -690,6 +840,8 @@ const tests = [
       assert.equal(quoted.action.execution.backendSignerAllowed, false);
       assert.equal(quoted.quote.provider, "lifi");
       assert.equal(quoted.quote.mode, "mock");
+      assert.equal(quoted.simulation.recommendation, "execute");
+      assert.equal(quoted.simulation.sourceBalance.known, true);
       assert.equal(quoted.nextAction, "display_receipt");
     }
   ],
@@ -730,9 +882,20 @@ const tests = [
       assert.equal(quoted.ok, true);
       assert.equal(quoted.action.status, "execution_not_enabled");
       assert.ok(quoted.action.executionJobId);
+      assert.equal(quoted.action.simulation.recommendation, "execute");
       assert.equal(quoted.action.signer.backendSignerAllowed, false);
       assert.equal(quoted.action.execution.backendSignerAllowed, false);
       assert.match(quoted.action.execution.reason, /DEFI_EXECUTION_ENABLED/);
+
+      const monitor = await callMcpTool("refresh_execution_monitor", {
+        kind: "defi_action",
+        id: quoted.action.id,
+        runWorker: true
+      });
+      assert.equal(monitor.ok, true);
+      assert.equal(monitor.monitor.kind, "defi_action");
+      assert.equal(monitor.monitor.lifecycle, "execution_not_enabled");
+      assert.equal(monitor.monitor.terminal, true);
 
       const confirmed = await confirmDefiAction({
         actionId: quoted.action.id,
@@ -816,7 +979,134 @@ const tests = [
       assert.equal(receipt.ok, true);
       assert.equal(receipt.receipt.publicUrl, `http://localhost:4319/defi/actions/${quoted.action.id}`);
       assert.equal(receipt.receipt.explorerUrl, "https://testnet.arcscan.app/tx/0xabc123");
+      assert.equal(receipt.receipt.simulation.recommendation, "route_is_possible_but_uneconomical");
       assert.equal(receipt.receipt.nextAction, "reconcile_defi_action");
+    }
+  ],
+  [
+    "simulates route quality and blocks unfunded DeFi actions",
+    async () => {
+      const smallBridge = await quoteDefiRoute({
+        handle: "@sara",
+        fromRail: "arc-testnet",
+        toRail: "base-sepolia",
+        type: "bridge",
+        amount: 1,
+        fromToken: "USDC",
+        toToken: "USDC",
+        slippage: 0.005
+      });
+
+      assert.equal(smallBridge.ok, true);
+      assert.equal(smallBridge.simulation.recommendation, "route_is_possible_but_uneconomical");
+      assert.match(smallBridge.simulation.warnings.join(" "), /Small bridges|fees/i);
+      assert.equal(smallBridge.action.simulation.estimatedFeeUsd, 0.15);
+
+      users.set("@thin", {
+        handle: "@thin",
+        xUserId: "x_thin",
+        onboarded: true,
+        walletAddress: "0xThinCircleWallet",
+        balance: 1,
+        balances: {
+          "arc-testnet": 1,
+          "base-sepolia": 0
+        },
+        walletSetId: "wset_thin_demo",
+        chainWallets: [
+          {
+            id: "wallet_arc_thin",
+            rail: "arc-testnet",
+            blockchain: "ARC-TESTNET",
+            address: "0xThinCircleWallet",
+            custody: "developer-controlled"
+          },
+          {
+            id: "wallet_base_thin",
+            rail: "base-sepolia",
+            blockchain: "BASE-SEPOLIA",
+            address: "0xThinCircleWallet",
+            custody: "developer-controlled"
+          }
+        ],
+        xOAuth: {
+          provider: "x",
+          connected: true,
+          connectedAt: "2026-05-15T00:00:00.000Z"
+        },
+        policy: {
+          maxPerPayment: 25,
+          maxDaily: 100,
+          allowedSettlementRails: ["arc-testnet", "base-sepolia"],
+          requireConfirmationAbove: 10
+        }
+      });
+
+      const unfunded = await quoteDefiRoute({
+        handle: "@thin",
+        fromRail: "arc-testnet",
+        toRail: "base-sepolia",
+        type: "bridge",
+        amount: 1,
+        fromToken: "USDC",
+        toToken: "USDC",
+        slippage: 0.005
+      });
+
+      assert.equal(unfunded.ok, false);
+      assert.equal(unfunded.action.status, "rejected");
+      assert.equal(unfunded.simulation.ok, false);
+      assert.match(unfunded.reason, /Insufficient USDC balance/);
+
+      await quoteDefiRoute({
+        handle: "@thin",
+        fromRail: "arc-testnet",
+        toRail: "base-sepolia",
+        type: "bridge",
+        amount: 1,
+        fromToken: "USDC",
+        toToken: "USDC",
+        slippage: 0.005
+      });
+
+      const intelligence = getMarketIntelligence({
+        handle: "@thin",
+        settlementRail: "arc-testnet"
+      });
+      assert.equal(intelligence.ok, true);
+      assert.ok(intelligence.routeStats.find((route) => route.failures >= 2 && route.failureRate === 1));
+      assert.match(intelligence.warnings.join(" "), /failure rate/i);
+
+      const mcpIntel = await callMcpTool("get_market_intelligence", {
+        handle: "@thin",
+        settlementRail: "arc-testnet"
+      });
+      assert.equal(mcpIntel.ok, true);
+      assert.ok(mcpIntel.routeStats.length > 0);
+      assert.ok(mcpIntel.feeds.freshness.status);
+
+      const previousLiveAdapters = config.defi.liveAdapters;
+      config.defi.liveAdapters = false;
+      let feeds;
+      try {
+        feeds = await callMcpTool("get_market_feed_snapshot", {
+          assets: ["USDC", "EURC", "cirBTC", "WETH"],
+          settlementRail: "arc-testnet",
+          force: true
+        });
+      } finally {
+        config.defi.liveAdapters = previousLiveAdapters;
+      }
+      assert.equal(feeds.ok, true);
+      assert.ok(feeds.prices.USDC);
+      assert.ok(["fresh", "stale_data"].includes(feeds.freshness.status));
+      assert.ok(["risk_on", "risk_off", "neutral", "high_fee", "low_liquidity", "high_volatility", "stale_data"].includes(feeds.regime.status));
+
+      const feedPlan = planAgentAction({
+        handle: "@thin",
+        text: "show fresh market data"
+      });
+      assert.equal(feedPlan.plan.tool, "get_market_feed_snapshot");
     }
   ],
   [
@@ -953,6 +1243,189 @@ const tests = [
       });
       assert.equal(reconciled.ok, true);
       assert.equal(reconciled.result.skipped, true);
+    }
+  ],
+  [
+    "creates strategy policies and planning-only rebalance checks",
+    async () => {
+      const names = mcpTools.map((tool) => tool.name);
+      for (const name of ["create_strategy_policy", "list_strategy_policies", "plan_rebalance_strategy", "reduce_risk_strategy", "run_strategy_check", "get_market_intelligence", "get_market_feed_snapshot", "analyze_portfolio"]) {
+        assert.ok(names.includes(name), `${name} MCP tool missing`);
+      }
+
+      const strategy = await callMcpTool("create_strategy_policy", {
+        handle: "@sara",
+        targetAllocations: {
+          USDC: 70,
+          EURC: 20,
+          cirBTC: 10
+        },
+        settlementRail: "arc-testnet"
+      });
+      assert.equal(strategy.ok, true);
+      assert.equal(strategy.strategy.targetAllocations.USDC, 0.7);
+      assert.equal(strategy.strategy.status, "active");
+
+      const rebalance = await callMcpTool("plan_rebalance_strategy", {
+        handle: "@sara",
+        strategyId: strategy.strategy.id,
+        settlementRail: "arc-testnet"
+      });
+      assert.equal(rebalance.ok, true);
+      assert.equal(rebalance.status, "plan_ready");
+      assert.equal(rebalance.strategyPlan.steps.length, 2);
+      assert.equal(rebalance.strategyPlan.steps[0].tool, "quote_defi_route");
+      assert.equal(rebalance.strategyPlan.steps.some((step) => step.toToken === "EURC"), true);
+      assert.equal(rebalance.strategyPlan.steps.some((step) => step.toToken === "cirBTC"), true);
+
+      const check = await callMcpTool("run_strategy_check", {
+        handle: "@sara",
+        strategyId: strategy.strategy.id,
+        settlementRail: "arc-testnet"
+      });
+      assert.equal(check.ok, true);
+      assert.equal(check.automationSafe, true);
+      assert.equal(check.executed, false);
+      assert.ok(["action_required", "paused_by_market"].includes(check.status));
+
+      const automated = await callMcpTool("create_automation", {
+        handle: "@sara",
+        kind: "run_strategy_check",
+        strategyId: strategy.strategy.id,
+        intervalMinutes: 5,
+        nextRunAt: new Date(Date.now() - 1_000).toISOString()
+      });
+      assert.equal(automated.ok, true);
+      assert.equal(automated.automation.kind, "run_strategy_check");
+
+      const due = await callMcpTool("run_due_automations", { limit: 10 });
+      const ran = due.ran.find((item) => item.automation.id === automated.automation.id);
+      assert.equal(Boolean(ran), true);
+      assert.equal(ran.result.executed, false);
+      assert.equal(ran.result.automationSafe, true);
+
+      const planned = planAgentAction({
+        handle: "@sara",
+        text: "keep 70% USDC, 20% EURC, 10% cirBTC"
+      });
+      assert.equal(planned.plan.tool, "create_strategy_policy");
+
+      const mandatePlan = planAgentAction({
+        handle: "@sara",
+        text: "keep me 70% stables and 30% BTC"
+      });
+      assert.equal(mandatePlan.plan.tool, "create_mandate");
+      assert.equal(mandatePlan.plan.arguments.kind, "target_allocation");
+
+      const agentRebalance = await callMcpTool("run_agent_action", {
+        handle: "@sara",
+        text: "rebalance my Arc wallet",
+        source: "test-agent-run"
+      });
+      assert.equal(agentRebalance.ok, true);
+      assert.equal(agentRebalance.planned.plan.tool, "plan_rebalance_strategy");
+      assert.equal(agentRebalance.result.strategyPlan.steps.length > 0, true);
+      assert.equal(agentRebalance.result.strategyPlan.steps[0].status, "planned");
+
+      const portfolio = await callMcpTool("analyze_portfolio", {
+        handle: "@sara"
+      });
+      assert.equal(portfolio.ok, true);
+      assert.equal(portfolio.portfolio.handle, "@sara");
+      assert.ok(portfolio.portfolio.exposure);
+      assert.ok(portfolio.recommendation.reason);
+
+      const agentPortfolio = await callMcpTool("run_agent_action", {
+        handle: "@sara",
+        text: "what should I do with my wallet"
+      });
+      assert.equal(agentPortfolio.ok, true);
+      assert.equal(agentPortfolio.planned.plan.tool, "analyze_portfolio");
+      assert.ok(agentPortfolio.result.portfolio.risk);
+      assert.match(agentPortfolio.narrative.summary, /portfolio|US\$/i);
+      assert.ok(agentPortfolio.decision.checks.find((item) => item.name === "portfolio"));
+    }
+  ],
+  [
+    "stores and enforces standing trading mandates",
+    async () => {
+      const names = mcpTools.map((tool) => tool.name);
+      for (const name of ["create_mandate", "list_mandates", "update_mandate", "delete_mandate"]) {
+        assert.ok(names.includes(name), `${name} MCP tool missing`);
+      }
+
+      await callMcpTool("create_wallet", {
+        handle: "@mandy",
+        settlementRails: ["arc-testnet", "base-sepolia"]
+      });
+      await callMcpTool("request_testnet_usdc", {
+        handle: "@mandy",
+        amount: 20,
+        settlementRail: "arc-testnet"
+      });
+
+      const created = await callMcpTool("run_agent_action", {
+        handle: "@mandy",
+        text: "max trade $1",
+        source: "test-agent-run"
+      });
+      assert.equal(created.ok, true);
+      assert.equal(created.planned.plan.tool, "create_mandate");
+      assert.equal(created.result.mandate.kind, "max_trade_size");
+
+      const listed = await callMcpTool("list_mandates", {
+        handle: "@mandy"
+      });
+      assert.equal(listed.ok, true);
+      assert.equal(listed.mandates.length, 1);
+      assert.equal(listed.mandates[0].rules.maxTradeUsd, 1);
+
+      const rejectedSwap = await quoteDefiRoute({
+        handle: "@mandy",
+        type: "swap",
+        fromRail: "arc-testnet",
+        toRail: "arc-testnet",
+        amount: 2,
+        fromToken: "USDC",
+        toToken: "EURC"
+      });
+      assert.equal(rejectedSwap.ok, false);
+      assert.equal(rejectedSwap.action.status, "rejected");
+      assert.equal(rejectedSwap.mandateCheck.approved, false);
+      assert.match(rejectedSwap.reason, /Standing mandate blocked|caps per-trade/i);
+      assert.equal(rejectedSwap.nextAction, "review_mandates");
+
+      const updated = await callMcpTool("update_mandate", {
+        handle: "@mandy",
+        mandateId: listed.mandates[0].id,
+        text: "max trade $5"
+      });
+      assert.equal(updated.ok, true);
+      assert.equal(updated.mandate.rules.maxTradeUsd, 5);
+
+      const leverageRule = await callMcpTool("create_mandate", {
+        handle: "@mandy",
+        text: "max leverage 2x"
+      });
+      assert.equal(leverageRule.ok, true);
+
+      const rejectedPerp = await callMcpTool("propose_perp_trade", {
+        handle: "@mandy",
+        symbol: "BTC",
+        side: "long",
+        collateralUsd: 2,
+        leverage: 5
+      });
+      assert.equal(rejectedPerp.ok, false);
+      assert.equal(rejectedPerp.status, "rejected");
+      assert.match(rejectedPerp.reason, /caps leverage/i);
+
+      const deleted = await callMcpTool("delete_mandate", {
+        handle: "@mandy",
+        mandateId: listed.mandates[0].id
+      });
+      assert.equal(deleted.ok, true);
+      assert.equal(deleted.mandate.status, "deleted");
     }
   ],
   [
@@ -1221,7 +1694,13 @@ const tests = [
         "arc_perps_readiness",
         "appkit_readiness",
         "list_perp_markets",
-        "close_arc_perp_user_position"
+        "close_arc_perp_user_position",
+        "get_market_intelligence",
+        "get_market_feed_snapshot",
+        "create_mandate",
+        "list_mandates",
+        "update_mandate",
+        "delete_mandate"
       ]) {
         assert.ok(agentTools.tools.includes(name), `${name} missing from terminal agent tools`);
       }
@@ -1345,6 +1824,12 @@ const tests = [
         text: "list arc trading primitives"
       });
       assert.equal(primitivePlan.plan.tool, "list_arc_trading_primitives");
+
+      const marketPlan = planAgentAction({
+        handle: "@sara",
+        text: "show route health on arc"
+      });
+      assert.equal(marketPlan.plan.tool, "get_market_intelligence");
     }
   ],
   [
@@ -1360,6 +1845,12 @@ const tests = [
       assert.equal(payment.result.payment.status, "queued");
       assert.equal(payment.signer.signerType, "circle_user_wallet");
       assert.equal(payment.signer.backendSignerAllowed, false);
+      assert.equal(payment.decision.mode, "arc_trading_agent");
+      assert.equal(payment.decision.stance, "inform");
+      assert.equal(payment.narrative.mode, "monitoring");
+      assert.match(payment.narrative.summary, /payment/i);
+      assert.equal(payment.agentState.handle, "@sara");
+      assert.equal(payment.agentMemory.lastAction.tool, "send_usdc");
 
       const bridge = await callMcpTool("run_agent_action", {
         handle: "@sara",
@@ -1374,6 +1865,13 @@ const tests = [
       assert.equal(bridge.result.action.approvalId, undefined);
       assert.equal(bridge.signer.backendSignerAllowed, false);
       assert.equal(bridge.nextAction, "enable_execution_or_check_provider");
+      assert.equal(bridge.decision.mode, "arc_trading_agent");
+      assert.equal(bridge.decision.stance, "refuse_or_failed");
+      assert.match(bridge.decision.rationale, /execution|provider|enabled/i);
+      assert.equal(bridge.narrative.mode, "failed");
+      assert.match(bridge.narrative.summary, /did not execute|No funds moved/i);
+      assert.ok(Array.isArray(bridge.narrative.whatChecked));
+      assert.equal(bridge.agentMemory.lastAction.tool, "quote_defi_route");
 
       const balance = await callMcpTool("run_agent_action", {
         handle: "@sara",
@@ -1413,6 +1911,7 @@ const tests = [
       assert.equal(closePerp.execution.ok, false);
       assert.equal(closePerp.signer.backendSignerAllowed, false);
       assert.match(closePerp.execution.reason, /user wallet|Circle user wallet|Set ARC_PERPS/i);
+      assert.match(closePerp.narrative.summary, /close-position|wallet signing|No backend signer/i);
 
       const unclear = await callMcpTool("run_agent_action", {
         handle: "@sara",
@@ -1421,6 +1920,10 @@ const tests = [
       assert.equal(unclear.ok, false);
       assert.equal(unclear.status, "clarification_required");
       assert.equal(unclear.signer.backendSignerAllowed, false);
+      assert.equal(unclear.decision.stance, "clarify");
+      assert.equal(unclear.narrative.mode, "clarifying");
+      assert.match(unclear.narrative.summary, /one more detail/i);
+      assert.equal(unclear.agentState.handle, "@sara");
     }
   ],
   [
@@ -1444,10 +1947,191 @@ const tests = [
       }, auth);
       assert.equal(scoped.senderHandle, "@sara");
       assert.equal(scoped.handle, "@sara");
+      assert.ok(ledger.events.find((event) => event.type === "mcp_tool_authorized" && event.tool === "send_usdc"));
 
       const revoked = revokeMcpApiKey({ handle: "@sara", keyId: created.apiKey.id });
       assert.equal(revoked.ok, true);
       assert.equal(authenticateMcpApiKey(created.secret), null);
+
+      const readOnly = createMcpApiKey({
+        handle: "@sara",
+        name: "Read only",
+        scopes: ["mcp:read"]
+      });
+      const readAuth = authenticateMcpApiKey(readOnly.secret);
+      const readScoped = applyMcpApiKeyContext("get_balance", { handle: "@bob" }, readAuth);
+      assert.equal(readScoped.handle, "@sara");
+      assert.throws(() => applyMcpApiKeyContext("send_usdc", {
+        senderHandle: "@sara",
+        recipientHandle: "@bob",
+        amount: 1
+      }, readAuth), /missing required scope/i);
+
+      const redacted = redactSensitive({
+        nested: {
+          accessToken: "v1.super-secret-token",
+          entitySecret: "0123456789abcdef",
+          kitKey: "KIT_KEY:abc:def"
+        },
+        text: "use bunos_mcp_abc123 and 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      });
+      assert.match(redacted.nested.accessToken, /\.\.\./);
+      assert.equal(redacted.nested.kitKey, "KIT_KEY:<redacted>");
+      assert.match(redacted.text, /bunos_mcp_<redacted>/);
+      assert.match(redacted.text, /0x<redacted_private_key>/);
+    }
+  ],
+  [
+    "hardens approvals with signed tokens and idempotent confirmation",
+    async () => {
+      const payment = await createPaymentIntent({
+        senderHandle: "@sara",
+        recipientHandle: "@bob",
+        amount: 12,
+        settlementRail: "arc-testnet",
+        idempotencyKey: "phase7_signed_approval_payment"
+      });
+      const approval = ledger.approvals.find((item) => item.id === payment.payment.approvalId);
+      const token = createApprovalToken({
+        approval,
+        commandId: "xcmd_security_test",
+        ttlMs: 60_000
+      });
+
+      assert.equal(verifyApprovalToken({
+        token,
+        approval,
+        commandId: "xcmd_security_test"
+      }).ok, true);
+      assert.throws(() => verifyApprovalToken({
+        token: `${token.slice(0, -2)}xx`,
+        approval,
+        commandId: "xcmd_security_test"
+      }), /Invalid approval token/);
+
+      const confirmed = await callMcpTool("confirm_action", {
+        approvalId: approval.id,
+        handle: "@sara"
+      });
+      assert.equal(confirmed.ok, true);
+      assert.equal(confirmed.approval.status, "approved");
+
+      const replay = await callMcpTool("confirm_action", {
+        approvalId: approval.id,
+        handle: "@sara"
+      });
+      assert.equal(replay.skipped, true);
+      assert.ok(ledger.events.find((event) => event.type === "spend_lock_acquired" && event.approvalId !== "never"));
+    }
+  ],
+  [
+    "blocks malicious MCP handle override and rate limit abuse",
+    async () => {
+      users.get("@bob").mcpApiKeys = [];
+      const bobKey = createMcpApiKey({
+        handle: "@bob",
+        name: "Bob approvals",
+        scopes: ["mcp:approvals", "mcp:payments", "mcp:trade"]
+      });
+      const bobAuth = authenticateMcpApiKey(bobKey.secret);
+      const scoped = applyMcpApiKeyContext("send_usdc", {
+        senderHandle: "@sara",
+        handle: "@sara",
+        recipientHandle: "@alice",
+        amount: 1
+      }, bobAuth);
+      assert.equal(scoped.handle, "@bob");
+      assert.equal(scoped.senderHandle, "@bob");
+
+      const saraPayment = await createPaymentIntent({
+        senderHandle: "@sara",
+        recipientHandle: "@bob",
+        amount: 12,
+        settlementRail: "arc-testnet",
+        idempotencyKey: "phase7_cross_handle_approval"
+      });
+      const maliciousConfirmArgs = applyMcpApiKeyContext("confirm_action", {
+        approvalId: saraPayment.payment.approvalId,
+        handle: "@sara"
+      }, bobAuth);
+      assert.equal(maliciousConfirmArgs.handle, "@bob");
+      await assert.rejects(() => callMcpTool("confirm_action", maliciousConfirmArgs), /does not belong to this handle/);
+
+      const context = {
+        handle: "@bob",
+        keyId: "rate_limit_test_key",
+        scopes: ["mcp:trade"]
+      };
+      for (let index = 0; index < 30; index += 1) {
+        enforceMcpRateLimit("quote_swap", context);
+      }
+      assert.throws(() => enforceMcpRateLimit("quote_swap", context), /rate limit exceeded/i);
+    }
+  ],
+  [
+    "blocks public secret leaks and backend signer spend invariants",
+    () => {
+      assert.throws(() => assertPublicPayloadSafe({
+        route: "/public",
+        value: "Authorization: Bearer super-secret-token"
+      }), /sensitive material/);
+
+      const safe = assertPublicPayloadSafe({
+        text: "KIT_KEY:abc:def bunos_mcp_abc 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      });
+      assert.equal(safe.text.includes("KIT_KEY:<redacted>"), true);
+      assert.equal(safe.text.includes("bunos_mcp_<redacted>"), true);
+      assert.equal(safe.text.includes("0x<redacted_private_key>"), true);
+
+      assert.throws(() => assertNoBackendSignerSpend({
+        execution: {
+          backendSignerAllowed: true
+        }
+      }, {
+        handle: "@sara",
+        tool: "malicious_tool"
+      }), /backend signer cannot spend/);
+    }
+  ],
+  [
+    "records agent observability metrics and health summaries",
+    async () => {
+      const before = ledger.agentObservability.length;
+      const balance = await runAgentAction({
+        handle: "@sara",
+        text: "check my wallet balance",
+        source: "test-observability",
+        fast: true
+      });
+      assert.equal(balance.ok, true);
+
+      const failed = await runAgentAction({
+        handle: "@sara",
+        text: "swap $999999 USDC to EURC on arc",
+        source: "test-observability",
+        fast: true
+      });
+      assert.equal(failed.ok, false);
+
+      assert.equal(ledger.agentObservability.length >= before + 2, true);
+      const events = listAgentDecisionEvents({ handle: "@sara", limit: 5 });
+      assert.equal(events.ok, true);
+      assert.ok(events.events.find((event) => event.source === "test-observability"));
+
+      const metrics = getAgentMetrics();
+      assert.equal(metrics.ok, true);
+      assert.equal(metrics.actionsPlanned >= 2, true);
+      assert.equal(metrics.failures >= 1, true);
+      assert.ok(Object.keys(metrics.failuresByReason).length >= 1);
+      assert.equal(typeof metrics.averageTotalMs, "number");
+      assert.equal(typeof metrics.xCommandSuccessRate, "number");
+      assert.equal(typeof metrics.routeFailureRate, "number");
+
+      const health = getAgentHealth();
+      assert.ok(["healthy", "degraded", "critical"].includes(health.status));
+      assert.ok(Array.isArray(health.alerts));
+      assert.ok(health.summaries.length >= 1);
+      assert.equal(categorizeFailure("No route returned due to low liquidity"), "route");
     }
   ]
 ];

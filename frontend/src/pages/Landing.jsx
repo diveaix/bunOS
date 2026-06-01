@@ -1,5 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
+import GrainLogo from "../components/GrainLogo";
+import GrainIcon from "../components/GrainIcon";
 import "./Landing.css";
 
 const CODE_SRC = `module runtime::consensus { use std::hash::keccak256; use crypto::bls12_381::G1; use runtime::epoch::EpochState;
@@ -71,17 +73,196 @@ module runtime::scheduler { use std::priority_queue::PriorityQueue; use runtime:
       let task = vector::swap_remove(&mut sched.blocked, i); priority_queue::push(&mut sched.ready, task.priority, task); return }; i = i + 1; } } }`;
 
 // ─── Per-character glow constants ─────────────────────
-const GLOW_RADIUS = 220;
-const GRID_CELL = 40;
+const GLOW_RADIUS = 60;
+const GRID_CELL = 28;
+
+
 
 export default function Landing() {
   const wallRef = useRef(null);
+  const heroRef = useRef(null);
   const codeRef = useRef(null);
   const spansRef = useRef([]);
   const gridRef = useRef({});
   const rafRef = useRef(null);
   const prevLitRef = useRef(new Set());
+  const navRef = useRef(null);
+  const walletTiltRef = useRef(null);
+  const termTiltRef = useRef(null);
+  const balanceRef = useRef(null);
+  const typingRef = useRef(null);
+  const termResultRef = useRef(null);
+  const rotateRef = useRef(null);
 
+  // ─── Rotating hero word ────────────────────────────────
+  useEffect(() => {
+    const WORDS = ['talk to.', 'command.', 'program.', 'automate.', 'instruct.'];
+    let idx = 0;
+    const el = rotateRef.current;
+    if (!el) return;
+
+    const interval = setInterval(() => {
+      // Slide out current word
+      el.style.transition = 'transform 0.45s cubic-bezier(0.76, 0, 0.24, 1), opacity 0.45s ease';
+      el.style.transform = 'translateY(-110%)';
+      el.style.opacity = '0';
+
+      setTimeout(() => {
+        idx = (idx + 1) % WORDS.length;
+        el.textContent = WORDS[idx];
+        // Position below for entry
+        el.style.transition = 'none';
+        el.style.transform = 'translateY(110%)';
+        el.style.opacity = '0';
+
+        // Force reflow
+        void el.offsetHeight;
+
+        // Slide in new word
+        el.style.transition = 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.45s ease';
+        el.style.transform = 'translateY(0)';
+        el.style.opacity = '1';
+      }, 450);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // ─── 3D tilt handler ──────────────────────────────────
+  const handleTilt = useCallback((e, ref) => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width - 0.5;
+    const y = (e.clientY - rect.top) / rect.height - 0.5;
+    el.style.transform = `perspective(800px) rotateY(${x * 8}deg) rotateX(${-y * 8}deg) scale3d(1.02,1.02,1.02)`;
+  }, []);
+
+  const resetTilt = useCallback((ref) => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.transform = 'perspective(800px) rotateY(0deg) rotateX(0deg) scale3d(1,1,1)';
+  }, []);
+
+  // ─── Balance counter + typing animation ────────────────
+  useEffect(() => {
+    // Animated balance counter
+    const TARGET = 1184.25;
+    const DURATION = 2000;
+    let start = null;
+    const balEl = balanceRef.current;
+    if (balEl) {
+      const tick = (ts) => {
+        if (!start) start = ts;
+        const progress = Math.min((ts - start) / DURATION, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const value = eased * TARGET;
+        balEl.textContent = `US$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        if (progress < 1) requestAnimationFrame(tick);
+      };
+      // Delay start until card is visible
+      const observer = new IntersectionObserver(([entry]) => {
+        if (entry.isIntersecting) {
+          observer.disconnect();
+          requestAnimationFrame(tick);
+        }
+      }, { threshold: 0.5 });
+      observer.observe(balEl);
+    }
+
+    // Typing animation
+    const COMMAND = 'swap $20 EURC to USDC on Arc';
+    const typEl = typingRef.current;
+    const resEl = termResultRef.current;
+    if (typEl) {
+      let i = 0;
+      const typeObserver = new IntersectionObserver(([entry]) => {
+        if (entry.isIntersecting) {
+          typeObserver.disconnect();
+          const typeInterval = setInterval(() => {
+            typEl.textContent = COMMAND.slice(0, ++i);
+            if (i >= COMMAND.length) {
+              clearInterval(typeInterval);
+              // Show result after typing finishes
+              if (resEl) {
+                setTimeout(() => {
+                  resEl.style.transition = 'opacity 0.4s ease';
+                  resEl.style.opacity = '1';
+
+                  // Animate each step: spinner → checkmark
+                  const steps = resEl.querySelectorAll('.swap-step');
+                  const summary = resEl.querySelector('.swap-summary');
+                  const STEP_DELAY = 800;
+
+                  steps.forEach((step, idx) => {
+                    // Show step with spinner
+                    setTimeout(() => {
+                      step.classList.add('active');
+                    }, idx * STEP_DELAY);
+
+                    // Complete step: spinner → checkmark
+                    setTimeout(() => {
+                      step.classList.add('done');
+                      // Update label text on completion
+                      const label = step.querySelector('.swap-label');
+                      const doneTexts = ['Route found', 'Signed', 'Swap executed', 'Confirmed'];
+                      if (label) label.textContent = doneTexts[idx];
+                    }, idx * STEP_DELAY + STEP_DELAY - 200);
+                  });
+
+                  // Show summary after all steps
+                  if (summary) {
+                    setTimeout(() => {
+                      summary.classList.add('visible');
+                    }, steps.length * STEP_DELAY + 200);
+                  }
+                }, 400);
+              }
+            }
+          }, 55);
+        }
+      }, { threshold: 0.5 });
+      typeObserver.observe(typEl.parentElement);
+    }
+  }, []);
+  useEffect(() => {
+    const reveals = document.querySelectorAll("[data-reveal]");
+    if (!reveals.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+          }
+          // One-way: elements stay visible once revealed
+        });
+      },
+      { threshold: 0.12, rootMargin: "0px 0px -40px 0px" }
+    );
+
+    reveals.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, []);
+
+  // ─── Nav scroll opacity ─────────────────────────────
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+
+    const onScroll = () => {
+      if (window.scrollY > 80) {
+        nav.classList.add("nav-scrolled");
+      } else {
+        nav.classList.remove("nav-scrolled");
+      }
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // ─── Code wall (unchanged) ──────────────────────────
   const buildGrid = useCallback(() => {
     const container = codeRef.current;
     if (!container || !spansRef.current.length) return;
@@ -105,37 +286,33 @@ export default function Landing() {
   useEffect(() => {
     const container = codeRef.current;
     const wall = wallRef.current;
-    if (!container || !wall) return;
+    const hero = heroRef.current;
+    if (!container || !wall || !hero) return;
 
-    // Build per-character spans
+    // Build per-character spans — repeat text to fill background
     container.innerHTML = '';
-    const chars = CODE_SRC.split('');
+    const rawText = CODE_SRC.replace(/\n/g, ' ');
+    const fullText = (rawText + ' ').repeat(3);
+    const chars = fullText.split('');
     const spans = [];
     const frag = document.createDocumentFragment();
     for (let i = 0; i < chars.length; i++) {
       const ch = chars[i];
-      if (ch === '\n') {
-        frag.appendChild(document.createTextNode('\n'));
-        continue;
-      }
       const span = document.createElement('span');
       span.textContent = ch;
       span.className = 'cw-char';
-      // Each character gets unique activation energy and color offset
-      span._energy = 0.25 + Math.random() * 0.75; // 0.25–1.0
-      span._hue = Math.random() * 40 - 20;        // -20 to +20
+      span._energy = 0.25 + Math.random() * 0.75;
+      span._hue = Math.random() * 40 - 20;
       frag.appendChild(span);
       spans.push(span);
     }
     container.appendChild(frag);
     spansRef.current = spans;
 
-    // Build spatial grid after layout
     requestAnimationFrame(() => {
       buildGrid();
     });
 
-    // Resize handler
     let resizeTimer;
     const onResize = () => {
       clearTimeout(resizeTimer);
@@ -143,7 +320,6 @@ export default function Landing() {
     };
     window.addEventListener('resize', onResize);
 
-    // Mouse handlers
     const onMove = (e) => {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(() => {
@@ -158,7 +334,6 @@ export default function Landing() {
         const prevLit = prevLitRef.current;
         const nowLit = new Set();
 
-        // Check all grid cells within radius
         for (let dx = -gridRadius; dx <= gridRadius; dx++) {
           for (let dy = -gridRadius; dy <= gridRadius; dy++) {
             const key = `${centerGx + dx},${centerGy + dy}`;
@@ -172,7 +347,6 @@ export default function Landing() {
               const dist = Math.sqrt(distX * distX + distY * distY);
               if (dist < GLOW_RADIUS) {
                 const t = 1 - dist / GLOW_RADIUS;
-                // Character only activates when proximity exceeds its threshold
                 const threshold = (1 - span._energy) * 0.65;
                 if (t > threshold) {
                   const intensity = Math.min(1, (t - threshold) / (1 - threshold));
@@ -184,13 +358,11 @@ export default function Landing() {
                   span.style.color = `rgb(${r},${g},${bv})`;
                   nowLit.add(idx);
                 }
-                // Characters below their threshold stay dark — creates gaps
               }
             }
           }
         }
 
-        // Reset previously lit characters that are no longer in range
         for (const idx of prevLit) {
           if (!nowLit.has(idx)) {
             allSpans[idx].style.color = '';
@@ -210,11 +382,11 @@ export default function Landing() {
       prevLitRef.current = new Set();
     };
 
-    wall.addEventListener('mousemove', onMove);
-    wall.addEventListener('mouseleave', onLeave);
+    hero.addEventListener('mousemove', onMove);
+    hero.addEventListener('mouseleave', onLeave);
     return () => {
-      wall.removeEventListener('mousemove', onMove);
-      wall.removeEventListener('mouseleave', onLeave);
+      hero.removeEventListener('mousemove', onMove);
+      hero.removeEventListener('mouseleave', onLeave);
       window.removeEventListener('resize', onResize);
       cancelAnimationFrame(rafRef.current);
     };
@@ -223,7 +395,7 @@ export default function Landing() {
   return (
     <>
       {/* Nav */}
-      <nav className="landing-nav" aria-label="Primary navigation">
+      <nav className="landing-nav" ref={navRef} aria-label="Primary navigation">
         <div className="shell nav-inner">
           <Link className="brand" to="/" aria-label="bunOS home">
             <img src="/bunOS.svg" alt="" />
@@ -245,14 +417,16 @@ export default function Landing() {
 
       <main>
         {/* Hero */}
-        <section className="shell hero" id="top">
+        <section className="shell hero" id="top" ref={heroRef}>
+          <div className="hero-orb" aria-hidden="true" />
+
           <div className="code-wall" ref={wallRef} aria-hidden="true">
             <pre className="cw-pre" ref={codeRef} />
             <div className="code-wall-fade" />
           </div>
 
-          <div className="hero-copy">
-            <h1>Money you can talk to.</h1>
+          <div className="hero-copy" data-reveal="blur">
+            <h1>Money you can <span className="hero-rotate-wrap"><span className="hero-rotate-word" ref={rotateRef}>talk to.</span></span></h1>
             <div className="hero-actions">
               <Link className="button primary" to="/wallet">
                 <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" /></svg>
@@ -270,24 +444,43 @@ export default function Landing() {
           </div>
 
           <aside className="product-stage" aria-label="bunOS product preview">
-            <div className="wallet-card">
-              <div className="wallet-top">
-                <div className="handle"><small>X wallet</small><strong>@yourhandle</strong></div>
-              </div>
-              <div className="balance"><span>Available balance</span><strong>US$184.25</strong></div>
-              <div className="asset-grid">
-                <div className="asset-cell"><span>Assets</span><strong>USDC, EURC, cirBTC</strong></div>
-                <div className="asset-cell"><span>Rails</span><strong>Arc + Base Sepolia</strong></div>
+            <div
+              className="hero-card-wrap"
+              ref={walletTiltRef}
+              onMouseMove={e => handleTilt(e, walletTiltRef)}
+              onMouseLeave={() => resetTilt(walletTiltRef)}
+            >
+              <div className="wallet-card" data-reveal="right" data-reveal-delay="1">
+                <div className="hero-card-shimmer" />
+                <div className="terminal-chrome"><span /><span /><span /></div>
+                <div className="wallet-top">
+                  <div className="handle"><small>X wallet</small><strong>@yourhandle</strong></div>
+                </div>
+                <div className="balance"><span>Available balance</span><strong ref={balanceRef}>US$0.00</strong></div>
               </div>
             </div>
 
-            <div className="terminal-card">
-              <div className="terminal-chrome"><span /><span /><span /></div>
-              <div className="terminal-body">
-                <div className="terminal-line">&gt; <strong>swap $20 EURC to USDC on Arc</strong></div>
-                <div className="terminal-result">
-                  <span>Route found</span>
-                  <span>Circle AppKit -&gt; Arc testnet -&gt; receipt ready</span>
+            <div
+              className="hero-card-wrap"
+              ref={termTiltRef}
+              onMouseMove={e => handleTilt(e, termTiltRef)}
+              onMouseLeave={() => resetTilt(termTiltRef)}
+            >
+              <div className="terminal-card" data-reveal="right" data-reveal-delay="2">
+                <div className="hero-card-shimmer" />
+                <div className="terminal-chrome"><span /><span /><span /></div>
+                <div className="terminal-body">
+                  <div className="terminal-line">&gt; <strong ref={typingRef}></strong><span className="terminal-cursor" /></div>
+                  <div className="swap-steps" ref={termResultRef} style={{ opacity: 0 }}>
+                    <div className="swap-step" data-step="0"><span className="swap-spinner" /><span className="swap-label">Finding route…</span></div>
+                    <div className="swap-step" data-step="1"><span className="swap-spinner" /><span className="swap-label">Signing transaction…</span></div>
+                    <div className="swap-step" data-step="2"><span className="swap-spinner" /><span className="swap-label">Executing swap…</span></div>
+                    <div className="swap-step" data-step="3"><span className="swap-spinner" /><span className="swap-label">Confirming on-chain…</span></div>
+                    <div className="swap-summary">
+                      <strong>20.00 EURC → 21.47 USDC</strong>
+                      <span className="swap-tx">Tx: 0x4f2a…8c1e ↗</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -297,25 +490,36 @@ export default function Landing() {
         {/* Stack strip */}
         <section className="stack-strip" aria-label="bunOS stack">
           <div className="shell stack-inner">
-            <div className="stack-item"><span>01 Identity</span><strong>X handle becomes the account layer.</strong></div>
-            <div className="stack-item"><span>02 Wallet</span><strong>Circle wallets hold user-owned balances.</strong></div>
-            <div className="stack-item"><span>03 Agent</span><strong>Terminal and MCP call the same tools.</strong></div>
-            <div className="stack-item"><span>04 Settlement</span><strong>Arc carries swaps, bridges, trades, and payouts.</strong></div>
+            <div className="stack-col" data-reveal data-reveal-delay="1">
+              <div className="stack-icon-frame"><GrainIcon src="/identity.svg" size={150} color="accent" /></div>
+              <div className="stack-item"><span>01 Identity</span><strong>X handle becomes the account layer.</strong></div>
+            </div>
+            <div className="stack-col" data-reveal data-reveal-delay="2">
+              <div className="stack-icon-frame"><GrainIcon src="/wallet.svg" size={150} color="accent" /></div>
+              <div className="stack-item"><span>02 Wallet</span><strong>Circle wallets hold user-owned balances.</strong></div>
+            </div>
+            <div className="stack-col" data-reveal data-reveal-delay="3">
+              <div className="stack-icon-frame"><GrainIcon src="/ai-agent.svg" size={150} color="accent" /></div>
+              <div className="stack-item"><span>03 Agent</span><strong>Terminal and MCP call the same tools.</strong></div>
+            </div>
+            <div className="stack-col" data-reveal data-reveal-delay="4">
+              <div className="stack-icon-frame"><GrainIcon src="/settlement.svg" size={100} color="accent" /></div>
+              <div className="stack-item"><span>04 Settlement</span><strong>Arc carries swaps, bridges, trades, and payouts.</strong></div>
+            </div>
           </div>
         </section>
 
         {/* Build section */}
         <section className="shell section" id="build">
           <div className="section-head">
-            <span className="section-index">Build</span>
-            <div className="section-title">
+            <span className="section-index" data-reveal>Build</span>
+            <div className="section-title" data-reveal="blur">
               <h2>A wallet stack for agent builders.</h2>
-              <p>bunOS exposes the pieces other agents need: identity, balances, transfers, swaps, bridges, automations, and receipts. The site should feel like a builder portal because the product is one.</p>
             </div>
           </div>
 
           <div className="developer-grid">
-            <div className="code-panel">
+            <div className="code-panel" data-reveal="left">
               <div className="code-head"><span>mcp.config.json</span><span>user wallet scoped</span></div>
               <pre><code>{`{
   `}<span className="code-red">{`"mcpServers"`}</span>{`: {
@@ -331,17 +535,17 @@ export default function Landing() {
 `}<span className="code-blue">{`// same wallet, same tools`}</span>{`
 `}<span className="code-white">{`run_agent_action`}</span>{`({
   prompt: `}<span className="code-green">{`"bridge $5 USDC from Arc to Base"`}</span>{`
-})`}</code></pre>
+})`}<span className="code-cursor" /></code></pre>
             </div>
 
             <div className="module-stack">
-              <article className="module-panel">
+              <article className="module-panel" data-reveal data-reveal-delay="1">
                 <span className="mini-label">MCP tools</span>
                 <strong>Create wallet, send, swap, bridge, trade.</strong>
                 <p>Clients connect through one URL and inherit the user wallet bound to the API key.</p>
                 <div className="module-meta"><span>/mcp</span><span>/sse</span><span>API keys</span></div>
               </article>
-              <article className="module-panel">
+              <article className="module-panel" data-reveal data-reveal-delay="2">
                 <span className="mini-label">App surface</span>
                 <strong>Buttons for users, terminal for operators.</strong>
                 <p>The wallet UI and agent terminal are different doors into the same backend tools.</p>
@@ -354,42 +558,66 @@ export default function Landing() {
         {/* Use section */}
         <section className="shell section" id="use">
           <div className="section-head">
-            <span className="section-index">Use</span>
-            <div className="section-title">
+            <span className="section-index" data-reveal>Use</span>
+            <div className="section-title" data-reveal="blur">
               <h2>Ask for the outcome. bunOS handles the rails.</h2>
-              <p>The interface is intentionally split: normal users use wallet actions, power users type commands, and agents connect over MCP.</p>
             </div>
           </div>
 
           <div className="capability-list">
-            <article className="capability-row"><span>Payments</span><strong>Pay an X handle.</strong><p>Send USDC to onboarded users or create a claimable payment for someone who has not connected yet.</p></article>
-            <article className="capability-row"><span>Tokens</span><strong>Swap supported Arc assets.</strong><p>Route USDC, EURC, cirBTC, WETH, and other supported tokens through the same agent surface.</p></article>
-            <article className="capability-row"><span>Bridge</span><strong>Move value across rails.</strong><p>Use Arc and Base Sepolia for cross-chain movement while keeping receipts and execution status visible.</p></article>
-            <article className="capability-row"><span>Perps</span><strong>Trade from a prompt.</strong><p>Create ArcPerps testnet positions from natural language without pretending failures succeeded.</p></article>
-            <article className="capability-row"><span>Distribution</span><strong>Move funds to groups or communities.</strong><p>Create recipient lists, social reward flows, and payout trails without turning the interface into a campaign dashboard.</p></article>
-            <article className="capability-row"><span>Automation</span><strong>Schedule recurring wallet work.</strong><p>Run due jobs for balance syncs, repeated agent actions, and operational checks through the same tool layer.</p></article>
+            <article className="capability-row" data-reveal data-reveal-delay="1">
+              <span>Payments</span>
+              <strong>Pay an X handle.</strong>
+              <p>Send USDC to onboarded users or create a claimable payment for someone who has not connected yet.</p>
+            </article>
+            <article className="capability-row" data-reveal data-reveal-delay="2">
+              <span>Tokens</span>
+              <strong>Swap supported Arc assets.</strong>
+              <p>Route USDC, EURC, cirBTC, WETH, and other supported tokens through the same agent surface.</p>
+            </article>
+            <article className="capability-row" data-reveal data-reveal-delay="3">
+              <span>Bridge</span>
+              <strong>Move value across rails.</strong>
+              <p>Use Arc and Base Sepolia for cross-chain movement while keeping receipts and execution status visible.</p>
+            </article>
+            <article className="capability-row" data-reveal data-reveal-delay="4">
+              <span>Perps</span>
+              <strong>Trade from a prompt.</strong>
+              <p>Create ArcPerps testnet positions from natural language without pretending failures succeeded.</p>
+            </article>
+            <article className="capability-row" data-reveal data-reveal-delay="5">
+              <span>Distribution</span>
+              <strong>Move funds to groups or communities.</strong>
+              <p>Create recipient lists, social reward flows, and payout trails without turning the interface into a campaign dashboard.</p>
+            </article>
+            <article className="capability-row" data-reveal data-reveal-delay="6">
+              <span>Automation</span>
+              <strong>Schedule recurring wallet work.</strong>
+              <p>Run due jobs for balance syncs, repeated agent actions, and operational checks through the same tool layer.</p>
+            </article>
           </div>
         </section>
 
         {/* Safety section */}
         <section className="shell section" id="safety">
           <div className="section-head">
-            <span className="section-index">Safety</span>
-            <div className="section-title">
+            <span className="section-index" data-reveal>Safety</span>
+            <div className="section-title" data-reveal="blur">
               <h2>No shared backend signer for user funds.</h2>
-              <p>This is the part worth being blunt about. A slick agent wallet becomes dangerous fast if every user rides one hidden key. bunOS scopes tools to the user's wallet context.</p>
             </div>
           </div>
 
           <div className="safety-grid">
-            <article className="safety-panel primary">
+            <article className="safety-panel primary" data-reveal="scale">
               <div><span className="mini-label">Signing model</span><h3>User-wallet scoped execution.</h3></div>
               <p>API keys bind MCP clients to the same wallet created after X login. Protocol admin keys are not used as user spending keys.</p>
             </article>
-            <div className="safety-panel">
-              <div className="policy-stack">
-                <div className="policy-item"><span>Receipts</span><strong>Every serious action needs a status trail.</strong><p>Pending, submitted, failed, or completed. No fake success screens.</p></div>
-                <div className="policy-item"><span>Risk</span><strong>Large actions can be policy gated.</strong><p>Payments, swaps, bridges, and perps can be checked before execution.</p></div>
+            <div className="safety-side">
+              <div className="safety-panel secondary" data-reveal data-reveal-delay="1">
+                <span>Receipts</span><strong>Every serious action needs a status trail.</strong><p>Pending, submitted, failed, or completed. No fake success screens.</p>
+              </div>
+              <div className="safety-panel secondary" data-reveal data-reveal-delay="2">
+                <span>Risk</span><strong>Large actions can be policy gated.</strong><p>Payments, swaps, bridges, and perps can be checked before execution.</p>
               </div>
             </div>
           </div>
@@ -398,15 +626,14 @@ export default function Landing() {
         {/* MCP section */}
         <section className="shell section" id="mcp">
           <div className="section-head">
-            <span className="section-index">MCP</span>
-            <div className="section-title">
+            <span className="section-index" data-reveal>MCP</span>
+            <div className="section-title" data-reveal="blur">
               <h2>Connect any agent to the same wallet.</h2>
-              <p>The MCP guide and API Keys page now use the canonical domain. No one should be copy-pasting Railway URLs into clients.</p>
             </div>
           </div>
 
           <div className="mcp-layout">
-            <article className="mcp-panel">
+            <article className="mcp-panel" data-reveal="left">
               <h3>One URL. User scoped tools.</h3>
               <p>Create an API key after signing in with X, paste the MCP config into Claude, Cursor, Windsurf, or another MCP client, then call the same wallet tools the terminal uses.</p>
               <div className="url-box"><span>MCP URL</span><code>https://bunos.xyz/mcp</code></div>
@@ -415,14 +642,14 @@ export default function Landing() {
                 <Link className="button secondary" to="/mcp-guide">Read MCP guide</Link>
               </div>
             </article>
-            <article className="mcp-panel">
+            <article className="mcp-panel" data-reveal="right">
               <span className="mini-label">Example prompts</span>
               <div className="prompt-list">
-                <div className="prompt-row"><code>send $10 USDC to @alice</code><span>pay</span></div>
-                <div className="prompt-row"><code>swap $20 EURC to USDC</code><span>swap</span></div>
-                <div className="prompt-row"><code>bridge $5 from Arc to Base</code><span>bridge</span></div>
-                <div className="prompt-row"><code>drop $1 to first 10 replies</code><span>reward</span></div>
-                <div className="prompt-row"><code>open BTC long 2x with $5</code><span>perps</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="1"><code>send $10 USDC to @alice</code><span>pay</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="2"><code>swap $20 EURC to USDC</code><span>swap</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="3"><code>bridge $5 from Arc to Base</code><span>bridge</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="4"><code>drop $1 to first 10 replies</code><span>reward</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="5"><code>open BTC long 2x with $5</code><span>perps</span></div>
               </div>
             </article>
           </div>
@@ -430,10 +657,9 @@ export default function Landing() {
 
         {/* CTA */}
         <section className="shell final-cta">
-          <div className="cta-panel">
+          <div className="cta-panel" data-reveal="scale">
             <div>
               <h2>Start with a wallet. Then give it tools.</h2>
-              <p>Connect X, inspect balances, try the terminal, and create an MCP key when you want your own agent to use the same wallet.</p>
             </div>
             <div className="cta-actions">
               <Link className="button primary" to="/wallet">Launch wallet</Link>
@@ -445,14 +671,17 @@ export default function Landing() {
       </main>
 
       <footer className="footer">
-        <div className="shell footer-inner">
-          <Link className="brand" to="/"><img src="/bunOS.svg" alt="" /><span>bunOS</span></Link>
-          <div className="footer-links">
-            <Link to="/wallet">Wallet</Link>
-            <Link to="/terminal">Terminal</Link>
-            <Link to="/mcp-guide">MCP Guide</Link>
-            <Link to="/api-keys">API Keys</Link>
-            <a href="https://testnet.arcscan.app" target="_blank" rel="noreferrer">Arc Explorer</a>
+        <div className="shell">
+          <GrainLogo />
+          <div className="footer-inner">
+            <Link className="brand" to="/"><img src="/bunOS.svg" alt="" /><span>bunOS</span></Link>
+            <div className="footer-links">
+              <Link to="/wallet">Wallet</Link>
+              <Link to="/terminal">Terminal</Link>
+              <Link to="/mcp-guide">MCP Guide</Link>
+              <Link to="/api-keys">API Keys</Link>
+              <a href="https://testnet.arcscan.app" target="_blank" rel="noreferrer">Arc Explorer</a>
+            </div>
           </div>
         </div>
       </footer>

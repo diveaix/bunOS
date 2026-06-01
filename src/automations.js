@@ -4,11 +4,13 @@ import { normalizeHandle } from "./identity.js";
 import { enqueueJob, runJob } from "./jobs.js";
 import { runAgentAction } from "./agentPlanner.js";
 import { syncWalletBalances } from "./walletAccounts.js";
+import { runStrategyCheck } from "./strategyAgent.js";
 
 const SUPPORTED_KINDS = new Set([
   "sync_circle_balances",
   "run_agent_action",
-  "reconcile_defi_action"
+  "reconcile_defi_action",
+  "run_strategy_check"
 ]);
 
 export function createAutomation(input = {}) {
@@ -121,6 +123,19 @@ function normalizeAutomationInput(input) {
     };
   }
 
+  if (kind === "run_strategy_check") {
+    return {
+      kind,
+      intervalMinutes,
+      name: input.name || `Check strategy for ${input.handle}`,
+      payload: {
+        handle: input.handle,
+        strategyId: input.strategyId || input.payload?.strategyId,
+        settlementRail: input.settlementRail || input.payload?.settlementRail || "arc-testnet"
+      }
+    };
+  }
+
   const prompt = input.prompt || input.text || input.payload?.text;
   if (!prompt) throw new Error("run_agent_action automation requires prompt or text");
   return {
@@ -139,6 +154,7 @@ function normalizeAutomationInput(input) {
 function inferKind(input) {
   const text = String(input.text || input.prompt || "").toLowerCase();
   if (input.actionId || input.payload?.actionId || /\b(reconcile|watch)\b.*\b(defi|bridge|swap|action)\b/.test(text)) return "reconcile_defi_action";
+  if (input.strategyId || input.payload?.strategyId || /\b(strategy|rebalance|allocation)\b/.test(text)) return "run_strategy_check";
   if (/\b(sync|refresh)\b.*\bbalances?\b|\bbalances?\b.*\b(sync|refresh)\b/.test(text)) return "sync_circle_balances";
   return "run_agent_action";
 }
@@ -203,6 +219,13 @@ async function executeAutomationPayload(automation) {
       idempotencyKey: `automation:${automation.id}:reconcile:${actionId}:${Date.now()}`
     });
     return await runJob({ jobId: job.id });
+  }
+  if (automation.kind === "run_strategy_check") {
+    return runStrategyCheck({
+      handle: automation.payload.handle || automation.handle,
+      strategyId: automation.payload.strategyId,
+      settlementRail: automation.payload.settlementRail || "arc-testnet"
+    });
   }
   if (automation.kind === "run_agent_action") {
     return await runAgentAction({

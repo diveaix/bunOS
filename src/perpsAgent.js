@@ -5,6 +5,8 @@ import { normalizeHandle, resolveXHandle } from "./identity.js";
 import { nextEventId, nextPerpProposalId } from "./ids.js";
 import { listHyperliquidMarkets } from "./hyperliquidAdapter.js";
 import { readOnlySigner, userWalletSigningRequired } from "./signerPolicy.js";
+import { getMarketFeedSnapshot } from "./marketFeeds.js";
+import { evaluateMandatesForAction } from "./mandates.js";
 
 const fallbackPrices = {
   BTC: 100000,
@@ -47,7 +49,11 @@ export function assessLiquidationRisk({
   const user = resolveXHandle(handle);
   const collateral = Number(collateralUsd || 0);
   const lev = Number(leverage || 1);
-  const price = Number(entryPrice || fallbackPrices[symbol] || 1000);
+  const feed = getMarketFeedSnapshot({ assets: [symbol === "BTC" ? "cirBTC" : symbol === "ETH" ? "WETH" : symbol], settlementRail: "arc-testnet" });
+  const feedSymbol = symbol === "BTC" ? "cirBTC" : symbol === "ETH" ? "WETH" : symbol;
+  const feedPrice = feed.prices?.[feedSymbol]?.priceUsd;
+  const perpMarket = feed.perps?.markets?.find((market) => market.symbol === symbol);
+  const price = Number(entryPrice || perpMarket?.markPrice || feedPrice || fallbackPrices[symbol] || 1000);
 
   if (!Number.isFinite(collateral) || collateral <= 0) {
     throw new Error("Collateral must be greater than zero");
@@ -72,6 +78,13 @@ export function assessLiquidationRisk({
     leverage: lev,
     notionalUsd: Math.round(collateral * lev * 100) / 100,
     entryPrice: price,
+    marketContext: {
+      priceSource: entryPrice ? "user_input" : perpMarket?.markPrice ? "hyperliquid_mark" : feedPrice ? "market_feed" : "fallback_reference",
+      feedFreshness: feed.freshness?.status || "unknown",
+      regime: feed.regime?.status || "unknown",
+      funding: perpMarket?.funding ?? null,
+      openInterest: perpMarket?.openInterest ?? null
+    },
     liquidationPrice: Math.round(liquidationPrice * 100) / 100,
     liquidationBufferPct: Math.round(bufferPct * 10000) / 100,
     riskScore,
@@ -119,6 +132,38 @@ export function proposePerpTrade({
   }
 
   const risk = assessLiquidationRisk({ handle: user.handle, symbol, side, collateralUsd, leverage, entryPrice }).assessment;
+  const mandateCheck = evaluateMandatesForAction({
+    handle: user.handle,
+    action: {
+      type: "perp",
+      symbol,
+      side,
+      collateralUsd: risk.collateralUsd,
+      amountUsd: risk.collateralUsd,
+      leverage: risk.leverage,
+      settlementRail
+    },
+    risk,
+    type: "perp"
+  });
+  if (!mandateCheck.approved) {
+    recordEvent("perp_trade_rejected_by_mandate", {
+      handle: user.handle,
+      symbol,
+      side,
+      leverage,
+      reason: mandateCheck.reason
+    });
+    return {
+      ok: false,
+      status: "rejected",
+      reason: mandateCheck.reason,
+      mandateCheck,
+      risk,
+      signer: readOnlySigner({ operation: "propose_perp_trade" }),
+      nextAction: "review_mandates"
+    };
+  }
   const proposal = {
     id: nextPerpProposalId(),
     handle: user.handle,
@@ -134,6 +179,7 @@ export function proposePerpTrade({
       settlementRail,
       reason: "ArcPerps execution needs a user-owned signing adapter; backend signer execution is disabled."
     }),
+    mandateCheck,
     risk,
     stopLoss: suggestedStopLoss(risk),
     takeProfit: suggestedTakeProfit(risk),
@@ -169,7 +215,7 @@ export function proposePerpTrade({
     leverage
   });
 
-  return { ok: true, proposal, approval };
+  return { ok: true, proposal, approval, mandateCheck };
 }
 
 export function listPerpProposals({ handle, status, limit = 50 } = {}) {

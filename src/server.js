@@ -5,6 +5,7 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mcpTools, callMcpTool } from "./mcp.js";
 import { handleMcpJsonRpc, toMcpError } from "./mcpJsonRpc.js";
+import { redactSensitive } from "./redaction.js";
 import { getArcReadiness } from "./arcRpc.js";
 import { confirmAction } from "./agentActions.js";
 import { listAgentTools, planAgentActionWithModel, runAgentAction } from "./agentPlanner.js";
@@ -96,6 +97,7 @@ import {
   getXWebhookStatus,
   getXCommandReceipt,
   listXCommands,
+  refreshXCommandExecution,
 } from "./xPayments.js";
 import {
   listCopyTradeProposals,
@@ -104,11 +106,18 @@ import {
 } from "./socialTradingAgent.js";
 import {
   applyMcpApiKeyContext,
+  assertMcpToolResultSafe,
   authenticateMcpApiKey,
   createMcpApiKey,
   listMcpApiKeys,
   revokeMcpApiKey
 } from "./mcpApiKeys.js";
+import {
+  acquireReplayLock,
+  assertPublicPayloadSafe,
+  listSecurityAuditEvents,
+  verifyApprovalToken
+} from "./securityGuards.js";
 import {
   assessLiquidationRisk,
   listPerpIntelligence,
@@ -124,6 +133,23 @@ import {
   quoteDefiRoute,
   searchPredictionMarkets
 } from "./defiOrchestrator.js";
+import {
+  buildExecutionMonitorSnapshot,
+  refreshExecutionMonitor
+} from "./executionMonitor.js";
+import { analyzePortfolio } from "./portfolioBrain.js";
+import { getMarketFeedSnapshot, refreshMarketFeedSnapshot } from "./marketFeeds.js";
+import {
+  createMandate,
+  deleteMandate,
+  listMandates,
+  updateMandate
+} from "./mandates.js";
+import {
+  getAgentHealth,
+  getAgentMetrics,
+  listAgentDecisionEvents
+} from "./agentObservability.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const port = Number(process.env.PORT || 4317);
@@ -168,6 +194,29 @@ export const server = http.createServer(async (req, res) => {
         },
         ai: getAgentModelReadiness()
       });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/admin/agent-health") {
+      requireSession(req);
+      return json(res, getAgentHealth({
+        windowMs: url.searchParams.get("windowMs") || undefined
+      }));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/admin/agent-metrics") {
+      requireSession(req);
+      return json(res, getAgentMetrics({
+        windowMs: url.searchParams.get("windowMs") || undefined
+      }));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/admin/agent-events") {
+      const session = requireSession(req);
+      return json(res, listAgentDecisionEvents({
+        handle: url.searchParams.get("all") === "1" ? undefined : session.handle,
+        status: url.searchParams.get("status") || undefined,
+        limit: url.searchParams.get("limit") || 100
+      }));
     }
 
     if (req.method === "GET" && url.pathname === "/api/preflight") {
@@ -217,6 +266,15 @@ export const server = http.createServer(async (req, res) => {
       return json(res, { ok: true, session });
     }
 
+    if (req.method === "GET" && url.pathname === "/api/security/audit") {
+      const session = requireSession(req);
+      return json(res, listSecurityAuditEvents({
+        handle: session.handle,
+        type: url.searchParams.get("type") || undefined,
+        limit: url.searchParams.get("limit") || 100
+      }));
+    }
+
     if (req.method === "GET" && url.pathname === "/api/api-keys") {
       const session = requireSession(req);
       return json(res, { ok: true, apiKeys: listMcpApiKeys(session.handle) });
@@ -258,6 +316,62 @@ export const server = http.createServer(async (req, res) => {
       return json(res, getWalletCapabilities(url.searchParams.get("handle") || "@sara"));
     }
 
+    if (req.method === "GET" && url.pathname === "/api/portfolio/analyze") {
+      return json(res, analyzePortfolio({
+        handle: url.searchParams.get("handle") || "@sara",
+        settlementRail: url.searchParams.get("settlementRail") || undefined
+      }));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/market/feeds") {
+      const assets = url.searchParams.get("assets")
+        ? url.searchParams.get("assets").split(",").map((asset) => asset.trim()).filter(Boolean)
+        : undefined;
+      return json(res, getMarketFeedSnapshot({
+        assets,
+        settlementRail: url.searchParams.get("settlementRail") || "arc-testnet"
+      }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/market/feeds/refresh") {
+      const body = await readJson(req);
+      return jsonPersisted(res, await refreshMarketFeedSnapshot({
+        assets: body.assets,
+        settlementRail: body.settlementRail || "arc-testnet",
+        force: body.force !== false
+      }));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/mandates") {
+      return json(res, listMandates({
+        handle: url.searchParams.get("handle") || "@sara",
+        status: url.searchParams.get("status") || "active",
+        limit: url.searchParams.get("limit") || 50
+      }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/mandates") {
+      const body = await readJson(req);
+      return jsonPersisted(res, createMandate(body));
+    }
+
+    const mandateApiMatch = url.pathname.match(/^\/api\/mandates\/([^/]+)$/);
+    if (req.method === "PATCH" && mandateApiMatch) {
+      const body = await readJson(req);
+      return jsonPersisted(res, updateMandate({
+        ...body,
+        mandateId: mandateApiMatch[1]
+      }));
+    }
+
+    if (req.method === "DELETE" && mandateApiMatch) {
+      const body = await readJson(req);
+      return jsonPersisted(res, deleteMandate({
+        handle: body.handle || url.searchParams.get("handle") || "@sara",
+        mandateId: mandateApiMatch[1]
+      }));
+    }
+
     if (req.method === "GET" && url.pathname === "/api/identity/resolve") {
       return json(res, resolveIdentity({ handle: url.searchParams.get("handle") }));
     }
@@ -273,6 +387,39 @@ export const server = http.createServer(async (req, res) => {
     const receiptMatch = url.pathname.match(/^\/api\/payments\/([^/]+)$/);
     if (req.method === "GET" && receiptMatch) {
       return json(res, getPaymentReceipt({ paymentId: receiptMatch[1] }));
+    }
+
+    const paymentRefreshMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/refresh$/);
+    if (req.method === "POST" && paymentRefreshMatch) {
+      return jsonPersisted(res, await refreshExecutionMonitor({
+        kind: "payment",
+        id: paymentRefreshMatch[1],
+        runWorker: true
+      }));
+    }
+
+    const monitorMatch = url.pathname.match(/^\/api\/execution-monitor\/([^/]+)\/([^/]+)$/);
+    if (req.method === "GET" && monitorMatch) {
+      return json(res, {
+        ok: true,
+        monitor: buildExecutionMonitorSnapshot({
+          kind: monitorMatch[1],
+          id: decodeURIComponent(monitorMatch[2]),
+          host: req.headers.host,
+          protocol: req.headers["x-forwarded-proto"] || "http"
+        })
+      });
+    }
+
+    if (req.method === "POST" && monitorMatch) {
+      const body = await readJson(req);
+      return jsonPersisted(res, await refreshExecutionMonitor({
+        kind: monitorMatch[1],
+        id: decodeURIComponent(monitorMatch[2]),
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http",
+        runWorker: body.runWorker !== false
+      }));
     }
 
     if (req.method === "GET" && url.pathname === "/api/claims") {
@@ -377,6 +524,28 @@ export const server = http.createServer(async (req, res) => {
       }));
     }
 
+    const xCommandRefreshMatch = url.pathname.match(/^\/api\/x\/commands\/([^/]+)\/refresh$/);
+    if (req.method === "POST" && xCommandRefreshMatch) {
+      const body = await readJson(req);
+      const refreshed = await refreshXCommandExecution({
+        commandId: xCommandRefreshMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http",
+        runWorker: body.runWorker !== false
+      });
+      let finalReplyDelivery = null;
+      if (body.postReply && refreshed.command?.finalReply) {
+        finalReplyDelivery = await postXCommandReply({
+          commandId: xCommandRefreshMatch[1],
+          publicUrl: refreshed.receipt?.publicUrl,
+          textOverride: refreshed.command.finalReply,
+          deliveryField: "finalReplyDelivery",
+          force: Boolean(body.force)
+        });
+      }
+      return jsonPersisted(res, { ...refreshed, finalReplyDelivery });
+    }
+
     const xCommandApproveApiMatch = url.pathname.match(/^\/api\/x\/commands\/([^/]+)\/approve$/);
     if (req.method === "POST" && xCommandApproveApiMatch) {
       const body = await readJson(req);
@@ -389,6 +558,11 @@ export const server = http.createServer(async (req, res) => {
       if (!approval) {
         return json(res, { ok: false, error: "This X command does not require approval." }, 409);
       }
+      verifyApprovalToken({
+        token: body.approvalToken || url.searchParams.get("approvalToken"),
+        approval,
+        commandId: receipt.command.id
+      });
       const confirmed = await confirmAction({
         approvalId: approval.id,
         handle: body.handle || approval.handle
@@ -546,9 +720,26 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/agent/run") {
       const body = await readJson(req);
+      const key = body.idempotencyKey || req.headers["idempotency-key"];
+      if (key) {
+        const replay = acquireReplayLock({
+          scope: "api_agent_run",
+          key,
+          handle: body.handle || "@sara"
+        });
+        if (!replay.ok) {
+          return json(res, {
+            ok: true,
+            idempotentReplay: true,
+            replayRejected: true,
+            reason: "This API idempotency key has already been used recently.",
+            lock: replay.lock
+          }, 409);
+        }
+      }
       return jsonPersisted(res, await runAgentAction({
         ...body,
-        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+        idempotencyKey: key
       }));
     }
 
@@ -581,10 +772,11 @@ export const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/mcp/call") {
       const body = await readJson(req);
       const context = getMcpAuthContext(req);
-      return jsonPersisted(res, await callMcpTool(
+      const result = await callMcpTool(
         body.tool,
         applyMcpApiKeyContext(body.tool, body.arguments || {}, context)
-      ));
+      );
+      return jsonPersisted(res, assertMcpToolResultSafe(body.tool, result, context));
     }
 
     const publicXCommandMatch = url.pathname.match(/^\/x\/commands\/([^/]+)$/);
@@ -594,7 +786,7 @@ export const server = http.createServer(async (req, res) => {
         host: req.headers.host,
         protocol: req.headers["x-forwarded-proto"] || "http"
       }).receipt;
-      return html(res, renderPublicXCommandReceipt(receipt));
+      return html(res, renderPublicXCommandReceipt(assertPublicPayloadSafe(receipt, { route: "/x/commands/:id" })));
     }
 
     const publicXCommandApproveMatch = url.pathname.match(/^\/x\/commands\/([^/]+)\/approve$/);
@@ -604,7 +796,7 @@ export const server = http.createServer(async (req, res) => {
         host: req.headers.host,
         protocol: req.headers["x-forwarded-proto"] || "http"
       }).receipt;
-      return html(res, renderPublicXCommandApproval(receipt));
+      return html(res, renderPublicXCommandApproval(assertPublicPayloadSafe(receipt, { route: "/x/commands/:id/approve" }), url.searchParams.get("approvalToken") || ""));
     }
 
     const publicDefiActionMatch = url.pathname.match(/^\/defi\/actions\/([^/]+)$/);
@@ -614,7 +806,7 @@ export const server = http.createServer(async (req, res) => {
         host: req.headers.host,
         protocol: req.headers["x-forwarded-proto"] || "http"
       }).receipt;
-      return html(res, renderPublicDefiActionReceipt(receipt));
+      return html(res, renderPublicDefiActionReceipt(assertPublicPayloadSafe(receipt, { route: "/defi/actions/:id" })));
     }
 
     const publicAirdropMatch = url.pathname.match(/^\/airdrops\/([^/]+)$/);
@@ -624,7 +816,7 @@ export const server = http.createServer(async (req, res) => {
         host: req.headers.host,
         protocol: req.headers["x-forwarded-proto"] || "http"
       }).receipt;
-      return html(res, renderPublicAirdropReceipt(receipt));
+      return html(res, renderPublicAirdropReceipt(assertPublicPayloadSafe(receipt, { route: "/airdrops/:id" })));
     }
 
     if (req.method === "POST" && url.pathname === "/api/actions/confirm") {
@@ -819,6 +1011,17 @@ export const server = http.createServer(async (req, res) => {
       }));
     }
 
+    const defiRefreshMatch = url.pathname.match(/^\/api\/defi\/actions\/([^/]+)\/refresh$/);
+    if (req.method === "POST" && defiRefreshMatch) {
+      return jsonPersisted(res, await refreshExecutionMonitor({
+        kind: "defi_action",
+        id: defiRefreshMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http",
+        runWorker: true
+      }));
+    }
+
     if (req.method === "POST" && url.pathname === "/api/x/webhook") {
       const rawBody = await readBody(req);
       try {
@@ -945,7 +1148,7 @@ export const server = http.createServer(async (req, res) => {
 
     notFound(res);
   } catch (error) {
-    json(res, { ok: false, error: error.message }, 400);
+    json(res, { ok: false, error: error.message }, error.status || 400);
   }
 });
 
@@ -1058,7 +1261,7 @@ async function readBody(req) {
 
 function json(res, payload, status = 200, headers = {}) {
   res.writeHead(status, { "content-type": "application/json", ...headers });
-  res.end(JSON.stringify(payload, jsonReplacer, 2));
+  res.end(JSON.stringify(redactSensitive(payload), jsonReplacer, 2));
 }
 
 function html(res, body, status = 200) {
@@ -1071,6 +1274,7 @@ function renderPublicXCommandReceipt(receipt) {
   const related = receipt.related || {};
   const payment = related.payment;
   const airdrop = related.airdrop;
+  const automation = related.automation;
   const proposal = related.proposal;
   const action = related.defiAction;
   const approval = related.approval;
@@ -1082,6 +1286,8 @@ function renderPublicXCommandReceipt(receipt) {
     ? `${payment.amount} ${payment.asset || "USDC"} to ${payment.recipientHandle || "claim winner"}`
     : airdrop
       ? `${airdrop.amountPerRecipient} ${airdrop.asset} airdrop`
+      : automation
+      ? `${automation.name || automation.kind} automation`
       : proposal
       ? `${proposal.side} ${proposal.symbol} at ${proposal.leverage}x`
       : action
@@ -1129,6 +1335,7 @@ function renderPublicXCommandReceipt(receipt) {
           ${receiptCell("Intent", command.intent?.action || "unknown")}
           ${receiptCell("Settlement", command.settlementRail || payment?.settlementRail || airdrop?.settlementRail || proposal?.settlementRail || action?.fromRail || "arc-testnet")}
           ${receiptCell("Approval", approval?.status || "not required")}
+          ${receiptCell("Automation", automation?.id || "none")}
           ${receiptCell("Approval link", approvalUrl || "not required")}
           ${receiptCell("Tx hash", txHash)}
           ${receiptCell("Reply delivery", command.replyDelivery?.status || "not attempted")}
@@ -1142,7 +1349,7 @@ function renderPublicXCommandReceipt(receipt) {
 </html>`;
 }
 
-function renderPublicXCommandApproval(receipt) {
+function renderPublicXCommandApproval(receipt, approvalToken = "") {
   const command = receipt.command;
   const approval = receipt.related?.approval;
   const disabled = !approval || approval.status !== "pending";
@@ -1199,7 +1406,10 @@ function renderPublicXCommandApproval(receipt) {
         const response = await fetch("/api/x/commands/${encodeURIComponent(command.id)}/approve", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ handle: "${escapeHtml(command.actorHandle)}" })
+          body: JSON.stringify({
+            handle: "${escapeHtml(command.actorHandle)}",
+            approvalToken: "${escapeHtml(approvalToken)}"
+          })
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok || data.ok === false) {
