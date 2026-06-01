@@ -1752,7 +1752,17 @@ function publicExecutionMonitorResponse(requestBody = {}, payload = {}) {
 
   return dropUndefined({
     ...payload,
-    receipt: payload.receipt ? sanitizeExecutionMonitorReceipt(payload.receipt) : undefined
+    monitor: payload.monitor ? sanitizeExecutionMonitorSnapshot(payload.monitor) : undefined,
+    receipt: payload.receipt ? sanitizeExecutionMonitorReceipt(payload.receipt) : undefined,
+    worker: undefined
+  });
+}
+
+function sanitizeExecutionMonitorSnapshot(monitor = {}) {
+  return dropUndefined({
+    ...monitor,
+    job: undefined,
+    worker: undefined
   });
 }
 
@@ -1760,8 +1770,25 @@ function sanitizeExecutionMonitorReceipt(receipt = {}) {
   return dropUndefined({
     ...receipt,
     action: receipt.action ? sanitizeDefiAction(receipt.action) : undefined,
+    execution: receipt.execution ? sanitizeReceiptExecution(receipt.execution) : undefined,
+    executionJob: undefined,
     simulation: undefined,
     marketIntelligence: undefined
+  });
+}
+
+function sanitizeReceiptExecution(execution = {}) {
+  return dropUndefined({
+    ok: execution.ok,
+    status: execution.status,
+    provider: execution.provider,
+    mode: execution.mode,
+    operation: execution.operation,
+    backendSignerAllowed: execution.backendSignerAllowed,
+    reason: cleanTerminalReason(execution.reason || execution.error),
+    txHash: execution.txHash || null,
+    explorerUrl: execution.explorerUrl || null,
+    receiptUrl: execution.receiptUrl || null
   });
 }
 
@@ -1803,7 +1830,6 @@ function sanitizeDefiAction(action = {}) {
     explorerUrl: action.explorerUrl || action.execution?.explorerUrl || null,
     publicUrl: action.publicUrl || null,
     approvalId: action.approvalId || null,
-    executionJobId: action.executionJobId || null,
     execution: action.execution ? {
       ok: action.execution.ok,
       status: action.execution.status,
