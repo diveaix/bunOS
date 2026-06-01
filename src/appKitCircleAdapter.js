@@ -100,7 +100,7 @@ export async function executeCircleAppKitBridge(input = {}) {
 
 export async function estimateCircleAppKitSwap(input = {}) {
   const params = await buildSwapParams(input);
-  const estimate = await params.kit.estimateSwap(params.request);
+  const estimate = await retryAppKitEstimate(() => params.kit.estimateSwap(params.request));
   return {
     ok: true,
     provider: "circle-app-kit",
@@ -454,6 +454,31 @@ function normalizeSwapToken(token) {
   const value = raw.toUpperCase();
   if (value === "CIRBTC") return "cirBTC";
   return value === "ETH" ? "WETH" : value;
+}
+
+async function retryAppKitEstimate(run, { attempts = 3, delayMs = 700 } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts || !isTransientAppKitQuoteError(error)) {
+        throw error;
+      }
+      await wait(delayMs * attempt);
+    }
+  }
+  throw lastError;
+}
+
+function isTransientAppKitQuoteError(error) {
+  const message = String(error?.message || error || "");
+  return /server error|route or resource not found|no route available|temporarily|timeout|rate/i.test(message);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function appKitSwapTokenRef(token, rail) {
