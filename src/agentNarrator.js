@@ -244,5 +244,18 @@ function humanActionLabel(tool, result = {}) {
 function cleanReason(reason) {
   const value = String(reason || "").trim();
   if (!value) return "the provider did not return an executable route.";
-  return value.endsWith(".") ? value : `${value}.`;
+  if (/no live .*route|no available quotes|quote_unavailable|provider could not return|server error|fallback/i.test(value)) {
+    return "there is no working route for that trade right now. This usually means the pair has low liquidity, the route provider is down, or the asset is not supported yet.";
+  }
+  if (/insufficient|not enough|balance/i.test(value)) {
+    return "the wallet does not have enough spendable balance for this action.";
+  }
+  const cleaned = value
+    .replace(/Provider details:.*/i, "")
+    .replace(/AppKit:.*/i, "")
+    .replace(/LI\.FI fallback:.*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const finalText = cleaned || "the route is not available right now.";
+  return finalText.endsWith(".") ? finalText : `${finalText}.`;
 }

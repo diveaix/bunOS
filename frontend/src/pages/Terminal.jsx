@@ -619,9 +619,9 @@ function shouldPollExecution(data, target) {
 function formatExecutionMonitorFollowup(refreshed, originalData = {}) {
   const monitor = refreshed.monitor || {};
   if (monitor.kind === "defi_action" && refreshed.receipt) {
-    return `${formatDefiReceiptFollowup({ receipt: refreshed.receipt }, originalData)}${renderExecutionMonitorCard(monitor)}`;
+    return formatDefiReceiptFollowup({ receipt: refreshed.receipt }, originalData);
   }
-  return `${executionMonitorTitle(monitor)}${renderExecutionMonitorCard(monitor)}`;
+  return formatSimpleMonitor(monitor);
 }
 
 function renderExecutionMonitorCard(monitor = {}) {
@@ -654,6 +654,33 @@ function monitorStatusType(monitor = {}) {
   return "ok";
 }
 
+function formatSimpleMonitor(monitor = {}) {
+  const status = String(monitor.lifecycle || monitor.status || "").toLowerCase();
+  if (status === "settled") {
+    return `Done. The transaction finished on-chain.${renderSimpleReceiptRows({
+      txHash: monitor.txHash,
+      explorerUrl: monitor.explorerUrl,
+      receiptUrl: monitor.receiptUrl
+    })}`;
+  }
+  if (status === "failed") {
+    return `I could not finish that action. ${friendlyReason(monitor.reason)}${renderSimpleNext("No funds moved unless a transaction hash is shown.")}`;
+  }
+  if (status === "submitted" || status === "queued") {
+    return `I sent it off and I am still waiting for the final result.${renderSimpleReceiptRows({
+      txHash: monitor.txHash,
+      explorerUrl: monitor.explorerUrl,
+      receiptUrl: monitor.receiptUrl,
+      nextAction: "I will keep checking for the receipt."
+    })}`;
+  }
+  return `${executionMonitorTitle(monitor)}${renderSimpleReceiptRows({
+    txHash: monitor.txHash,
+    explorerUrl: monitor.explorerUrl,
+    receiptUrl: monitor.receiptUrl
+  })}`;
+}
+
 function formatDefiReceiptFollowup(receiptData, originalData = {}) {
   const receipt = receiptData.receipt || {};
   const action = receipt.action || originalData.result?.action || {};
@@ -662,11 +689,6 @@ function formatDefiReceiptFollowup(receiptData, originalData = {}) {
   const executionJob = receipt.executionJob || null;
   const type = action.type || request.action || "action";
   const status = action.status || execution.status || executionJob?.status || "pending";
-  const statusType = ["settled", "submitted"].includes(String(status).toLowerCase())
-    ? "ok"
-    : ["failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(String(status).toLowerCase())
-    ? "fail"
-    : "warn";
   const amount = request.amountUsd || request.amount || originalData.planned?.intent?.amount || "n/a";
   const fromToken = request.fromToken || request.asset || "USDC";
   const toToken = request.toToken || (type === "bridge" ? request.fromToken || "USDC" : "n/a");
@@ -674,26 +696,127 @@ function formatDefiReceiptFollowup(receiptData, originalData = {}) {
   const toRail = request.toRail || fromRail;
   const txHash = receipt.txHash || execution.txHash || action.txHash;
   const reason = action.reason || execution.reason || execution.error || executionJob?.lastError || action.lastExecutionError || "";
-  const simulation = receipt.simulation || action.simulation || originalData.simulation || originalData.result?.simulation || null;
-  const market = receipt.marketIntelligence || action.marketIntelligence || originalData.marketIntelligence || originalData.result?.marketIntelligence || null;
-  const title = defiReceiptTitle(type, status);
-
-  const rows = [
-    ["Action", `<code>${esc(action.id || extractDefiActionId(originalData) || "n/a")}</code>`],
-    ["Status", statusBadge(status, statusType)],
-    ["Amount", `${esc(amount)} ${esc(fromToken)}`],
-    [type === "bridge" ? "Route" : "Pair", `${esc(fromToken)} -> ${esc(toToken)}${type === "bridge" ? ` (${esc(fromRail)} -> ${esc(toRail)})` : ""}`],
-    ["Protocol", esc(action.protocol || execution.provider || "circle-app-kit")],
-    ["Tx", renderTxLink(txHash, receipt.explorerUrl || execution.explorerUrl)],
-    ["Receipt", receipt.publicUrl ? `<a href="${esc(receipt.publicUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>` : "n/a"],
-    ["Next", esc(receipt.nextAction || action.nextAction || "none")],
-  ];
-
-  if (reason) rows.splice(3, 0, ["Reason", esc(reason)]);
-  if (simulation?.recommendation) rows.splice(3, 0, ["Route check", `<code>${esc(simulation.recommendation)}</code>`]);
-  if (executionJob) rows.splice(4, 0, ["Job", `<code>${esc(executionJob.id)}</code> ${statusBadge(executionJob.status, executionJob.status === "failed" ? "fail" : "warn")} ${esc(`${executionJob.attempts}/${executionJob.maxAttempts}`)}`]);
-  return `${esc(title)}${renderResultCard(rows)}${renderTradeSimulation(simulation)}${renderMarketIntelligence(market)}`;
+  return renderSimpleTradeResponse({
+    type,
+    status,
+    amount,
+    fromToken,
+    toToken,
+    fromRail,
+    toRail,
+    reason,
+    txHash,
+    explorerUrl: receipt.explorerUrl || execution.explorerUrl,
+    receiptUrl: receipt.publicUrl,
+    nextAction: receipt.nextAction || action.nextAction || "none"
+  });
 }
+
+function renderSimpleTradeResponse({
+  type = "swap",
+  status = "pending",
+  amount = "n/a",
+  fromToken = "USDC",
+  toToken = "n/a",
+  fromRail = "arc-testnet",
+  toRail = fromRail,
+  reason = "",
+  txHash = null,
+  explorerUrl = null,
+  receiptUrl = null,
+  nextAction = ""
+} = {}) {
+  const normalized = String(status || "").toLowerCase();
+  const action = type === "bridge" ? "bridge" : "swap";
+  const route = action === "bridge"
+    ? `${amount} ${fromToken} from ${humanRail(fromRail)} to ${humanRail(toRail)}`
+    : `${amount} ${fromToken} to ${toToken} on ${humanRail(fromRail)}`;
+
+  if (["settled", "completed"].includes(normalized)) {
+    return `Done. I completed the ${action} for ${esc(route)}.${renderSimpleReceiptRows({ txHash, explorerUrl, receiptUrl })}`;
+  }
+
+  if (normalized === "submitted") {
+    return `I submitted the ${action} for ${esc(route)}. It may take a moment to show as final.${renderSimpleReceiptRows({
+      txHash,
+      explorerUrl,
+      receiptUrl,
+      nextAction: "I am watching for the final receipt."
+    })}`;
+  }
+
+  if (["failed", "rejected", "quote_unavailable", "execution_not_enabled"].includes(normalized)) {
+    const reasonText = friendlyReason(reason, { action, fromToken, toToken, fromRail, toRail });
+    return `I could not do this ${action} right now. ${reasonText} No funds moved.${renderSimpleNext(nextUserAction({ action, fromToken, toToken }))}`;
+  }
+
+  if (normalized === "requires_confirmation" || normalized === "quoted") {
+    return `I found a possible ${action} for ${esc(route)}. Review it before moving funds.${renderSimpleReceiptRows({ txHash, explorerUrl, receiptUrl, nextAction })}`;
+  }
+
+  return `I am checking this ${action} for ${esc(route)}.${renderSimpleReceiptRows({ txHash, explorerUrl, receiptUrl, nextAction })}`;
+}
+
+function renderSimpleReceiptRows({ txHash, explorerUrl, receiptUrl, nextAction } = {}) {
+  const rows = [];
+  if (txHash) rows.push(["Transaction", renderTxLink(txHash, explorerUrl)]);
+  if (receiptUrl) rows.push(["Receipt", `<a href="${esc(receiptUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>`]);
+  if (nextAction && nextAction !== "none") rows.push(["Next", esc(humanNextAction(nextAction))]);
+  return rows.length ? renderResultCard(rows) : "";
+}
+
+function renderSimpleNext(text) {
+  return text ? renderResultCard([["Next", esc(text)]]) : "";
+}
+
+function friendlyReason(reason, context = {}) {
+  const text = String(reason || "").toLowerCase();
+  if (/no live .*route|no available quotes|quote_unavailable|provider could not return|server error|fallback/.test(text)) {
+    const pair = context.toToken ? `${context.fromToken || "this token"} to ${context.toToken}` : "that pair";
+    return `I could not find a working route for ${pair}. That usually means there is not enough liquidity yet, or the route provider is having a bad moment.`;
+  }
+  if (/insufficient|not enough|balance/.test(text)) {
+    return "The wallet does not have enough spendable balance for this action.";
+  }
+  if (/execution_not_enabled|not enabled|signing|required/.test(text)) {
+    return "The wallet or provider is not ready to sign this action yet.";
+  }
+  if (!reason) return "I could not get a safe route from the provider.";
+  return stripBackendReason(reason);
+}
+
+function stripBackendReason(reason) {
+  return String(reason || "")
+    .replace(/Provider details:.*/i, "")
+    .replace(/AppKit:.*/i, "")
+    .replace(/LI\.FI fallback:.*/i, "")
+    .replace(/\s+/g, " ")
+    .trim() || "The route is not available right now.";
+}
+
+function nextUserAction({ action, fromToken, toToken }) {
+  if (action === "swap") {
+    return `Try a more liquid pair, like USDC to EURC, or try again later.`;
+  }
+  return `Try a slightly larger amount, check your balance, or try again later.`;
+}
+
+function humanNextAction(nextAction) {
+  const value = String(nextAction || "");
+  if (value === "choose_supported_route") return "Try a different token pair or route.";
+  if (value === "adjust_trade_or_fund_wallet") return "Add funds or lower the amount.";
+  if (value === "reconcile_defi_action" || value === "monitor_receipt") return "Wait for the final receipt.";
+  if (value === "none") return "";
+  return value.replaceAll("_", " ");
+}
+
+function humanRail(rail) {
+  const value = String(rail || "");
+  if (value === "arc-testnet") return "Arc";
+  if (value === "base-sepolia") return "Base";
+  return value || "this rail";
+}
+
 
 function defiReceiptTitle(type, status) {
   const normalizedStatus = String(status || "").toLowerCase();
@@ -786,6 +909,8 @@ function formatResult(data) {
   const intent = plan?.intent || {};
   const tool = plan?.plan?.tool || "unknown";
   const execution = data.execution || null;
+  const simple = renderSimplePrimaryResult(data, { result, intent, tool, execution });
+  if (simple) return simple;
   let summary = "";
 
   if (execution && execution.ok === false) {
@@ -919,10 +1044,51 @@ function formatResult(data) {
     summary += `<div style="margin-top:6px;font-size:11px;color:var(--ink-muted)">Timing: ${Number(data.timing.totalMs || 0)}ms total · planning ${Number(data.timing.planningMs || 0)}ms · execution ${Number(data.timing.executionMs || 0)}ms</div>`;
   }
 
-  const narrative = renderAgentNarrative(data.narrative);
-  const decision = renderAgentDecision(data.decision);
-  const parts = [narrative, decision, summary ? `<div style="margin-top:10px">${summary}</div>` : ""].filter(Boolean);
-  return parts.join(`<div style="height:10px"></div>`);
+  return summary;
+}
+
+function renderSimplePrimaryResult(data, { result, intent, tool, execution }) {
+  if (tool === "quote_defi_route" || result.action?.type === "swap" || result.action?.type === "bridge") {
+    const action = result.action || {};
+    const request = action.request || intent || {};
+    const type = action.type || (intent.action === "quote_bridge" ? "bridge" : "swap");
+    const status = action.status || result.status || execution?.status || "pending";
+    return renderSimpleTradeResponse({
+      type,
+      status,
+      amount: request.amountUsd || request.amount || intent.amount || "n/a",
+      fromToken: request.fromToken || intent.fromToken || intent.asset || "USDC",
+      toToken: request.toToken || intent.toToken || (type === "bridge" ? request.fromToken || "USDC" : "n/a"),
+      fromRail: request.fromRail || intent.fromRail || intent.settlementRail || "arc-testnet",
+      toRail: request.toRail || intent.toRail || request.fromRail || "arc-testnet",
+      reason: action.reason || result.reason || execution?.reason || data.reason || data.error || "",
+      txHash: action.txHash || action.execution?.txHash || execution?.txHash || data.txHash,
+      explorerUrl: action.explorerUrl || action.execution?.explorerUrl || execution?.explorerUrl || data.explorerUrl,
+      receiptUrl: result.receipt?.publicUrl || action.publicUrl || execution?.receiptUrl,
+      nextAction: result.nextAction || action.nextAction || execution?.nextAction || data.nextAction || ""
+    });
+  }
+
+  if (execution && execution.ok === false) {
+    return `${esc(userFriendlyExecutionTitle(execution))}${renderSimpleReceiptRows({
+      txHash: execution.txHash || data.txHash,
+      explorerUrl: execution.explorerUrl || data.explorerUrl,
+      receiptUrl: execution.receiptUrl,
+      nextAction: friendlyReason(execution.reason || data.reason || data.error)
+    })}`;
+  }
+
+  return "";
+}
+
+function userFriendlyExecutionTitle(execution = {}) {
+  if (execution.tool === "close_arc_perp_user_position") {
+    return execution.ok === false
+      ? "I could not close that perp position. Nothing changed."
+      : "I sent the close request.";
+  }
+  if (execution.ok === false) return "I could not complete that action.";
+  return "Done.";
 }
 
 function formatApprovalResult(data) {
