@@ -2020,6 +2020,12 @@ const tests = [
       assert.equal(redactSensitive({
         txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       }).txHash, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+      assert.equal(redactSensitive({
+        explorerUrl: "https://testnet.arcscan.app/tx/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }).explorerUrl, "https://testnet.arcscan.app/tx/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+      assert.equal(redactSensitive({
+        text: "private-ish 0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }).text.includes("0x<redacted_private_key>"), true);
     }
   ],
   [
@@ -2119,12 +2125,14 @@ const tests = [
 
       const safe = assertPublicPayloadSafe({
         text: "KIT_KEY:abc:def bunos_mcp_abc 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        explorerUrl: "https://testnet.arcscan.app/tx/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       });
       assert.equal(safe.text.includes("KIT_KEY:<redacted>"), true);
       assert.equal(safe.text.includes("bunos_mcp_<redacted>"), true);
       assert.equal(safe.text.includes("0x<redacted_private_key>"), true);
       assert.equal(safe.txHash, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+      assert.equal(safe.explorerUrl, "https://testnet.arcscan.app/tx/0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 
       assert.throws(() => assertNoBackendSignerSpend({
         execution: {

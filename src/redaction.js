@@ -1,5 +1,6 @@
 const SECRET_KEY_PATTERN = /(secret|privatekey|private_key|apikey|api_key|authorization|accesstoken|access_token|refreshtoken|refresh_token|tokenencryptionkey|entitysecret|entity_secret|secrethash|secret_hash)/i;
 const PUBLIC_HASH_KEY_PATTERN = /^(txHash|transactionHash|blockHash)$/i;
+const PUBLIC_EXPLORER_KEY_PATTERN = /^(explorerUrl|receiptUrl|publicUrl)$/i;
 
 export function redactSensitive(value, seen = new WeakSet()) {
   if (value === null || value === undefined) return value;
@@ -16,6 +17,8 @@ export function redactSensitive(value, seen = new WeakSet()) {
   const output = {};
   for (const [key, item] of Object.entries(value)) {
     output[key] = PUBLIC_HASH_KEY_PATTERN.test(key) && isHexHash(item)
+      ? item
+      : PUBLIC_EXPLORER_KEY_PATTERN.test(key) && isExplorerUrlWithHash(item)
       ? item
       : SECRET_KEY_PATTERN.test(key)
       ? redactSecretValue(item)
@@ -35,9 +38,14 @@ function redactString(value) {
   return String(value)
     .replace(/KIT_KEY:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+/g, "KIT_KEY:<redacted>")
     .replace(/bunos_mcp_[A-Za-z0-9_-]+/g, "bunos_mcp_<redacted>")
-    .replace(/0x[a-fA-F0-9]{64}/g, "0x<redacted_private_key>");
+    .replace(/(?<!\/(?:tx|transaction|block)\/)0x[a-fA-F0-9]{64}/g, "0x<redacted_private_key>");
 }
 
 function isHexHash(value) {
   return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+function isExplorerUrlWithHash(value) {
+  if (typeof value !== "string") return false;
+  return /\/(?:tx|transaction|block)\/0x[a-fA-F0-9]{64}(?:[/?#]|$)/.test(value);
 }

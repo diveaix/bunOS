@@ -365,11 +365,16 @@ function findSecretLeaks(payload) {
 function hasPrivateKeyLikeHex(value, path = "") {
   if (typeof value === "string") {
     if (!/^0x[a-fA-F0-9]{64}$/.test(value)) return false;
-    return !/\.(txHash|transactionHash|blockHash)$/i.test(path);
+    return !isPublicHashPath(path);
   }
   if (!value || typeof value !== "object") return false;
   if (Array.isArray(value)) {
     return value.some((item, index) => hasPrivateKeyLikeHex(item, `${path}[${index}]`));
   }
   return Object.entries(value).some(([key, item]) => hasPrivateKeyLikeHex(item, `${path}.${key}`));
+}
+
+function isPublicHashPath(path) {
+  return /\.(txHash|transactionHash|blockHash)$/i.test(path)
+    || /\.(explorerUrl|receiptUrl|publicUrl)$/i.test(path);
 }
