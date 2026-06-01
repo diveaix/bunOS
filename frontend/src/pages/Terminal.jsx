@@ -911,6 +911,8 @@ function formatResult(data) {
   const execution = data.execution || null;
   const simple = renderSimplePrimaryResult(data, { result, intent, tool, execution });
   if (simple) return simple;
+  const readable = data.narrative?.summary || data.execution?.reason || data.reason || data.clarification;
+  if (readable) return esc(friendlyReason(readable));
   let summary = "";
 
   if (execution && execution.ok === false) {
@@ -1048,10 +1050,18 @@ function formatResult(data) {
 }
 
 function renderSimplePrimaryResult(data, { result, intent, tool, execution }) {
-  if (tool === "quote_defi_route" || result.action?.type === "swap" || result.action?.type === "bridge") {
+  const looksLikeTrade = tool === "quote_defi_route"
+    || result.action?.type === "swap"
+    || result.action?.type === "bridge"
+    || intent.action === "quote_bridge"
+    || intent.action === "quote_swap"
+    || data.narrative?.context?.action === "quote_bridge"
+    || data.narrative?.context?.action === "quote_swap";
+
+  if (looksLikeTrade) {
     const action = result.action || {};
     const request = action.request || intent || {};
-    const type = action.type || (intent.action === "quote_bridge" ? "bridge" : "swap");
+    const type = action.type || (intent.action === "quote_bridge" || data.narrative?.context?.action === "quote_bridge" ? "bridge" : "swap");
     const status = action.status || result.status || execution?.status || "pending";
     return renderSimpleTradeResponse({
       type,
