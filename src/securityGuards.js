@@ -238,8 +238,7 @@ export function assertNoBackendSignerSpend(result, context = {}) {
 
 export function assertPublicPayloadSafe(payload, context = {}) {
   const redacted = redactSensitive(payload);
-  const serialized = JSON.stringify(redacted);
-  const leaks = findSecretLeaks(serialized);
+  const leaks = findSecretLeaks(redacted);
   if (leaks.length) {
     recordSecurityEvent("public_payload_secret_leak_blocked", {
       route: context.route || null,
@@ -353,11 +352,24 @@ function scan(value, visitor, path = "$", seen = new WeakSet()) {
   }
 }
 
-function findSecretLeaks(serialized) {
+function findSecretLeaks(payload) {
+  const serialized = JSON.stringify(payload);
   const leaks = [];
   if (/bunos_mcp_[A-Za-z0-9_-]+/.test(serialized)) leaks.push("mcp_api_key");
   if (/KIT_KEY:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+/.test(serialized)) leaks.push("appkit_key");
-  if (/0x[a-fA-F0-9]{64}/.test(serialized)) leaks.push("private_key_like_hex");
+  if (hasPrivateKeyLikeHex(payload)) leaks.push("private_key_like_hex");
   if (/Bearer\s+[A-Za-z0-9._~+/-]+=*/i.test(serialized)) leaks.push("bearer_token");
   return leaks;
+}
+
+function hasPrivateKeyLikeHex(value, path = "") {
+  if (typeof value === "string") {
+    if (!/^0x[a-fA-F0-9]{64}$/.test(value)) return false;
+    return !/\.(txHash|transactionHash|blockHash)$/i.test(path);
+  }
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) {
+    return value.some((item, index) => hasPrivateKeyLikeHex(item, `${path}[${index}]`));
+  }
+  return Object.entries(value).some(([key, item]) => hasPrivateKeyLikeHex(item, `${path}.${key}`));
 }

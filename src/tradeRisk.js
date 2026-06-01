@@ -26,8 +26,9 @@ export function buildTradeSimulation({ user, wallet, action, quote = null, provi
   const fromRail = action?.fromRail || action?.settlementRail || "arc-testnet";
   const toRail = action?.toRail || fromRail;
   const source = sourceTokenBalance({ wallet, rail: fromRail, token: fromToken });
-  const feeUsd = estimateFeeUsd({ action, quote });
-  const requiredSourceAmount = requiredSource({ action, amount, fromToken, feeUsd });
+  const fees = estimateRouteFees({ action, quote, fromToken });
+  const feeUsd = fees.estimatedFeeUsd;
+  const requiredSourceAmount = requiredSource({ action, amount, fromToken, sourceTokenFee: fees.sourceTokenFeeAmount });
   const output = estimateOutput({ action, quote, toToken });
   const postTradeSourceBalance = source.known
     ? round(Math.max(0, Number(source.amount || 0) - requiredSourceAmount))
@@ -88,6 +89,8 @@ export function buildTradeSimulation({ user, wallet, action, quote = null, provi
     },
     requiredSourceAmount: round(requiredSourceAmount),
     estimatedFeeUsd: round(feeUsd),
+    sourceTokenFeeAmount: round(fees.sourceTokenFeeAmount),
+    feeBreakdown: fees.breakdown,
     feeRatio,
     output,
     slippage,
@@ -132,14 +135,32 @@ function sourceTokenBalance({ wallet, rail, token }) {
   return { known: false, amount: 0, source: "unknown" };
 }
 
-function requiredSource({ action, amount, fromToken, feeUsd }) {
+function requiredSource({ action, amount, fromToken, sourceTokenFee }) {
   if (action?.type === "bridge" && STABLE_TOKENS.has(tokenKey(fromToken))) {
-    return amount + feeUsd;
+    return amount + sourceTokenFee;
   }
   return amount;
 }
 
-function estimateFeeUsd({ action, quote }) {
+function estimateRouteFees({ action, quote, fromToken }) {
+  let sourceTokenFeeAmount = sourceTokenFeesFromQuote({ quote, fromToken });
+  const estimatedFeeUsd = estimateFeeUsd({ action, quote, sourceTokenFeeAmount, fromToken });
+  if (action?.type === "bridge" && sourceTokenFeeAmount === 0 && STABLE_TOKENS.has(tokenKey(fromToken)) && estimatedFeeUsd > 0) {
+    sourceTokenFeeAmount = estimatedFeeUsd;
+  }
+  return {
+    estimatedFeeUsd,
+    sourceTokenFeeAmount,
+    breakdown: {
+      sourceTokenFeeAmount: round(sourceTokenFeeAmount),
+      sourceToken: normalizeToken(fromToken),
+      estimatedFeeUsd: round(estimatedFeeUsd),
+      note: "Raw gas units are excluded from source-token balance requirements."
+    }
+  };
+}
+
+function estimateFeeUsd({ action, quote, sourceTokenFeeAmount = 0, fromToken }) {
   const quotedFee = firstFiniteNumber([
     quote?.estimate?.gasCostUSD,
     quote?.estimate?.gasCostUsd,
@@ -154,6 +175,10 @@ function estimateFeeUsd({ action, quote }) {
   if (quote?.estimate) {
     const nested = findNestedUsdFee(quote.estimate);
     if (nested !== null) return action?.type === "bridge" ? Math.max(nested, 0.15) : nested;
+  }
+
+  if (STABLE_TOKENS.has(tokenKey(fromToken)) && sourceTokenFeeAmount > 0) {
+    return action?.type === "bridge" ? Math.max(sourceTokenFeeAmount, 0.15) : sourceTokenFeeAmount;
   }
 
   if (action?.type === "bridge") return 0.15;
@@ -211,8 +236,12 @@ function firstFiniteNumber(values) {
 function findNestedUsdFee(value) {
   if (!value || typeof value !== "object") return null;
   for (const [key, item] of Object.entries(value)) {
-    if (/fee|gas|cost/i.test(key)) {
-      const number = Number(item?.amountUSD ?? item?.amountUsd ?? item?.usd ?? item);
+    if (/amountUSD|amountUsd|feeUSD|feeUsd|gasCostUSD|gasCostUsd|usd$/i.test(key)) {
+      const number = Number(item);
+      if (Number.isFinite(number) && number >= 0) return number;
+    }
+    if (item && typeof item === "object" && /fee|cost/i.test(key)) {
+      const number = Number(item.amountUSD ?? item.amountUsd ?? item.usd);
       if (Number.isFinite(number) && number >= 0) return number;
     }
     if (item && typeof item === "object") {
@@ -221,6 +250,69 @@ function findNestedUsdFee(value) {
     }
   }
   return null;
+}
+
+function sourceTokenFeesFromQuote({ quote, fromToken }) {
+  const estimate = quote?.estimate || quote?.raw?.estimate || quote || {};
+  const fees = collectFeeObjects(estimate);
+  return fees.reduce((sum, fee) => {
+    const symbol = feeTokenSymbol(fee);
+    if (tokenKey(symbol) !== tokenKey(fromToken)) return sum;
+    const amount = feeAmount(fee);
+    return Number.isFinite(amount) && amount > 0 ? sum + amount : sum;
+  }, 0);
+}
+
+function collectFeeObjects(value, output = []) {
+  if (!value || typeof value !== "object") return output;
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectFeeObjects(item, output));
+    return output;
+  }
+
+  if (looksLikeTokenFee(value)) {
+    output.push(value);
+  }
+
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "gas" || key === "gasLimit" || key === "gasPrice") continue;
+    if (item && typeof item === "object") collectFeeObjects(item, output);
+  }
+  return output;
+}
+
+function looksLikeTokenFee(value) {
+  if (!value || typeof value !== "object") return false;
+  if (!feeTokenSymbol(value)) return false;
+  return firstFiniteNumber([
+    value.amount,
+    value.fee,
+    value.cost,
+    value.value
+  ]) !== null;
+}
+
+function feeTokenSymbol(value) {
+  const token = value.token || value.asset || value.currency || value.denomination;
+  if (typeof token === "string") return token;
+  return token?.symbol || token?.ticker || token?.name || value.tokenSymbol || value.symbol || null;
+}
+
+function feeAmount(value) {
+  const raw = firstFiniteNumber([
+    value.amount,
+    value.fee,
+    value.cost,
+    value.value
+  ]);
+  if (raw === null) return 0;
+
+  const decimals = Number(value.decimals ?? value.token?.decimals);
+  const rawText = String(value.amount ?? value.fee ?? value.cost ?? value.value ?? "");
+  if (Number.isInteger(decimals) && decimals > 0 && /^\d+$/.test(rawText) && raw >= 10 ** Math.min(decimals, 6)) {
+    return tokenUnitsToAmount(rawText, decimals);
+  }
+  return raw;
 }
 
 function normalizeAssetList(values) {

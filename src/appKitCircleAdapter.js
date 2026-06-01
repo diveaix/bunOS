@@ -460,7 +460,7 @@ function normalizeAppKitResultStatus(state = "", context = null) {
   const normalized = String(state).toLowerCase();
   if (["success", "settled", "confirmed", "complete", "completed"].includes(normalized)) return "settled";
   if (["failed", "failure", "error", "reverted"].includes(normalized)) return "failed";
-  if (!normalized && (context?.txHash || context?.transactionHash || context?.hash)) return "settled";
+  if (!normalized && (context?.txHash || context?.transactionHash || context?.hash)) return "submitted";
   return "submitted";
 }
 

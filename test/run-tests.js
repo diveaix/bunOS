@@ -61,6 +61,7 @@ import {
 import { getMarketIntelligence } from "../src/marketIntelligence.js";
 import { refreshMarketFeedSnapshot } from "../src/marketFeeds.js";
 import { getDefiExecutionReadiness } from "../src/defiExecution.js";
+import { buildTradeSimulation } from "../src/tradeRisk.js";
 import {
   getArcPerpsReadiness,
   getArcPerpsStatus,
@@ -1001,6 +1002,43 @@ const tests = [
       assert.equal(smallBridge.simulation.recommendation, "route_is_possible_but_uneconomical");
       assert.match(smallBridge.simulation.warnings.join(" "), /Small bridges|fees/i);
       assert.equal(smallBridge.action.simulation.estimatedFeeUsd, 0.15);
+
+      const appKitBridgeSimulation = buildTradeSimulation({
+        user: users.get("@sara"),
+        wallet: getWalletProfile("@sara"),
+        action: {
+          type: "bridge",
+          amount: 1,
+          amountUsd: 1,
+          fromToken: "USDC",
+          toToken: "USDC",
+          fromRail: "arc-testnet",
+          toRail: "base-sepolia"
+        },
+        quote: {
+          estimate: {
+            gasFees: [
+              {
+                gas: "56500",
+                gasPrice: "20002783080",
+                fee: "0.00113015724402",
+                token: { symbol: "NATIVE", decimals: 18 }
+              }
+            ],
+            fees: [
+              {
+                type: "forwarder",
+                amount: "0.204683",
+                token: { symbol: "USDC", decimals: 6 }
+              }
+            ]
+          }
+        }
+      });
+      assert.equal(appKitBridgeSimulation.ok, true);
+      assert.equal(appKitBridgeSimulation.sourceTokenFeeAmount, 0.204683);
+      assert.equal(appKitBridgeSimulation.requiredSourceAmount, 1.204683);
+      assert.equal(appKitBridgeSimulation.estimatedFeeUsd, 0.204683);
 
       users.set("@thin", {
         handle: "@thin",
@@ -1979,6 +2017,9 @@ const tests = [
       assert.equal(redacted.nested.kitKey, "KIT_KEY:<redacted>");
       assert.match(redacted.text, /bunos_mcp_<redacted>/);
       assert.match(redacted.text, /0x<redacted_private_key>/);
+      assert.equal(redactSensitive({
+        txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }).txHash, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     }
   ],
   [
@@ -2077,11 +2118,13 @@ const tests = [
       }), /sensitive material/);
 
       const safe = assertPublicPayloadSafe({
-        text: "KIT_KEY:abc:def bunos_mcp_abc 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        text: "KIT_KEY:abc:def bunos_mcp_abc 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        txHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       });
       assert.equal(safe.text.includes("KIT_KEY:<redacted>"), true);
       assert.equal(safe.text.includes("bunos_mcp_<redacted>"), true);
       assert.equal(safe.text.includes("0x<redacted_private_key>"), true);
+      assert.equal(safe.txHash, "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 
       assert.throws(() => assertNoBackendSignerSpend({
         execution: {
