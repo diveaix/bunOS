@@ -108,6 +108,8 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
                 "{\"action\":\"quote_swap\",\"amount\":1,\"fromToken\":\"USDC\",\"toToken\":\"EURC\",\"settlementRail\":\"arc-testnet\"}",
                 "{\"action\":\"quote_swap\",\"amount\":20,\"fromToken\":\"EURC\",\"toToken\":\"USDC\",\"settlementRail\":\"arc-testnet\"}",
                 "{\"action\":\"quote_swap\",\"amount\":0.001,\"fromToken\":\"USDC\",\"toToken\":\"cirBTC\",\"settlementRail\":\"arc-testnet\"}",
+                "Messy user phrases still map to tools: 'turn 1 USDC into EURC' => quote_swap, 'get me EURC using 1 USDC' => quote_swap, 'move 1 USDC over to Base' => quote_bridge.",
+                "If the user says buy/get/turn/change one token using another token, treat it as a swap unless they mention a different destination rail.",
                 "{\"action\":\"propose_perp_trade\",\"symbol\":\"BTC\",\"side\":\"long\",\"collateralUsd\":1,\"leverage\":2}",
                 "{\"action\":\"close_arc_perp_user_position\",\"positionId\":12}",
                 "{\"action\":\"get_balance\"}",

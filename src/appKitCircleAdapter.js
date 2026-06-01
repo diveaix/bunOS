@@ -202,8 +202,8 @@ async function buildSwapParams(input) {
         chain: rail.appKitChain,
         address: wallet.address
       },
-      tokenIn: normalizeSwapToken(input.tokenIn || input.fromToken || "USDC"),
-      tokenOut: normalizeSwapToken(input.tokenOut || input.toToken || "EURC"),
+      tokenIn: appKitSwapTokenRef(input.tokenIn || input.fromToken || "USDC", rail),
+      tokenOut: appKitSwapTokenRef(input.tokenOut || input.toToken || "EURC", rail),
       amountIn: String(input.amountIn || input.amount || input.amountUsd),
       config: {
         ...(slippageBps !== undefined ? { slippageBps } : {}),
@@ -454,6 +454,15 @@ function normalizeSwapToken(token) {
   const value = raw.toUpperCase();
   if (value === "CIRBTC") return "cirBTC";
   return value === "ETH" ? "WETH" : value;
+}
+
+function appKitSwapTokenRef(token, rail) {
+  const normalized = normalizeSwapToken(token);
+  if (/^0x[a-fA-F0-9]{40}$/.test(normalized)) return normalized;
+  const key = String(normalized || "").toUpperCase();
+  if (key === "EURC" && rail.eurcAddress) return rail.eurcAddress;
+  if (key === "CIRBTC" && rail.cirbtcAddress) return rail.cirbtcAddress;
+  return normalized;
 }
 
 function normalizeAppKitResultStatus(state = "", context = null) {

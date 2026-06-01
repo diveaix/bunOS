@@ -1826,6 +1826,31 @@ const tests = [
       assert.equal(naturalSwap.plan.arguments.fromToken, "USDC");
       assert.equal(naturalSwap.plan.arguments.toToken, "EURC");
 
+      const twistedSwap = planAgentAction({
+        handle: "@sara",
+        text: "can you turn my 1 USDC into some EURC on arc?"
+      });
+      assert.equal(twistedSwap.plan.tool, "quote_defi_route");
+      assert.equal(twistedSwap.intent.fromToken, "USDC");
+      assert.equal(twistedSwap.intent.toToken, "EURC");
+
+      const targetFirstSwap = planAgentAction({
+        handle: "@sara",
+        text: "get me EURC using 1 USDC"
+      });
+      assert.equal(targetFirstSwap.plan.tool, "quote_defi_route");
+      assert.equal(targetFirstSwap.intent.fromToken, "USDC");
+      assert.equal(targetFirstSwap.intent.toToken, "EURC");
+
+      const softBridge = planAgentAction({
+        handle: "@sara",
+        text: "move 1 USDC over to base"
+      });
+      assert.equal(softBridge.plan.tool, "quote_defi_route");
+      assert.equal(softBridge.intent.action, "quote_bridge");
+      assert.equal(softBridge.intent.fromRail, "arc-testnet");
+      assert.equal(softBridge.intent.toRail, "base-sepolia");
+
       const providerResolvedSwap = planAgentAction({
         handle: "@sara",
         text: "swap $1 WETH to USDC on arc"

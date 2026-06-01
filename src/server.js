@@ -737,10 +737,11 @@ export const server = http.createServer(async (req, res) => {
           }, 409);
         }
       }
-      return jsonPersisted(res, await runAgentAction({
+      const result = await runAgentAction({
         ...body,
         idempotencyKey: key
-      }));
+      });
+      return jsonPersisted(res, terminalAgentResponse(body, result));
     }
 
     if (req.method === "GET" && url.pathname === "/mcp") {
@@ -1679,6 +1680,134 @@ function escapeHtml(value) {
 
 function jsonReplacer(_key, value) {
   return typeof value === "bigint" ? value.toString() : value;
+}
+
+function terminalAgentResponse(requestBody = {}, payload = {}) {
+  if (requestBody.debug === true || requestBody.source !== "terminal") {
+    return payload;
+  }
+
+  const result = payload.result ? sanitizeAgentResult(payload.result) : undefined;
+  const execution = payload.execution ? {
+    ok: payload.execution.ok,
+    tool: payload.execution.tool,
+    action: payload.execution.action,
+    status: payload.execution.status,
+    reason: cleanTerminalReason(payload.execution.reason || payload.reason),
+    txHash: payload.execution.txHash || payload.txHash || null,
+    explorerUrl: payload.execution.explorerUrl || payload.explorerUrl || null,
+    receiptUrl: payload.execution.receiptUrl || payload.receiptUrl || null,
+    nextAction: payload.execution.nextAction || payload.nextAction || null,
+    ids: payload.execution.ids || undefined
+  } : undefined;
+
+  return {
+    ok: payload.ok,
+    status: payload.status,
+    reason: cleanTerminalReason(payload.reason),
+    planned: payload.planned ? {
+      ok: payload.planned.ok,
+      source: payload.planned.source,
+      handle: payload.planned.handle,
+      parser: payload.planned.parser,
+      intent: payload.planned.intent,
+      plan: payload.planned.plan ? {
+        tool: payload.planned.plan.tool,
+        arguments: payload.planned.plan.arguments,
+        canExecuteNow: payload.planned.plan.canExecuteNow,
+        requiresConfirmation: payload.planned.plan.requiresConfirmation
+      } : undefined
+    } : undefined,
+    result,
+    execution,
+    executionMonitor: payload.executionMonitor ? {
+      kind: payload.executionMonitor.kind,
+      id: payload.executionMonitor.id,
+      lifecycle: payload.executionMonitor.lifecycle,
+      status: payload.executionMonitor.status,
+      txHash: payload.executionMonitor.txHash || null,
+      explorerUrl: payload.executionMonitor.explorerUrl || null,
+      receiptUrl: payload.executionMonitor.receiptUrl || null,
+      terminal: payload.executionMonitor.terminal
+    } : undefined,
+    signer: payload.signer,
+    txHash: payload.txHash || execution?.txHash || null,
+    explorerUrl: payload.explorerUrl || execution?.explorerUrl || null,
+    receiptUrl: payload.receiptUrl || execution?.receiptUrl || null,
+    summary: cleanTerminalReason(payload.summary || payload.reason),
+    nextAction: payload.nextAction,
+    timing: payload.timing
+  };
+}
+
+function sanitizeAgentResult(result = {}) {
+  const sanitized = {
+    ok: result.ok,
+    status: result.status,
+    reason: cleanTerminalReason(result.reason || result.error),
+    error: result.error ? cleanTerminalReason(result.error) : undefined,
+    nextAction: result.nextAction,
+    fast: result.fast
+  };
+  if (result.action) {
+    sanitized.action = sanitizeDefiAction(result.action);
+  }
+  if (result.payment) {
+    sanitized.payment = result.payment;
+  }
+  if (result.proposal) {
+    sanitized.proposal = result.proposal;
+  }
+  if (result.receipt) {
+    sanitized.receipt = result.receipt;
+  }
+  if (result.approval) {
+    sanitized.approval = result.approval;
+  }
+  return dropUndefined(sanitized);
+}
+
+function sanitizeDefiAction(action = {}) {
+  return dropUndefined({
+    id: action.id,
+    type: action.type,
+    status: action.status,
+    request: action.request,
+    reason: cleanTerminalReason(action.reason || action.failureReason || action.lastExecutionError),
+    txHash: action.txHash || action.execution?.txHash || null,
+    explorerUrl: action.explorerUrl || action.execution?.explorerUrl || null,
+    publicUrl: action.publicUrl || null,
+    approvalId: action.approvalId || null,
+    executionJobId: action.executionJobId || null,
+    execution: action.execution ? {
+      ok: action.execution.ok,
+      status: action.execution.status,
+      reason: cleanTerminalReason(action.execution.reason || action.execution.error),
+      txHash: action.execution.txHash || null,
+      explorerUrl: action.execution.explorerUrl || null,
+      receiptUrl: action.execution.receiptUrl || null,
+      submissions: action.execution.submissions || undefined
+    } : undefined,
+    nextAction: action.nextAction
+  });
+}
+
+function cleanTerminalReason(reason) {
+  const value = String(reason || "").trim();
+  if (!value) return value;
+  if (/no live .*route|no available quotes|quote_unavailable|provider could not return|route or resource not found|server error|fallback/i.test(value)) {
+    return "I could not find a working route for that trade right now. The pair may not have enough liquidity yet, or the route provider does not support it right now.";
+  }
+  return value
+    .replace(/Provider details:.*/i, "")
+    .replace(/AppKit:.*/i, "")
+    .replace(/LI\.FI fallback:.*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function dropUndefined(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
 
 async function jsonPersisted(res, payload, status = 200, headers = {}) {

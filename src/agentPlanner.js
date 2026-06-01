@@ -161,6 +161,9 @@ const BRIDGE_PATTERN = /(?:bridge|move|send)\s+\$?(\d+(?:\.\d+)?)\s*(?:usdc)?\s+
 const SOURCE_SWAP_PATTERN = new RegExp(`(?:swap|convert)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s+(?:of\\s+)?(${TOKEN_PATTERN})\\s+(?:to|into|for)\\s+(${TOKEN_PATTERN})(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
 const SWAP_PATTERN = new RegExp(`(?:swap|convert)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s*(?:usdc)?\\s+(?:to|into|for)\\s+(${TOKEN_PATTERN})(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
 const BUY_PATTERN = new RegExp(`buy\\s+\\$?(\\d+(?:\\.\\d+)?)\\s*(?:of\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:with|using)\\s+usdc)?(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const NATURAL_SWAP_PATTERN = new RegExp(`(?:turn|change|trade|convert|swap)\\s+(?:my\\s+)?\\$?(\\d+(?:\\.\\d+)?)\\s+(?:of\\s+)?(${TOKEN_PATTERN})\\s+(?:to|into|for)\\s+(?:some\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:on|from|in|over)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const TARGET_SWAP_PATTERN = new RegExp(`(?:(?:buy|get|grab)(?:\\s+me)?|give\\s+me|i\\s+want|i\\s+need|need|want)\\s+(?:some\\s+)?(${TOKEN_PATTERN})\\s+(?:with|using|for)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s+(?:of\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:on|from|in|over)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const NATURAL_BRIDGE_PATTERN = new RegExp(`(?:bridge|move|transfer|send|put)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s*(?:of\\s+)?(${TOKEN_PATTERN})?\\s*(?:over\\s+)?(?:to|onto|on)\\s+(arc|base|arc-testnet|base-sepolia)(?:\\s+from\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
 const COPY_TRADE_PATTERN = /(?:copy\s*trade|copy|follow)\s+(@[a-zA-Z0-9_]{1,15})\s+(?:with|using|for)\s+\$?(\d+(?:\.\d+)?)/i;
 const AIRDROP_FIXED_PATTERN = /(?:airdrop|drop)\s+\$?(\d+(?:\.\d+)?)\s*(?:usdc)?\s+(?:each\s+)?(?:to\s+)?((?:@[a-zA-Z0-9_]{1,15}(?:[,\s]+|$)){1,})/i;
 const AIRDROP_SOCIAL_PATTERN = /(?:airdrop|drop)\s+\$?(\d+(?:\.\d+)?)\s*(?:usdc)?\s+(?:each\s+)?(?:to|for)\s+(?:the\s+)?first\s+(\d{1,5})\s+(?:comments?|replies?|commenters?|repliers?)(?:\s+(?:on|for)\s+(?:post|tweet)\s+([a-zA-Z0-9_:-]+))?/i;
@@ -847,6 +850,23 @@ function parseBridge(text, defaultSettlementRail) {
     };
   }
 
+  const naturalMatch = text.match(NATURAL_BRIDGE_PATTERN);
+  if (naturalMatch) {
+    const toRail = normalizeRail(naturalMatch[3]);
+    const fromRail = normalizeRail(naturalMatch[4]) || defaultSettlementRail;
+    const token = normalizeSwapToken(naturalMatch[2] || "USDC");
+    if (!token || !toRail || fromRail === toRail) return null;
+    return {
+      action: "quote_bridge",
+      amount: Number(naturalMatch[1]),
+      asset: token,
+      fromToken: token,
+      toToken: token,
+      fromRail,
+      toRail
+    };
+  }
+
   const match = text.match(BRIDGE_PATTERN);
   if (!match) return null;
   const fromRail = normalizeRail(match[2]) || defaultSettlementRail;
@@ -864,6 +884,28 @@ function parseBridge(text, defaultSettlementRail) {
 }
 
 function parseSwap(text, defaultSettlementRail) {
+  const naturalMatch = text.match(NATURAL_SWAP_PATTERN);
+  if (naturalMatch) {
+    return buildSwapIntent({
+      amount: naturalMatch[1],
+      fromToken: naturalMatch[2],
+      toToken: naturalMatch[3],
+      settlementRail: naturalMatch[4],
+      defaultSettlementRail
+    });
+  }
+
+  const targetMatch = text.match(TARGET_SWAP_PATTERN);
+  if (targetMatch) {
+    return buildSwapIntent({
+      amount: targetMatch[2],
+      fromToken: targetMatch[3],
+      toToken: targetMatch[1],
+      settlementRail: targetMatch[4],
+      defaultSettlementRail
+    });
+  }
+
   const sourceMatch = text.match(SOURCE_SWAP_PATTERN);
   if (sourceMatch) {
     return buildSwapIntent({
