@@ -1836,8 +1836,7 @@ function sanitizeDefiAction(action = {}) {
       reason: cleanTerminalReason(action.execution.reason || action.execution.error),
       txHash: action.execution.txHash || null,
       explorerUrl: action.execution.explorerUrl || null,
-      receiptUrl: action.execution.receiptUrl || null,
-      submissions: action.execution.submissions || undefined
+      receiptUrl: action.execution.receiptUrl || null
     } : undefined,
     nextAction: action.nextAction
   });
