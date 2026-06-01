@@ -1818,7 +1818,10 @@ function sanitizeDefiAction(action = {}) {
 }
 
 function cleanTerminalReason(reason) {
-  const value = String(reason || "").trim();
+  const value = String(reason || "")
+    .replace(/\bTx:\s*0x[a-fA-F0-9]{64}\.?/g, "")
+    .replace(/\bTransaction:\s*0x[a-fA-F0-9]{64}\.?/gi, "")
+    .trim();
   if (!value) return value;
   if (/no live .*route|no available quotes|quote_unavailable|provider could not return|route or resource not found|server error|fallback/i.test(value)) {
     return "I could not find a working route for that trade right now. The pair may not have enough liquidity yet, or the route provider does not support it right now.";
