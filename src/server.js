@@ -1799,6 +1799,7 @@ function cleanTerminalReason(reason) {
     return "I could not find a working route for that trade right now. The pair may not have enough liquidity yet, or the route provider does not support it right now.";
   }
   return value
+    .replace(/^I am not taking this/i, "I could not complete this")
     .replace(/Provider details:.*/i, "")
     .replace(/AppKit:.*/i, "")
     .replace(/LI\.FI fallback:.*/i, "")
