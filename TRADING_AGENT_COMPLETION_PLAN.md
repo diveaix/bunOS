@@ -612,26 +612,47 @@ Acceptance:
 - Every public feature either works with real testnet execution or clearly says why it cannot execute.
 - No mock/demo language appears in user-facing production flows.
 
-Status: Pending
+Status: Complete readiness pass
 
 Notes:
 
-- Do not deploy until explicitly requested.
+- Production backend health shows real mode is configured: Circle wallets ready, Gemini model enabled, Arc RPC uses the Canteen-tracked `ARC_TESTNET_RPC_URL`, and Canteen tracking is connected.
+- Frontend production at `bunos.xyz` is serving the current React/Vite bundle and rewrites `/api/*` to the Railway backend.
+- Created a fresh production test handle through `/api/wallets/create`; Circle returned per-rail Arc Testnet and Base Sepolia developer-controlled wallet ids/addresses.
+- Production live bridge quote for `1 USDC arc-testnet -> base-sepolia` returned a real Circle AppKit executable quote with gas/forwarder fees and no backend signer use. Execution correctly failed with `Insufficient USDC balance on Arc Testnet` on the empty smoke wallet.
+- Production live swap quote for `1 USDC -> EURC on arc-testnet` returned a real Circle AppKit executable quote with estimated output and fees. Execution correctly failed with `Insufficient token balance on Arc Testnet` on the empty smoke wallet.
+- Production smoke against an unfunded legacy `@sara` handle produced a truthful `quote_unavailable` because no Circle wallet was found for that handle on Arc. This is expected and useful error behavior.
+- Local temp-clone Canteen preflight confirmed the CLI is logged in, but local env in the clone does not include `ARC_TESTNET_RPC_URL`, so local backend health falls back to public Arc RPC. Railway production is correctly configured with the Canteen RPC.
+- X OAuth is configured in production. X bot reply posting is intentionally not ready until `tweet.write`, `X_REPLY_ENABLED=1`, and `X_BOT_ACCESS_TOKEN` are configured.
+- MCP stdio smoke passed locally with the full tool surface and backend signer disabled for user funds.
 
 Files changed:
 
-- TBD
+- `TRADING_AGENT_COMPLETION_PLAN.md`
 
 Verification:
 
-- TBD
+- `npm test` - 55/55 passed.
+- `npm run frontend:build` - passed.
+- `npm run arc:canteen:preflight` - local CLI logged in, but temp-clone env missing `ARC_TESTNET_RPC_URL`; production health verifies Canteen RPC is configured.
+- `npm run mcp:smoke` - passed locally; 74 tools exposed, removed tools absent, signer policy shows `backendSignerAllowed: false`.
+- `GET https://backend-production-efc9.up.railway.app/api/health` - passed; production Circle, Gemini, Canteen RPC, jobs, automations, and live DeFi adapters visible.
+- `GET https://bunos.xyz/api/health` - passed through Vercel rewrite.
+- `GET https://bunos.xyz/wallet` - served current bundle with backend origin.
+- `POST /api/wallets/create` on production - created a real Circle wallet profile for a fresh test handle.
+- `POST /api/defi/quote` bridge on production - live Circle AppKit quote returned; execution blocked honestly by insufficient USDC.
+- `POST /api/defi/quote` swap on production - live Circle AppKit quote returned; execution blocked honestly by insufficient token balance.
 
 Remaining gaps:
 
-- TBD
+- Funded-wallet smoke is still needed to produce an actual settled swap/bridge tx hash on production. Current smoke used a fresh zero-balance wallet and correctly stopped at insufficient funds.
+- X bot public reply posting is not enabled yet because production health reports missing `tweet.write`/bot access token setup.
+- ArcPerps user-wallet execution remains proposal/user-signing-adapter gated; backend signer execution is intentionally not exposed.
+- Admin observability is session-private but not role-based. Add role separation before broad multi-tenant launch.
+- Root dependency audit still reports vulnerabilities after install; review and upgrade dependencies deliberately rather than force-fixing during deploy.
 
 ## Current Recommended Next Phase
 
-Start with Phase 10: End-To-End Real Execution Readiness.
+Next recommended work: funded production smoke and role-gated production hardening.
 
-Reason: Phases 1-9 now give the agent natural communication, execution follow-through, portfolio context, market feeds, mandates, X-native receipts, security controls, backend observability, and a cockpit-style frontend. The next serious product gap is proving the whole thing against real testnet execution and production-like envs without fake success states.
+Reason: Phases 1-10 now give the agent natural communication, execution follow-through, portfolio context, market feeds, mandates, X-native receipts, security controls, backend observability, a cockpit-style frontend, and production readiness checks. The biggest remaining proof point is funding a production smoke wallet and recording a settled testnet swap/bridge receipt.
