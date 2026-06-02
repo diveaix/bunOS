@@ -163,6 +163,10 @@ function summaryText({ mode, status, details, why, tool, result, execution }) {
     return `I prepared the ${actionLabel}, but it needs your approval before anything moves.`;
   }
 
+  if (tool === "list_route_capabilities" || Array.isArray(result.routes)) {
+    return readOnlySummary({ tool, result, details });
+  }
+
   if (mode === "executed") {
     return `Executed the ${actionLabel}.${tx || " I have a completed receipt for this action."}`;
   }
@@ -186,6 +190,7 @@ function happenedText({ mode, status, details, why, tool, result, execution }) {
   if (tool === "quote_defi_route" && status === "execution_not_enabled") return "A quote/action was created, but execution stopped at the provider/user-wallet boundary.";
   if (tool === "close_arc_perp_user_position" && status === "user_wallet_signing_required") return "The close request was blocked before submission because user-wallet signing is not available.";
   if (tool === "close_arc_perp_user_position" && status === "position_not_found") return "No matching open position was found.";
+  if (tool === "list_route_capabilities") return "The agent checked the live route registry.";
   if (result.wallet) return "Wallet state was read and returned.";
   if (tool === "pause_automations") return `The agent paused ${Number(result.paused || 0)} active automation(s).`;
   if (tool === "pause_automation") return "The automation was paused.";
