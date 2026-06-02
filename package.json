@@ -6,10 +6,6 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node test/run-tests.js",
-    "frontend:dev": "cd frontend && npm run dev",
-    "frontend:build": "cd frontend && npm run build",
-    "frontend:install": "cd frontend && npm install",
-    "deploy:frontend:prepare": "node scripts/prepare-vercel-frontend.js",
     "compile:contracts": "node scripts/compile-contracts.js",
     "deploy:arc-perps": "node scripts/deploy-arc-perps.js",
     "mcp:stdio": "node scripts/mcp-stdio.js",
