@@ -255,7 +255,7 @@ export async function planAgentActionWithModel({
         source,
         handle: user.handle,
         text,
-        parser: "gemini_model_primary",
+        parser: "model_primary",
         intent: modelIntent,
         plan,
         signer: plan.signer,
@@ -414,19 +414,21 @@ export async function runAgentAction({
     decision,
     state: agentState
   });
-  const modelReply = await composeExecutionReplyWithModel({
-    text,
-    planned,
-    result,
-    execution,
-    decision,
-    narrative,
-    state: agentState
-  });
-  if (modelReply?.summary) {
-    narrative.summary = modelReply.summary;
-    narrative.nextAction = modelReply.nextAction || narrative.nextAction;
-    narrative.model = modelReply.model;
+  if (shouldUseModelNarrator({ planned, result, execution })) {
+    const modelReply = await composeExecutionReplyWithModel({
+      text,
+      planned,
+      result,
+      execution,
+      decision,
+      narrative,
+      state: agentState
+    });
+    if (modelReply?.summary) {
+      narrative.summary = modelReply.summary;
+      narrative.nextAction = modelReply.nextAction || narrative.nextAction;
+      narrative.model = modelReply.model;
+    }
   }
   const executionMonitor = executionMonitorFromAgentResult({ result, execution });
   const timing = {
@@ -1829,6 +1831,14 @@ function narrateAgentFailure({ planned, error }) {
     return `I tried to close the perp position, but it failed before submission: ${error.message}`;
   }
   return `I tried to run ${tool}, but it failed: ${error.message}`;
+}
+
+function shouldUseModelNarrator({ planned, result, execution }) {
+  const tool = planned?.plan?.tool;
+  if (!tool) return false;
+  if (["get_balance", "sync_circle_balances", "get_wallet_capabilities"].includes(tool)) return false;
+  if (result?.wallet) return false;
+  return execution?.status !== "clarification_required";
 }
 
 function assertAllowedTool(tool) {

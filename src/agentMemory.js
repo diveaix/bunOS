@@ -349,7 +349,7 @@ function decisionConfidence({ planned, result, execution, warnings }) {
   if (execution.ok === false || result.ok === false) return "low";
   if (execution.txHash) return "high";
   if (warnings.length) return "medium";
-  if (planned?.parser === "gemini_model") return "medium";
+  if (String(planned?.parser || "").includes("model")) return "medium";
   return "high";
 }
 

@@ -60,10 +60,11 @@ const ALLOWED_ACTIONS = new Set([
 ]);
 
 export function getAgentModelReadiness() {
+  const provider = normalizeProvider(config.ai.provider);
   return {
-    ok: Boolean(config.ai.enabled && config.ai.provider === "gemini" && config.ai.apiKey),
+    ok: Boolean(config.ai.enabled && ["gemini", "xai"].includes(provider) && config.ai.apiKey),
     enabled: config.ai.enabled,
-    provider: config.ai.provider,
+    provider,
     model: config.ai.model,
     hasApiKey: Boolean(config.ai.apiKey),
     mode: config.ai.apiKey ? "model" : "deterministic_fallback"
@@ -78,71 +79,14 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+  const system = intentPlannerPrompt();
   let response;
   try {
-    response = await fetch(`${config.ai.baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(config.ai.model)}:generateContent`, {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": config.ai.apiKey,
-        "content-type": "application/json"
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [
-            {
-              text: [
-                "You are the bunOS intent planner.",
-                "Return only JSON. Do not execute transactions.",
-                `Allowed actions: ${Array.from(ALLOWED_ACTIONS).join(", ")}.`,
-                "Supported rails: arc-testnet, base-sepolia. Use arc-testnet as default.",
-                "Payments and bounties are USDC only. Swaps and bridges can use fromToken/toToken symbols or EVM token addresses. If unclear, return clarify with a question.",
-                "Do not return create_wallet; the terminal does not create wallets.",
-                "Schema examples:",
-                "{\"action\":\"send_payment\",\"amount\":5,\"asset\":\"USDC\",\"recipientHandle\":\"@alice\"}",
-                "{\"action\":\"quote_bridge\",\"amount\":1,\"asset\":\"USDC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
-                "{\"action\":\"create_airdrop\",\"amount\":1,\"asset\":\"USDC\",\"recipients\":[\"@alice\",\"@bob\"],\"settlementRail\":\"arc-testnet\"}",
-                "{\"action\":\"create_airdrop\",\"amount\":1,\"asset\":\"USDC\",\"maxRecipients\":100,\"rule\":\"first_commenters\",\"settlementRail\":\"arc-testnet\"}",
-                "{\"action\":\"award_airdrop\",\"airdropId\":\"air_0001\",\"recipients\":[\"@alice\",\"@bob\"]}",
-                "{\"action\":\"quote_bridge\",\"amount\":5,\"asset\":\"EURC\",\"fromToken\":\"EURC\",\"toToken\":\"EURC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
-                "{\"action\":\"quote_swap\",\"amount\":1,\"fromToken\":\"USDC\",\"toToken\":\"EURC\",\"settlementRail\":\"arc-testnet\"}",
-                "{\"action\":\"quote_swap\",\"amount\":20,\"fromToken\":\"EURC\",\"toToken\":\"USDC\",\"settlementRail\":\"arc-testnet\"}",
-                "{\"action\":\"quote_swap\",\"amount\":0.001,\"fromToken\":\"USDC\",\"toToken\":\"cirBTC\",\"settlementRail\":\"arc-testnet\"}",
-                "Messy user phrases still map to tools: 'turn 1 USDC into EURC' => quote_swap, 'get me EURC using 1 USDC' => quote_swap, 'move 1 USDC over to Base' => quote_bridge.",
-                "If the user says buy/get/turn/change one token using another token, treat it as a swap unless they mention a different destination rail.",
-                "{\"action\":\"propose_perp_trade\",\"symbol\":\"BTC\",\"side\":\"long\",\"collateralUsd\":1,\"leverage\":2}",
-                "{\"action\":\"close_arc_perp_user_position\",\"positionId\":12}",
-                "{\"action\":\"get_balance\"}",
-                "{\"action\":\"analyze_portfolio\"}",
-                "{\"action\":\"get_market_feed_snapshot\",\"settlementRail\":\"arc-testnet\"}",
-                "{\"action\":\"create_mandate\",\"text\":\"never bridge if fee is over 3%\"}",
-                "{\"action\":\"list_mandates\"}",
-                "{\"action\":\"create_automation\",\"text\":\"sync balances every 10 minutes\",\"intervalMinutes\":10}",
-                "{\"action\":\"create_automation\",\"text\":\"swap 1 USDC to EURC\",\"intervalSeconds\":10,\"maxRuns\":4}",
-                "{\"action\":\"list_automations\"}",
-                "{\"action\":\"pause_automation\",\"automationId\":\"auto_0001\"}",
-                "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
-                "{\"action\":\"get_defi_action_receipt\",\"actionId\":\"defi_0001\"}",
-                "{\"action\":\"clarify\",\"question\":\"Which token do you want to buy?\"}"
-              ].join("\n")
-            }
-          ]
-        },
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: JSON.stringify({ text, defaultSettlementRail })
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseJsonSchema: intentSchema()
-        }
-      })
+    response = await callModelJson({
+      system,
+      user: JSON.stringify({ text, defaultSettlementRail }),
+      schema: intentSchema(),
+      signal: controller.signal
     });
   } catch (error) {
     if (error.name === "AbortError") {
@@ -154,10 +98,8 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
   }
 
   const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error?.message || "Agent model request failed");
-  }
-  return sanitizeModelIntent(JSON.parse(extractGeminiText(data)), defaultSettlementRail);
+  if (!response.ok) throw new Error(modelErrorMessage(data));
+  return sanitizeModelIntent(JSON.parse(extractModelText(data)), defaultSettlementRail);
 }
 
 export async function composeExecutionReplyWithModel({
@@ -179,52 +121,27 @@ export async function composeExecutionReplyWithModel({
 
   let response;
   try {
-    response = await fetch(`${config.ai.baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(config.ai.model)}:generateContent`, {
-      method: "POST",
-      headers: {
-        "x-goog-api-key": config.ai.apiKey,
-        "content-type": "application/json"
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [
-            {
-              text: [
-                "You are bunOS, an Arc trading agent talking to a user after backend execution.",
-                "Write one short, natural response a 13-year-old could understand.",
-                "Do not mention backend internals, parsers, provider stack traces, fallback paths, policy engine, or private keys.",
-                "Say clearly whether money moved. If there is no transaction hash, do not imply on-chain completion.",
-                "If blocked, say the simple reason and the next useful action.",
-                "Return only JSON with fields: summary, nextAction."
-              ].join("\n")
-            }
-          ]
+    response = await callModelJson({
+      system: [
+        "You are bunOS, an Arc trading agent talking to a user after backend execution.",
+        "Write one short, natural response a 13-year-old could understand.",
+        "Do not mention backend internals, parsers, provider stack traces, fallback paths, policy engine, or private keys.",
+        "Say clearly whether money moved. If there is no transaction hash, do not imply on-chain completion.",
+        "If blocked, say the simple reason and the next useful action.",
+        "Return only JSON with fields: summary, nextAction."
+      ].join("\n"),
+      user: JSON.stringify(payload),
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          summary: { type: "string" },
+          nextAction: { type: ["string", "null"] }
         },
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: JSON.stringify(payload)
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseJsonSchema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              summary: { type: "string" },
-              nextAction: { type: ["string", "null"] }
-            },
-            required: ["summary", "nextAction"],
-            propertyOrdering: ["summary", "nextAction"]
-          }
-        }
-      })
+        required: ["summary", "nextAction"],
+        propertyOrdering: ["summary", "nextAction"]
+      },
+      signal: controller.signal
     });
   } catch {
     return null;
@@ -235,7 +152,7 @@ export async function composeExecutionReplyWithModel({
   const data = await response.json().catch(() => null);
   if (!response.ok || !data) return null;
   try {
-    const parsed = JSON.parse(extractGeminiText(data));
+    const parsed = JSON.parse(extractModelText(data));
     const summary = cleanModelReply(parsed.summary);
     if (!summary) return null;
     return {
@@ -376,13 +293,141 @@ function intentSchema() {
   };
 }
 
+async function callModelJson({ system, user, schema, signal }) {
+  const provider = normalizeProvider(config.ai.provider);
+  if (provider === "xai") return callXaiResponses({ system, user, schema, signal });
+  return callGeminiGenerateContent({ system, user, schema, signal });
+}
+
+function callGeminiGenerateContent({ system, user, schema, signal }) {
+  return fetch(`${config.ai.baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(config.ai.model)}:generateContent`, {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": config.ai.apiKey,
+      "content-type": "application/json"
+    },
+    signal,
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: system }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: user }]
+        }
+      ],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseJsonSchema: schema
+      }
+    })
+  });
+}
+
+function callXaiResponses({ system, user, schema, signal }) {
+  return fetch(`${config.ai.baseUrl.replace(/\/+$/, "")}/responses`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.ai.apiKey}`,
+      "content-type": "application/json"
+    },
+    signal,
+    body: JSON.stringify({
+      model: config.ai.model,
+      input: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: [
+            "Return valid JSON only. Do not wrap it in markdown.",
+            user,
+            `JSON schema: ${JSON.stringify(schema)}`
+          ].join("\n")
+        }
+      ],
+      temperature: 0
+    })
+  });
+}
+
+function extractModelText(data) {
+  const provider = normalizeProvider(config.ai.provider);
+  const text = provider === "xai" ? extractXaiText(data) : extractGeminiText(data);
+  if (!text) throw new Error("Agent model returned no intent JSON");
+  return stripJsonFence(text);
+}
+
 function extractGeminiText(data) {
-  const text = data.candidates?.[0]?.content?.parts
+  return data.candidates?.[0]?.content?.parts
     ?.map((part) => part.text || "")
     ?.join("")
     ?.trim();
-  if (!text) throw new Error("Agent model returned no intent JSON");
-  return text;
+}
+
+function extractXaiText(data) {
+  if (typeof data.output_text === "string") return data.output_text.trim();
+  if (typeof data.text === "string") return data.text.trim();
+  const output = Array.isArray(data.output) ? data.output : [];
+  return output
+    .flatMap((item) => Array.isArray(item.content) ? item.content : [])
+    .map((content) => content.text || content.output_text || "")
+    .join("")
+    .trim();
+}
+
+function stripJsonFence(text) {
+  return String(text || "")
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+}
+
+function modelErrorMessage(data) {
+  return data?.error?.message || data?.message || "Agent model request failed";
+}
+
+function normalizeProvider(provider) {
+  const value = String(provider || "").toLowerCase();
+  if (["xai", "grok"].includes(value)) return "xai";
+  return "gemini";
+}
+
+function intentPlannerPrompt() {
+  return [
+    "You are the bunOS intent planner.",
+    "Return only JSON. Do not execute transactions.",
+    `Allowed actions: ${Array.from(ALLOWED_ACTIONS).join(", ")}.`,
+    "Supported rails: arc-testnet, base-sepolia. Use arc-testnet as default.",
+    "Payments and bounties are USDC only. Swaps and bridges can use fromToken/toToken symbols or EVM token addresses. If unclear, return clarify with a question.",
+    "Do not return create_wallet; the terminal does not create wallets.",
+    "Schema examples:",
+    "{\"action\":\"send_payment\",\"amount\":5,\"asset\":\"USDC\",\"recipientHandle\":\"@alice\"}",
+    "{\"action\":\"quote_bridge\",\"amount\":1,\"asset\":\"USDC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
+    "{\"action\":\"create_airdrop\",\"amount\":1,\"asset\":\"USDC\",\"recipients\":[\"@alice\",\"@bob\"],\"settlementRail\":\"arc-testnet\"}",
+    "{\"action\":\"create_airdrop\",\"amount\":1,\"asset\":\"USDC\",\"maxRecipients\":100,\"rule\":\"first_commenters\",\"settlementRail\":\"arc-testnet\"}",
+    "{\"action\":\"award_airdrop\",\"airdropId\":\"air_0001\",\"recipients\":[\"@alice\",\"@bob\"]}",
+    "{\"action\":\"quote_bridge\",\"amount\":5,\"asset\":\"EURC\",\"fromToken\":\"EURC\",\"toToken\":\"EURC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
+    "{\"action\":\"quote_swap\",\"amount\":1,\"fromToken\":\"USDC\",\"toToken\":\"EURC\",\"settlementRail\":\"arc-testnet\"}",
+    "{\"action\":\"quote_swap\",\"amount\":20,\"fromToken\":\"EURC\",\"toToken\":\"USDC\",\"settlementRail\":\"arc-testnet\"}",
+    "{\"action\":\"quote_swap\",\"amount\":0.001,\"fromToken\":\"USDC\",\"toToken\":\"cirBTC\",\"settlementRail\":\"arc-testnet\"}",
+    "Messy user phrases still map to tools: 'turn 1 USDC into EURC' => quote_swap, 'get me EURC using 1 USDC' => quote_swap, 'move 1 USDC over to Base' => quote_bridge.",
+    "If the user says buy/get/turn/change one token using another token, treat it as a swap unless they mention a different destination rail.",
+    "{\"action\":\"propose_perp_trade\",\"symbol\":\"BTC\",\"side\":\"long\",\"collateralUsd\":1,\"leverage\":2}",
+    "{\"action\":\"close_arc_perp_user_position\",\"positionId\":12}",
+    "{\"action\":\"get_balance\"}",
+    "{\"action\":\"analyze_portfolio\"}",
+    "{\"action\":\"get_market_feed_snapshot\",\"settlementRail\":\"arc-testnet\"}",
+    "{\"action\":\"create_mandate\",\"text\":\"never bridge if fee is over 3%\"}",
+    "{\"action\":\"list_mandates\"}",
+    "{\"action\":\"create_automation\",\"text\":\"sync balances every 10 minutes\",\"intervalMinutes\":10}",
+    "{\"action\":\"create_automation\",\"text\":\"swap 1 USDC to EURC\",\"intervalSeconds\":10,\"maxRuns\":4}",
+    "{\"action\":\"list_automations\"}",
+    "{\"action\":\"pause_automation\",\"automationId\":\"auto_0001\"}",
+    "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
+    "{\"action\":\"get_defi_action_receipt\",\"actionId\":\"defi_0001\"}",
+    "{\"action\":\"clarify\",\"question\":\"Which token do you want to buy?\"}"
+  ].join("\n");
 }
 
 function sanitizeModelIntent(intent, defaultSettlementRail) {

@@ -61,10 +61,10 @@ export const config = {
   },
   ai: {
     enabled: process.env.AGENT_MODEL_ENABLED !== "0",
-    provider: "gemini",
-    model: process.env.GEMINI_MODEL || process.env.AGENT_MODEL || "gemini-2.5-flash",
-    apiKey: process.env.GEMINI_API_KEY || "",
-    baseUrl: process.env.GEMINI_API_BASE_URL || "https://generativelanguage.googleapis.com/v1beta"
+    provider: process.env.AGENT_MODEL_PROVIDER || (process.env.XAI_API_KEY ? "xai" : "gemini"),
+    model: process.env.AGENT_MODEL || process.env.XAI_MODEL || process.env.GEMINI_MODEL || (process.env.XAI_API_KEY ? "grok-4.3" : "gemini-2.5-flash"),
+    apiKey: process.env.XAI_API_KEY || process.env.GEMINI_API_KEY || "",
+    baseUrl: process.env.AGENT_MODEL_BASE_URL || process.env.XAI_API_BASE_URL || process.env.GEMINI_API_BASE_URL || (process.env.XAI_API_KEY ? "https://api.x.ai/v1" : "https://generativelanguage.googleapis.com/v1beta")
   },
   arcPerps: {
     usdcAddress: process.env.ARC_PERPS_USDC_ADDRESS || "",
