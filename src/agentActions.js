@@ -4,6 +4,7 @@ import { confirmDefiAction } from "./defiOrchestrator.js";
 import { confirmPayment } from "./orchestrator.js";
 import { confirmPerpProposal } from "./perpsAgent.js";
 import { confirmCopyTradeProposal } from "./socialTradingAgent.js";
+import { runJob } from "./jobs.js";
 import {
   acquireSpendLock,
   assertNoBackendSignerSpend,
@@ -48,6 +49,9 @@ export async function confirmAction({ approvalId, handle } = {}) {
       result = await confirmAirdrop({ airdropId: approval.targetId });
     } else {
       throw new Error(`Unsupported approval kind: ${approval.kind}`);
+    }
+    if (result?.job?.id) {
+      result.worker = await runJob({ jobId: result.job.id });
     }
     assertNoBackendSignerSpend(result, { handle: approval.handle, tool: `confirm_${approval.kind}` });
     completeSpendLock({ lock: spendLock.lock, status: "completed", result });

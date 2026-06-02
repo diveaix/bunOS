@@ -1648,14 +1648,8 @@ const tests = [
         handle: "@sara"
       });
       assert.equal(confirmed.ok, true);
-      assert.equal(confirmed.result.proposal.status, "confirmed");
       assert.equal(confirmed.result.job.type, "execute_perp_proposal");
-
-      const executionEnabled = config.arcPerps.executionEnabled;
-      config.arcPerps.executionEnabled = false;
-      const execution = await runJob({ jobId: confirmed.result.job.id });
-      config.arcPerps.executionEnabled = executionEnabled;
-      assert.equal(execution.ok, true);
+      assert.equal(confirmed.result.worker.ok, true);
       assert.equal(confirmed.result.proposal.status, "user_wallet_signing_required");
       assert.equal(confirmed.result.proposal.execution.backendSignerAllowed, false);
     }

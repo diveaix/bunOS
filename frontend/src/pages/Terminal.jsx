@@ -1010,13 +1010,26 @@ function userFriendlyExecutionTitle(execution = {}) {
 
 function formatApprovalResult(data) {
   const result = data.result || {};
-  const job = result.job || result.result?.job || {};
-  return `Approved <code>${esc(data.approval?.kind || "action")}</code>. I kicked the worker once for execution.
+  const worker = result.worker || data.worker?.ran?.find?.((item) => item?.job?.id === result.job?.id) || data.worker?.ran?.[0] || {};
+  const job = worker.job || result.job || result.result?.job || {};
+  const execution = worker.result?.execution || result.execution || result.action?.execution || result.proposal?.execution || {};
+  const proposal = result.proposal || {};
+  const action = result.action || {};
+  const status = worker.result?.status || proposal.status || action.status || execution.status || job.status || "approved";
+  const txHash = execution.txHash || proposal.txHash || action.txHash || worker.result?.txHash;
+  const explorerUrl = execution.explorerUrl || action.explorerUrl || worker.result?.explorerUrl;
+  const reason = worker.error || execution.reason || proposal.execution?.reason || action.failureReason || result.reason || "";
+  const finished = ["settled", "submitted", "succeeded", "approved"].includes(String(status).toLowerCase());
+  const title = txHash
+    ? "Approved. I submitted it on-chain."
+    : finished
+      ? "Approved. I ran the execution step."
+      : "Approved, but I could not finish execution yet.";
+  return `${esc(title)}
 ${renderResultCard([
-  ["Approval", statusBadge(data.approval?.status || "approved", "ok")],
-  ["Job", esc(job.id || "queued")],
-  ["Status", statusBadge("queued", "ok")],
-  ["Next", esc(result.nextAction || "check activity/receipt")],
+  ["Status", statusBadge(status, txHash || finished ? "ok" : "warn")],
+  ["Transaction", renderTxLink(txHash, explorerUrl)],
+  ["Next", esc(reason || result.nextAction || action.nextAction || "check activity/receipt")],
 ])}`;
 }
 

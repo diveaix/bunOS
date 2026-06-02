@@ -69,6 +69,31 @@ export function updateAutomation({ automationId, status, nextRunAt } = {}) {
   return { ok: true, automation };
 }
 
+export function pauseAutomations({ handle, kind, status = "active", limit = 100000 } = {}) {
+  const normalized = handle ? normalizeHandle(handle) : null;
+  const now = new Date().toISOString();
+  const matches = (ledger.automations || [])
+    .filter((automation) => (
+      (!normalized || automation.handle === normalized)
+      && (!kind || automation.kind === kind)
+      && (!status || automation.status === status)
+    ))
+    .slice(0, Number(limit) || 100000);
+
+  for (const automation of matches) {
+    automation.status = "paused";
+    automation.updatedAt = now;
+    recordAutomationEvent("automation_bulk_paused", automation);
+  }
+
+  return {
+    ok: true,
+    paused: matches.length,
+    status: "paused",
+    at: now
+  };
+}
+
 export function deleteAutomation({ automationId } = {}) {
   const index = (ledger.automations || []).findIndex((automation) => automation.id === automationId);
   if (index < 0) throw new Error("Automation not found");
@@ -153,7 +178,8 @@ function normalizeAutomationInput(input) {
       handle: input.handle,
       text: stripScheduleText(prompt),
       defaultSettlementRail: input.defaultSettlementRail || input.payload?.defaultSettlementRail || "arc-testnet",
-      fast: input.fast !== false
+      fast: input.fast !== false,
+      useModel: input.useModel === true || input.payload?.useModel === true
     }
   };
 }
@@ -281,6 +307,7 @@ async function executeAutomationPayload(automation) {
       defaultSettlementRail: automation.payload.defaultSettlementRail || "arc-testnet",
       source: "automation",
       fast: automation.payload.fast !== false,
+      useModel: automation.payload.useModel === true,
       idempotencyKey: `automation:${automation.id}:${automation.runCount}`
     });
   }

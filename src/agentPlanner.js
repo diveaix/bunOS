@@ -52,6 +52,7 @@ import {
   listAutomations,
   runAutomation,
   runDueAutomations,
+  pauseAutomations,
   updateAutomation
 } from "./automations.js";
 import {
@@ -151,6 +152,7 @@ const ALLOWED_TOOLS = new Set([
   "list_automations",
   "run_automation",
   "run_due_automations",
+  "pause_automations",
   "pause_automation",
   "resume_automation",
   "delete_automation"
@@ -228,8 +230,22 @@ export async function planAgentActionWithModel({
   handle = "@sara",
   text,
   defaultSettlementRail = "arc-testnet",
-  source = "agent"
+  source = "agent",
+  useModel
 } = {}) {
+  const deterministic = planAgentAction({ handle, text, defaultSettlementRail, source });
+  const modelAllowed = useModel !== false && source !== "automation";
+  if (!modelAllowed || deterministic.plan.tool) {
+    return {
+      ...upgradeTerminalPlan(deterministic),
+      model: {
+        ...getAgentModelReadiness(),
+        role: modelAllowed ? "deterministic_fast_path" : "disabled_for_source",
+        error: null
+      }
+    };
+  }
+
   let modelIntent = null;
   let modelError = null;
   try {
@@ -277,7 +293,6 @@ export async function planAgentActionWithModel({
     }
   }
 
-  const deterministic = planAgentAction({ handle, text, defaultSettlementRail, source });
   return {
     ...upgradeTerminalPlan(deterministic),
     model: {
@@ -295,14 +310,16 @@ export async function runAgentAction({
   source = "agent",
   postId,
   idempotencyKey,
-  fast = false
+  fast = false,
+  useModel
 } = {}) {
   const startedAt = Date.now();
   const planned = await planAgentActionWithModel({
     handle,
     text,
     defaultSettlementRail,
-    source
+    source,
+    useModel
   });
   const plannedAt = Date.now();
   const agentState = buildAgentStateSnapshot({
@@ -791,6 +808,10 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
 
   if (plan.tool === "run_due_automations") {
     return await runDueAutomations(args);
+  }
+
+  if (plan.tool === "pause_automations") {
+    return pauseAutomations({ ...args, handle: args.handle || handle });
   }
 
   if (plan.tool === "pause_automation") {

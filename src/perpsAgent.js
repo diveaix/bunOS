@@ -90,7 +90,7 @@ export function assessLiquidationRisk({
     riskScore,
     recommendation: riskScore > 55
       ? "Reduce leverage or increase collateral before opening."
-      : "Leverage is inside demo risk policy with stop-loss required."
+      : "Leverage is inside the risk policy with a stop-loss required."
   };
 
   recordEvent("perp_liquidation_risk_assessed", {

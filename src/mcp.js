@@ -34,6 +34,7 @@ import {
   createAutomation,
   deleteAutomation,
   listAutomations,
+  pauseAutomations,
   runAutomation,
   runDueAutomations,
   updateAutomation
@@ -401,6 +402,19 @@ export const mcpTools = [
         automationId: { type: "string" }
       },
       required: ["automationId"]
+    }
+  },
+  {
+    name: "pause_automations",
+    description: "Bulk-pause recurring automations, optionally filtered by handle, kind, or current status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        kind: { type: "string" },
+        status: { type: "string", default: "active" },
+        limit: { type: "number" }
+      }
     }
   },
   {
@@ -1144,6 +1158,10 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "pause_automation") {
     return updateAutomation({ automationId: args.automationId, status: "paused" });
+  }
+
+  if (tool === "pause_automations") {
+    return pauseAutomations(args);
   }
 
   if (tool === "resume_automation") {

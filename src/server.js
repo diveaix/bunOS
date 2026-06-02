@@ -36,6 +36,7 @@ import {
   createAutomation,
   deleteAutomation,
   listAutomations,
+  pauseAutomations,
   runAutomation,
   runDueAutomations,
   updateAutomation
@@ -1122,6 +1123,16 @@ export const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/automations/run-due") {
       const body = await readJson(req);
       return jsonPersisted(res, await runDueAutomations({ limit: body.limit || 20 }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/automations/pause-all") {
+      const body = await readJson(req);
+      return jsonPersisted(res, pauseAutomations({
+        handle: body.handle,
+        kind: body.kind,
+        status: body.status || "active",
+        limit: body.limit || 100000
+      }));
     }
 
     const automationRunMatch = url.pathname.match(/^\/api\/automations\/([^/]+)\/run$/);
