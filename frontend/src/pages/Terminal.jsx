@@ -40,6 +40,8 @@ export default function Terminal() {
   const inputRef = useRef(null);
   const handleRef = useRef(currentHandle || localStorage.getItem("bunos:handle") || "");
   const defiPollersRef = useRef(new Map());
+  const automationPollersRef = useRef(new Map());
+  const latestAutomationIdRef = useRef(localStorage.getItem("bunos:lastAutomationId") || "");
 
   useEffect(() => {
     if (currentHandle) handleRef.current = currentHandle;
@@ -52,6 +54,8 @@ export default function Terminal() {
   useEffect(() => () => {
     for (const timer of defiPollersRef.current.values()) clearTimeout(timer);
     defiPollersRef.current.clear();
+    for (const timer of automationPollersRef.current.values()) clearTimeout(timer);
+    automationPollersRef.current.clear();
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -140,7 +144,9 @@ export default function Terminal() {
 
       if (isAutomationUtilityIntent(value)) {
         const data = await runAutomationCommand(value, handleRef.current);
-        addMessage("agent", null, formatAutomationResult(data));
+        const messageId = addMessage("agent", null, formatAutomationResult(data));
+        trackAutomation(data);
+        followAutomation(data, messageId);
         return;
       }
 
@@ -171,7 +177,9 @@ export default function Terminal() {
       } else {
         const messageId = addMessage("agent", null, formatResult(data));
         followDefiExecution(data, messageId);
+        followAutomation(data, messageId);
         trackApproval(data);
+        trackAutomation(data);
       }
     } catch (err) {
       addMessage("agent", null, formatError({ error: err.message }));
@@ -253,6 +261,46 @@ export default function Terminal() {
     const id = payment?.approvalId || action?.approvalId || proposal?.approvalId || airdrop?.approvalId;
     if (id) setLatestApprovalId(id);
   };
+
+  const trackAutomation = (data) => {
+    const automation = data?.result?.automation || data?.automation || data?.result?.ran?.[0]?.automation || data?.ran?.[0]?.automation;
+    if (!automation?.id) return;
+    latestAutomationIdRef.current = automation.id;
+    localStorage.setItem("bunos:lastAutomationId", automation.id);
+  };
+
+  const followAutomation = useCallback((data, messageId) => {
+    const automation = data?.result?.automation || data?.automation || data?.result?.ran?.[0]?.automation || data?.ran?.[0]?.automation;
+    if (!automation?.id || automation.status === "completed" || automation.status === "paused") return;
+    const key = automation.id;
+    if (automationPollersRef.current.has(key)) clearTimeout(automationPollersRef.current.get(key));
+
+    let attempt = 0;
+    const poll = async () => {
+      attempt += 1;
+      try {
+        await post("/api/automations/run-due", { limit: 3 });
+        const listed = await fetchJson(`/api/automations?handle=${encodeURIComponent(handleRef.current)}&limit=20`);
+        const fresh = (listed.automations || []).find((item) => item.id === key) || automation;
+        updateMessageHtml(messageId, formatAutomationLiveResult(fresh));
+        if (fresh.status === "completed" || fresh.status === "paused" || attempt >= 40) {
+          automationPollersRef.current.delete(key);
+          return;
+        }
+      } catch (error) {
+        if (attempt >= 40) {
+          updateMessageHtml(messageId, `I created the automation, but I could not refresh its live status. ${esc(error.message || "")}`);
+          automationPollersRef.current.delete(key);
+          return;
+        }
+      }
+      const timer = window.setTimeout(poll, attempt < 4 ? 2500 : 5000);
+      automationPollersRef.current.set(key, timer);
+    };
+
+    const timer = window.setTimeout(poll, 1200);
+    automationPollersRef.current.set(key, timer);
+  }, [updateMessageHtml]);
 
   const hasMessages = messages.length > 0;
 
@@ -1065,25 +1113,66 @@ function formatError(data) {
 }
 
 function formatAutomationResult(data) {
+  if (Array.isArray(data.ran)) {
+    if (!data.ran.length) return `No automations were due right now.`;
+    return `I checked the active automations.${renderResultCard(data.ran.slice(0, 6).map((run) => [
+      `<code>${esc(run.automation?.id || "automation")}</code>`,
+      `${statusBadge(run.automation?.status || (run.ok ? "ran" : "failed"), run.ok ? "ok" : "fail")} ${esc(automationRunLine(run))}`,
+    ]))}`;
+  }
   if (Array.isArray(data.automations)) {
     if (!data.automations.length) return `No automations found.`;
     const rows = data.automations.slice(0, 8).map((a) => [
       `<code>${esc(a.id)}</code>`,
-      `${esc(a.name || a.kind)} - ${esc(a.status)} - every ${esc(formatAutomationInterval(a))}${a.maxRuns ? ` - ${esc(a.runCount || 0)}/${esc(a.maxRuns)} runs` : ""}`,
+      `${esc(a.name || a.kind)} - ${statusBadge(a.status || "active", a.status === "completed" ? "ok" : "warn")} - every ${esc(formatAutomationInterval(a))}${a.maxRuns ? ` - ${esc(a.runCount || 0)}/${esc(a.maxRuns)} runs` : ""}${a.lastResult ? ` - last ${esc(a.lastResult.status || (a.lastResult.ok ? "ok" : "failed"))}` : ""}`,
     ]);
     return `Automations loaded.${renderResultCard(rows)}`;
   }
   const automation = data.automation || data.result?.automation;
   if (automation) {
-    return `Automation saved.${renderResultCard([
+    return `Automation saved. I will watch it here as it runs.${renderResultCard([
       ["ID", `<code>${esc(automation.id)}</code>`],
       ["Name", esc(automation.name || automation.kind)],
       ["Status", statusBadge(automation.status || "active", "ok")],
       ["Interval", esc(formatAutomationInterval(automation))],
       ["Runs", automation.maxRuns ? `${esc(automation.runCount || 0)}/${esc(automation.maxRuns)}` : "until stopped"],
+      ["Next run", esc(formatNextRun(automation.nextRunAt))],
     ])}`;
   }
   return `Automation command completed.`;
+}
+
+function formatAutomationLiveResult(automation = {}) {
+  const last = automation.lastResult || {};
+  const done = automation.status === "completed";
+  const title = done
+    ? "Automation finished."
+    : `Automation is running.`;
+  return `${title}${renderResultCard([
+    ["ID", `<code>${esc(automation.id || "n/a")}</code>`],
+    ["Status", statusBadge(automation.status || "active", done ? "ok" : "warn")],
+    ["Runs", automation.maxRuns ? `${esc(automation.runCount || 0)}/${esc(automation.maxRuns)}` : `${esc(automation.runCount || 0)} runs`],
+    ["Last run", automation.lastRunAt ? esc(new Date(automation.lastRunAt).toLocaleTimeString()) : "not yet"],
+    ["Last result", esc(last.status || automation.lastError || "waiting")],
+    ["Next run", esc(formatNextRun(automation.nextRunAt))],
+  ])}`;
+}
+
+function automationRunLine(run = {}) {
+  const automation = run.automation || {};
+  const result = run.result || {};
+  if (run.error) return run.error;
+  return `${automation.name || automation.kind || "automation"} ran ${automation.runCount || 0}${automation.maxRuns ? `/${automation.maxRuns}` : ""}; ${result.status || automation.lastResult?.status || "done"}`;
+}
+
+function formatNextRun(value) {
+  if (!value) return "none";
+  const ts = new Date(value).getTime();
+  if (!Number.isFinite(ts)) return "n/a";
+  const delta = ts - Date.now();
+  if (delta <= 0) return "now";
+  if (delta < 60_000) return `in ${Math.ceil(delta / 1000)} sec`;
+  return `in ${Math.ceil(delta / 60_000)} min`;
 }
 
 function formatAutomationInterval(automation = {}) {
@@ -1105,14 +1194,22 @@ function isApprovalIntent(text) {
 function isAutomationUtilityIntent(text) {
   const v = String(text || "").trim().toLowerCase();
   return /^(list|show)\s+automations?$/.test(v)
+    || /^(automation|automations?)\s+(update|status)\??$/.test(v)
+    || /^automation update\??$/.test(v)
     || /^run\s+(due\s+)?automations?$/.test(v)
     || v === "automations";
 }
 
 async function runAutomationCommand(text, handle) {
   const lower = text.toLowerCase().trim();
-  if (/^(list|show)\s+automations?$/.test(lower) || lower === "automations") {
-    return fetchJson(`/api/automations?handle=${encodeURIComponent(handle)}`);
+  if (/^(list|show)\s+automations?$/.test(lower) || lower === "automations" || /^(automation|automations?)\s+(update|status)\??$/.test(lower) || /^automation update\??$/.test(lower)) {
+    const latest = latestAutomationIdRef.current;
+    const data = await fetchJson(`/api/automations?handle=${encodeURIComponent(handle)}&limit=20`);
+    if (latest && !/^(list|show)\s+automations?$/.test(lower)) {
+      const automation = (data.automations || []).find((item) => item.id === latest);
+      if (automation) return { automation };
+    }
+    return data;
   }
   if (/^run\s+(due\s+)?automations?$/.test(lower)) {
     return requestJson("/api/automations/run-due", { method: "POST", body: { limit: 20 } });

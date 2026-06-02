@@ -18,7 +18,16 @@ export async function confirmAction({ approvalId, handle } = {}) {
   }
 
   if (approval.status === "approved") {
-    return { ok: true, approval, skipped: true };
+    const result = approval.result || null;
+    if (result?.job?.id) {
+      result.worker = await runJob({ jobId: result.job.id });
+    }
+    return {
+      ok: true,
+      approval,
+      result,
+      skipped: true
+    };
   }
 
   if (approval.status !== "pending") {

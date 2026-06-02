@@ -1821,6 +1821,15 @@ function sanitizeAgentResult(result = {}) {
   if (result.proposal) {
     sanitized.proposal = result.proposal;
   }
+  if (result.automation) {
+    sanitized.automation = sanitizeAutomation(result.automation);
+  }
+  if (Array.isArray(result.automations)) {
+    sanitized.automations = result.automations.map(sanitizeAutomation);
+  }
+  if (Array.isArray(result.ran)) {
+    sanitized.ran = result.ran.map(sanitizeAutomationRun);
+  }
   if (result.receipt) {
     sanitized.receipt = result.receipt;
   }
@@ -1828,6 +1837,47 @@ function sanitizeAgentResult(result = {}) {
     sanitized.approval = result.approval;
   }
   return dropUndefined(sanitized);
+}
+
+function sanitizeAutomation(automation = {}) {
+  return dropUndefined({
+    id: automation.id,
+    handle: automation.handle,
+    name: automation.name,
+    kind: automation.kind,
+    status: automation.status,
+    intervalMs: automation.intervalMs,
+    intervalMinutes: automation.intervalMinutes,
+    maxRuns: automation.maxRuns || null,
+    runCount: automation.runCount || 0,
+    failureCount: automation.failureCount || 0,
+    nextRunAt: automation.nextRunAt || null,
+    lastRunAt: automation.lastRunAt || null,
+    lastResult: automation.lastResult || null,
+    lastError: automation.lastError || null,
+    payload: automation.payload ? {
+      text: automation.payload.text,
+      defaultSettlementRail: automation.payload.defaultSettlementRail
+    } : undefined,
+    createdAt: automation.createdAt,
+    updatedAt: automation.updatedAt
+  });
+}
+
+function sanitizeAutomationRun(run = {}) {
+  return dropUndefined({
+    ok: run.ok !== false,
+    error: cleanTerminalReason(run.error),
+    automation: run.automation ? sanitizeAutomation(run.automation) : undefined,
+    result: run.result ? {
+      ok: run.result.ok !== false,
+      status: run.result.status || run.result.action?.status || run.result.execution?.status || null,
+      reason: cleanTerminalReason(run.result.reason || run.result.error || run.result.execution?.reason),
+      txHash: run.result.txHash || run.result.action?.txHash || run.result.execution?.txHash || null,
+      explorerUrl: run.result.explorerUrl || run.result.action?.explorerUrl || run.result.execution?.explorerUrl || null,
+      nextAction: run.result.nextAction || run.result.execution?.nextAction || null
+    } : undefined
+  });
 }
 
 function sanitizeDefiAction(action = {}) {

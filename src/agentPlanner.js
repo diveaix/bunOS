@@ -1048,7 +1048,9 @@ function parseToolCommand(text, defaultSettlementRail) {
     return toolIntent("run_automation", { automationId });
   }
   if (/^(?:list|show|current|status)\s+(?:my\s+)?(?:automations?|scheduled tasks?|recurring tasks?)\b/.test(lower)
-    || /^(?:automations?|scheduled tasks?|recurring tasks?)\s+(?:list|status|current)\b/.test(lower)) {
+    || /^(?:automations?|scheduled tasks?|recurring tasks?)\s+(?:list|status|current|update)\b/.test(lower)
+    || /^(?:automation|scheduled task|recurring task)\s+update\??$/.test(lower)
+    || /^what(?:'s| is)?\s+(?:my\s+)?(?:automation|scheduled task|recurring task)\s+(?:doing|status)\??$/.test(lower)) {
     return toolIntent("list_automations", { limit: extractLimit(raw) || 10 });
   }
   if (/\b(run|execute|trigger)\b.*\bdue\b.*\b(automations?|scheduled tasks?)\b|\bdue\b.*\b(automations?|scheduled tasks?)\b/.test(lower)) {

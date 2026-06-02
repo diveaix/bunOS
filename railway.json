@@ -1,7 +1,8 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS"
+    "builder": "NIXPACKS",
+    "buildCommand": "npm run compile:contracts"
   },
   "deploy": {
     "startCommand": "node --no-warnings src/server.js",
