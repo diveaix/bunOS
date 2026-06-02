@@ -62,7 +62,7 @@ import {
 } from "./airdrops.js";
 import { listArcTradingPrimitives } from "./arcTradingPrimitives.js";
 import { circleUserSigner, readOnlySigner, userWalletSigningRequired } from "./signerPolicy.js";
-import { getAgentModelReadiness, planIntentWithModel } from "./modelPlanner.js";
+import { composeExecutionReplyWithModel, getAgentModelReadiness, planIntentWithModel } from "./modelPlanner.js";
 import {
   buildAgentDecision,
   buildAgentStateSnapshot,
@@ -230,11 +230,6 @@ export async function planAgentActionWithModel({
   defaultSettlementRail = "arc-testnet",
   source = "agent"
 } = {}) {
-  const deterministic = planAgentAction({ handle, text, defaultSettlementRail, source });
-  if (deterministic.plan.tool) {
-    return upgradeTerminalPlan(deterministic);
-  }
-
   let modelIntent = null;
   let modelError = null;
   try {
@@ -243,44 +238,53 @@ export async function planAgentActionWithModel({
     modelError = error.message;
   }
 
-  if (!modelIntent) {
-    return {
-      ...deterministic,
-      model: {
-        ...getAgentModelReadiness(),
-        error: modelError
-      }
-    };
+  if (modelIntent) {
+    try {
+      const user = resolveXHandle(handle);
+      const capabilities = getWalletCapabilities(user.handle);
+      const plan = planFromIntent({
+        intent: modelIntent,
+        handle: user.handle,
+        defaultSettlementRail,
+        source
+      });
+      assertAllowedTool(plan.tool);
+
+      return {
+        ok: true,
+        source,
+        handle: user.handle,
+        text,
+        parser: "gemini_model_primary",
+        intent: modelIntent,
+        plan,
+        signer: plan.signer,
+        policy: {
+          backendSignerAllowed: false,
+          requiresConfirmation: plan.requiresConfirmation,
+          canExecuteNow: plan.canExecuteNow,
+          reason: plan.reason
+        },
+        walletCapabilities: capabilities.capabilities,
+        model: {
+          ...getAgentModelReadiness(),
+          role: "primary_intent_planner"
+        },
+        nextAction: plan.canExecuteNow ? "call_tool_after_policy_check" : "show_plan_or_request_user_confirmation"
+      };
+    } catch (error) {
+      modelError = error.message;
+    }
   }
 
-  const user = resolveXHandle(handle);
-  const capabilities = getWalletCapabilities(user.handle);
-  const plan = planFromIntent({
-    intent: modelIntent,
-    handle: user.handle,
-    defaultSettlementRail,
-    source
-  });
-  assertAllowedTool(plan.tool);
-
+  const deterministic = planAgentAction({ handle, text, defaultSettlementRail, source });
   return {
-    ok: true,
-    source,
-    handle: user.handle,
-    text,
-    parser: "gemini_model",
-    intent: modelIntent,
-    plan,
-    signer: plan.signer,
-    policy: {
-      backendSignerAllowed: false,
-      requiresConfirmation: plan.requiresConfirmation,
-      canExecuteNow: plan.canExecuteNow,
-      reason: plan.reason
-    },
-    walletCapabilities: capabilities.capabilities,
-    model: getAgentModelReadiness(),
-    nextAction: plan.canExecuteNow ? "call_tool_after_policy_check" : "show_plan_or_request_user_confirmation"
+    ...upgradeTerminalPlan(deterministic),
+    model: {
+      ...getAgentModelReadiness(),
+      role: "fallback_or_unavailable",
+      error: modelError
+    }
   };
 }
 
@@ -410,6 +414,20 @@ export async function runAgentAction({
     decision,
     state: agentState
   });
+  const modelReply = await composeExecutionReplyWithModel({
+    text,
+    planned,
+    result,
+    execution,
+    decision,
+    narrative,
+    state: agentState
+  });
+  if (modelReply?.summary) {
+    narrative.summary = modelReply.summary;
+    narrative.nextAction = modelReply.nextAction || narrative.nextAction;
+    narrative.model = modelReply.model;
+  }
   const executionMonitor = executionMonitorFromAgentResult({ result, execution });
   const timing = {
     planningMs: plannedAt - startedAt,
@@ -1821,7 +1839,15 @@ function assertAllowedTool(tool) {
 }
 
 function upgradeTerminalPlan(planned) {
-  if (planned.plan?.tool !== "quote_defi_route") return planned;
+  const fallbackParser = planned.parser?.includes("fallback")
+    ? planned.parser
+    : `${planned.parser || "deterministic"}_fallback`;
+  if (planned.plan?.tool !== "quote_defi_route") {
+    return {
+      ...planned,
+      parser: fallbackParser
+    };
+  }
 
   const operation = planned.intent.action === "quote_bridge"
     ? `bridge_${String(planned.intent.fromToken || planned.intent.asset || "USDC").toLowerCase()}`
@@ -1836,6 +1862,7 @@ function upgradeTerminalPlan(planned) {
 
   return {
     ...planned,
+    parser: fallbackParser,
     plan: {
       ...planned.plan,
       canExecuteNow: true,

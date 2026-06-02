@@ -160,6 +160,98 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
   return sanitizeModelIntent(JSON.parse(extractGeminiText(data)), defaultSettlementRail);
 }
 
+export async function composeExecutionReplyWithModel({
+  text,
+  planned = {},
+  result = {},
+  execution = {},
+  decision = {},
+  narrative = {},
+  state = {}
+} = {}) {
+  const readiness = getAgentModelReadiness();
+  if (!readiness.ok) return null;
+
+  const timeoutMs = Number(process.env.AGENT_REPLY_MODEL_TIMEOUT_MS || 1200);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const payload = sanitizeReplyContext({ text, planned, result, execution, decision, narrative, state });
+
+  let response;
+  try {
+    response = await fetch(`${config.ai.baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(config.ai.model)}:generateContent`, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": config.ai.apiKey,
+        "content-type": "application/json"
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [
+            {
+              text: [
+                "You are bunOS, an Arc trading agent talking to a user after backend execution.",
+                "Write one short, natural response a 13-year-old could understand.",
+                "Do not mention backend internals, parsers, provider stack traces, fallback paths, policy engine, or private keys.",
+                "Say clearly whether money moved. If there is no transaction hash, do not imply on-chain completion.",
+                "If blocked, say the simple reason and the next useful action.",
+                "Return only JSON with fields: summary, nextAction."
+              ].join("\n")
+            }
+          ]
+        },
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: JSON.stringify(payload)
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseJsonSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string" },
+              nextAction: { type: ["string", "null"] }
+            },
+            required: ["summary", "nextAction"],
+            propertyOrdering: ["summary", "nextAction"]
+          }
+        }
+      })
+    });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) return null;
+  try {
+    const parsed = JSON.parse(extractGeminiText(data));
+    const summary = cleanModelReply(parsed.summary);
+    if (!summary) return null;
+    return {
+      summary,
+      nextAction: cleanModelReply(parsed.nextAction),
+      model: {
+        provider: readiness.provider,
+        model: readiness.model,
+        role: "execution_narrator"
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
 function intentSchema() {
   return {
     type: "object",
@@ -547,4 +639,97 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
 
 function stripNullish(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined && item !== ""));
+}
+
+function sanitizeReplyContext({ text, planned, result, execution, decision, narrative, state }) {
+  const receipt = narrative.receipt || {};
+  const action = result.action || result.receipt?.action || {};
+  const request = action.request || planned.intent || {};
+  return {
+    userRequest: String(text || "").slice(0, 500),
+    planned: {
+      parser: planned.parser,
+      tool: planned.plan?.tool || null,
+      action: planned.intent?.action || null,
+      arguments: publicArgs(planned.plan?.arguments || {})
+    },
+    outcome: {
+      ok: execution.ok !== false && result.ok !== false,
+      status: execution.status || result.status || action.status || "unknown",
+      reason: publicReason(execution.reason || result.reason || result.error || decision.rationale || ""),
+      txHash: publicTx(execution.txHash || result.txHash || receipt.txHash || action.txHash),
+      receiptUrl: execution.receiptUrl || receipt.url || result.receipt?.publicUrl || null,
+      nextAction: execution.nextAction || result.nextAction || narrative.nextAction || null
+    },
+    route: {
+      type: action.type || request.action || null,
+      amount: request.amountUsd || request.amount || planned.intent?.amount || null,
+      fromToken: request.fromToken || planned.intent?.fromToken || planned.intent?.asset || null,
+      toToken: request.toToken || planned.intent?.toToken || null,
+      fromRail: request.fromRail || planned.intent?.fromRail || planned.intent?.settlementRail || null,
+      toRail: request.toRail || planned.intent?.toRail || null
+    },
+    wallet: {
+      handle: state.handle || planned.handle || null,
+      connected: Boolean(state.wallet?.onboarded || state.wallet?.address),
+      totalValueUsd: state.portfolio?.totalValueUsd ?? null
+    },
+    safety: {
+      backendSignerAllowed: false,
+      stance: decision.stance || null,
+      risk: decision.riskLevel || null,
+      warnings: Array.isArray(decision.warnings)
+        ? decision.warnings.map(publicReason).filter(Boolean).slice(0, 3)
+        : []
+    }
+  };
+}
+
+function publicArgs(args = {}) {
+  const allowed = [
+    "amount",
+    "asset",
+    "fromToken",
+    "toToken",
+    "fromRail",
+    "toRail",
+    "settlementRail",
+    "recipientHandle",
+    "symbol",
+    "side",
+    "collateralUsd",
+    "leverage",
+    "intervalMs",
+    "intervalMinutes",
+    "maxRuns",
+    "text"
+  ];
+  return Object.fromEntries(allowed.filter((key) => args[key] !== undefined).map((key) => [key, args[key]]));
+}
+
+function publicReason(reason) {
+  return String(reason || "")
+    .replace(/Provider details:.*/i, "")
+    .replace(/AppKit:.*/i, "")
+    .replace(/LI\.FI fallback:.*/i, "")
+    .replace(/0x[a-fA-F0-9]{64}/g, "transaction hash")
+    .replace(/KIT_KEY:[A-Za-z0-9:_-]+/g, "configured kit key")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function publicTx(txHash) {
+  const value = String(txHash || "");
+  return /^0x[a-fA-F0-9]{64}$/.test(value) ? value : null;
+}
+
+function cleanModelReply(value) {
+  return String(value || "")
+    .replace(/Provider details:.*/i, "")
+    .replace(/AppKit:.*/i, "")
+    .replace(/LI\.FI fallback:.*/i, "")
+    .replace(/KIT_KEY:[A-Za-z0-9:_-]+/g, "configured kit key")
+    .trim()
+    .slice(0, 700);
 }

@@ -962,6 +962,14 @@ function renderSimplePrimaryResult(data, { result, intent, tool, execution }) {
     const request = action.request || intent || {};
     const type = action.type || (intent.action === "quote_bridge" || data.narrative?.context?.action === "quote_bridge" ? "bridge" : "swap");
     const status = action.status || result.status || execution?.status || "pending";
+    const modelSummary = data.narrative?.model?.role === "execution_narrator" ? data.narrative.summary : "";
+    if (modelSummary) {
+      const txHash = action.txHash || action.execution?.txHash || execution?.txHash || data.txHash;
+      const explorerUrl = action.explorerUrl || action.execution?.explorerUrl || execution?.explorerUrl || data.explorerUrl;
+      const receiptUrl = result.receipt?.publicUrl || action.publicUrl || execution?.receiptUrl;
+      const nextAction = result.nextAction || action.nextAction || execution?.nextAction || data.nextAction || data.narrative?.nextAction || "";
+      return `${esc(modelSummary)}${renderSimpleReceiptRows({ txHash, explorerUrl, receiptUrl, nextAction })}`;
+    }
     return renderSimpleTradeResponse({
       type,
       status,
