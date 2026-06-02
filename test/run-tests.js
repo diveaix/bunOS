@@ -91,6 +91,7 @@ import {
 import { buildAgentMemoryReport } from "../src/agentMemory.js";
 import {
   createAutomation,
+  runAutomation,
   runDueAutomations
 } from "../src/automations.js";
 
@@ -1589,6 +1590,13 @@ const tests = [
       assert.equal(balanceSchedule.plan.arguments.intervalMs, 10_000);
       assert.equal(balanceSchedule.plan.arguments.maxRuns, 4);
 
+      const wordInterval = createAutomation({
+        handle: "@sara",
+        text: "run an automation. show my balance every ten secs for 2 times"
+      });
+      assert.equal(wordInterval.automation.intervalMs, 10_000);
+      assert.equal(wordInterval.automation.maxRuns, 2);
+
       const stopAll = planAgentAction({
         handle: "@sara",
         text: "close all the automations running now",
@@ -1624,6 +1632,18 @@ const tests = [
       assert.equal(runner.automation.runCount, 2);
       assert.equal(runner.automation.status, "completed");
       assert.equal(runner.automation.nextRunAt, null);
+
+      const recursive = createAutomation({
+        handle: "@sara",
+        text: "create an automation. swap 1 USDC to EURC every ten seconds for 2 times",
+        nextRunAt: new Date(Date.now() - 1_000).toISOString()
+      });
+      recursive.automation.payload.text = "create an automation. swap 1 USDC to EURC";
+      const recursiveRun = await runAutomation({ automationId: recursive.automation.id });
+      assert.equal(recursiveRun.ok, false);
+      assert.equal(recursiveRun.automation.status, "paused");
+      assert.equal(recursiveRun.automation.nextRunAt, null);
+      assert.match(recursiveRun.error, /prevent a runaway loop/i);
     }
   ],
   [

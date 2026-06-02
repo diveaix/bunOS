@@ -208,14 +208,35 @@ function normalizeInterval(input) {
 
 function parseInterval(text) {
   const raw = String(text || "").toLowerCase();
-  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/);
+  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/);
   if (!match) return { intervalMs: 60 * 60_000, intervalMinutes: 60 };
-  const amount = Number(match[1]);
+  const amount = parseNumberWord(match[1]);
   const unit = match[2];
   if (unit === "d" || unit.startsWith("day")) return { intervalMs: amount * 24 * 60 * 60_000, intervalMinutes: amount * 24 * 60 };
   if (unit === "h" || unit.startsWith("hour") || unit.startsWith("hr")) return { intervalMs: amount * 60 * 60_000, intervalMinutes: amount * 60 };
   if (unit === "m" || unit.startsWith("minute") || unit.startsWith("min")) return { intervalMs: amount * 60_000, intervalMinutes: amount };
   return { intervalMs: amount * 1000, intervalMinutes: amount / 60 };
+}
+
+function parseNumberWord(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return numeric;
+  return {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    fifteen: 15,
+    twenty: 20,
+    thirty: 30,
+    sixty: 60
+  }[String(value || "").toLowerCase()] || 0;
 }
 
 function minutesToMs(value) {
@@ -268,7 +289,10 @@ async function executeAutomation(automation) {
   } catch (error) {
     automation.failureCount = Number(automation.failureCount || 0) + 1;
     automation.lastError = error.message;
-    if (automation.maxRuns && automation.runCount >= automation.maxRuns) {
+    if (error.pauseAutomation) {
+      automation.status = "paused";
+      automation.nextRunAt = null;
+    } else if (automation.maxRuns && automation.runCount >= automation.maxRuns) {
       automation.status = "completed";
       automation.nextRunAt = null;
     } else {
@@ -301,17 +325,35 @@ async function executeAutomationPayload(automation) {
     });
   }
   if (automation.kind === "run_agent_action") {
-    return await runAgentAction({
+    const text = automation.payload.text;
+    if (looksLikeAutomationCreation(text)) {
+      throw recursiveAutomationError("This automation tried to create another automation. I paused it to prevent a runaway loop.");
+    }
+    const result = await runAgentAction({
       handle: automation.payload.handle || automation.handle,
-      text: automation.payload.text,
+      text,
       defaultSettlementRail: automation.payload.defaultSettlementRail || "arc-testnet",
       source: "automation",
       fast: automation.payload.fast !== false,
       useModel: automation.payload.useModel === true,
       idempotencyKey: `automation:${automation.id}:${automation.runCount}`
     });
+    if (result?.planned?.plan?.tool === "create_automation") {
+      throw recursiveAutomationError("This automation resolved to create another automation. I paused it to prevent a runaway loop.");
+    }
+    return result;
   }
   throw new Error(`Unsupported automation kind: ${automation.kind}`);
+}
+
+function looksLikeAutomationCreation(text) {
+  return /\b(?:create|make|start|run|schedule|automate)\b[\s\S]{0,40}\b(?:automation|automations|schedule|scheduled task|recurring task)\b/i.test(String(text || ""));
+}
+
+function recursiveAutomationError(message) {
+  const error = new Error(message);
+  error.pauseAutomation = true;
+  return error;
 }
 
 function summarizeResult(result) {
