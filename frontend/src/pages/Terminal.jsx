@@ -138,7 +138,7 @@ export default function Terminal() {
         return;
       }
 
-      if (isAutomationIntent(value)) {
+      if (isAutomationUtilityIntent(value)) {
         const data = await runAutomationCommand(value, handleRef.current);
         addMessage("agent", null, formatAutomationResult(data));
         return;
@@ -803,6 +803,12 @@ function formatResult(data) {
   const execution = data.execution || null;
   const simple = renderSimplePrimaryResult(data, { result, intent, tool, execution });
   if (simple) return simple;
+  if (tool === "propose_perp_trade" || result.proposal) {
+    return renderPerpProposalResult({ result, intent, data });
+  }
+  if (tool?.includes("automation") || result.automation || Array.isArray(result.automations)) {
+    return formatAutomationResult(result.automation || result.automations ? result : data);
+  }
   const readable = data.narrative?.summary || data.execution?.reason || data.reason || data.clarification;
   if (readable) return esc(friendlyReason(readable));
   let summary = "";
@@ -927,6 +933,21 @@ function formatResult(data) {
   return summary;
 }
 
+function renderPerpProposalResult({ result = {}, intent = {}, data = {} } = {}) {
+  const proposal = result.proposal || {};
+  let summary = `I prepared the perp trade. Review it before anything moves.`;
+  summary += renderResultCard([
+    ["Status", statusBadge(proposal.status || "requires_confirmation", "warn")],
+    ["Market", `${esc(proposal.side || intent.side || "long")} ${esc(proposal.symbol || intent.symbol || "BTC")}`],
+    ["Collateral", `${esc(proposal.collateralUsd || intent.collateralUsd || "n/a")} USDC`],
+    ["Leverage", `${esc(proposal.leverage || intent.leverage || "n/a")}x`],
+    ["Risk", esc(proposal.risk?.recommendation || result.mandateCheck?.reason || "checked")],
+    ["Next", esc(data.nextAction || "approval_required")],
+  ]);
+  summary += renderApprovalButton(result.approval?.id || proposal.approvalId, "Approve perp trade");
+  return summary;
+}
+
 function renderSimplePrimaryResult(data, { result, intent, tool, execution }) {
   const looksLikeTrade = tool === "quote_defi_route"
     || result.action?.type === "swap"
@@ -1027,7 +1048,7 @@ function formatAutomationResult(data) {
     if (!data.automations.length) return `No automations found.`;
     const rows = data.automations.slice(0, 8).map((a) => [
       `<code>${esc(a.id)}</code>`,
-      `${esc(a.name || a.kind)} · ${esc(a.status)} · every ${esc(a.intervalMinutes)}m`,
+      `${esc(a.name || a.kind)} - ${esc(a.status)} - every ${esc(formatAutomationInterval(a))}${a.maxRuns ? ` - ${esc(a.runCount || 0)}/${esc(a.maxRuns)} runs` : ""}`,
     ]);
     return `Automations loaded.${renderResultCard(rows)}`;
   }
@@ -1037,10 +1058,19 @@ function formatAutomationResult(data) {
       ["ID", `<code>${esc(automation.id)}</code>`],
       ["Name", esc(automation.name || automation.kind)],
       ["Status", statusBadge(automation.status || "active", "ok")],
-      ["Interval", `${esc(automation.intervalMinutes || "n/a")} minutes`],
+      ["Interval", esc(formatAutomationInterval(automation))],
+      ["Runs", automation.maxRuns ? `${esc(automation.runCount || 0)}/${esc(automation.maxRuns)}` : "until stopped"],
     ])}`;
   }
   return `Automation command completed.`;
+}
+
+function formatAutomationInterval(automation = {}) {
+  const ms = Number(automation.intervalMs || Number(automation.intervalMinutes || 0) * 60_000);
+  if (!Number.isFinite(ms) || ms <= 0) return "n/a";
+  if (ms < 60_000) return `${Math.round(ms / 1000)} seconds`;
+  if (ms < 60 * 60_000) return `${Math.round((ms / 60_000) * 100) / 100} minutes`;
+  return `${Math.round((ms / (60 * 60_000)) * 100) / 100} hours`;
 }
 
 function isHelpIntent(text) {
@@ -1048,15 +1078,14 @@ function isHelpIntent(text) {
 }
 
 function isApprovalIntent(text) {
-  return /^(approve|confirm|execute|yes|go|do it)$/i.test(String(text || "").trim());
+  return /^(approve|approved|confirm|confirmed|execute|yes|yeah|yep|go|go ahead|do it|run it)$/i.test(String(text || "").trim());
 }
 
-function isAutomationIntent(text) {
+function isAutomationUtilityIntent(text) {
   const v = String(text || "").trim().toLowerCase();
-  return /\b(auto(?:mate|mation|mations)|schedule|repeat)\b/.test(v)
-    || /^(list|show)\s+automations?$/.test(v)
+  return /^(list|show)\s+automations?$/.test(v)
     || /^run\s+(due\s+)?automations?$/.test(v)
-    || /\bevery\s+\d+(?:\.\d+)?\s*(?:minute|minutes|min|hour|hours|hr|hrs|day|days)\b/.test(v);
+    || v === "automations";
 }
 
 async function runAutomationCommand(text, handle) {
@@ -1067,18 +1096,26 @@ async function runAutomationCommand(text, handle) {
   if (/^run\s+(due\s+)?automations?$/.test(lower)) {
     return requestJson("/api/automations/run-due", { method: "POST", body: { limit: 20 } });
   }
-  const match = text.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(minute|minutes|min|hour|hours|hr|hrs|day|days)\b/i);
-  let intervalMinutes;
+  const match = text.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/i);
+  const maxRunsMatch = text.match(/\b(?:for|until|stop\s+after)\s+(\d{1,4})\s*(?:times?|runs?|executions?)\b/i);
+  let intervalMs;
   if (match) {
     const amount = Number(match[1]);
     const unit = match[2].toLowerCase();
-    if (unit.startsWith("day")) intervalMinutes = amount * 24 * 60;
-    else if (unit.startsWith("hour") || unit.startsWith("hr")) intervalMinutes = amount * 60;
-    else intervalMinutes = amount;
+    if (unit === "d" || unit.startsWith("day")) intervalMs = amount * 24 * 60 * 60_000;
+    else if (unit === "h" || unit.startsWith("hour") || unit.startsWith("hr")) intervalMs = amount * 60 * 60_000;
+    else if (unit === "m" || unit.startsWith("minute") || unit.startsWith("min")) intervalMs = amount * 60_000;
+    else intervalMs = amount * 1000;
   }
   return requestJson("/api/automations", {
     method: "POST",
-    body: { handle, text, intervalMinutes, defaultSettlementRail: localStorage.getItem("bunos:rail") || "arc-testnet" },
+    body: {
+      handle,
+      text,
+      intervalMs,
+      maxRuns: maxRunsMatch ? Number(maxRunsMatch[1]) : undefined,
+      defaultSettlementRail: localStorage.getItem("bunos:rail") || "arc-testnet"
+    },
   });
 }
 

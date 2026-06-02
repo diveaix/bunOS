@@ -24,8 +24,10 @@ export function createAutomation(input = {}) {
     kind: parsed.kind,
     status: input.status === "paused" ? "paused" : "active",
     intervalMinutes: parsed.intervalMinutes,
+    intervalMs: parsed.intervalMs,
+    maxRuns: parsed.maxRuns,
     payload: parsed.payload,
-    nextRunAt: input.nextRunAt || new Date(Date.now() + parsed.intervalMinutes * 60_000).toISOString(),
+    nextRunAt: input.nextRunAt || new Date(Date.now() + parsed.intervalMs).toISOString(),
     runCount: 0,
     failureCount: 0,
     lastRunAt: null,
@@ -97,7 +99,8 @@ export async function runDueAutomations({ limit = 20 } = {}) {
 }
 
 function normalizeAutomationInput(input) {
-  const intervalMinutes = normalizeIntervalMinutes(input.intervalMinutes || input.everyMinutes || parseIntervalMinutes(input.text || input.prompt || ""));
+  const interval = normalizeInterval(input);
+  const maxRuns = normalizeMaxRuns(input.maxRuns || input.runLimit || parseMaxRuns(input.text || input.prompt || ""));
   const kind = input.kind || inferKind(input);
   if (!SUPPORTED_KINDS.has(kind)) {
     throw new Error(`Unsupported automation kind: ${kind || "unknown"}`);
@@ -106,7 +109,8 @@ function normalizeAutomationInput(input) {
   if (kind === "sync_circle_balances") {
     return {
       kind,
-      intervalMinutes,
+      ...interval,
+      maxRuns,
       name: input.name || `Sync balances for ${input.handle}`,
       payload: { handle: input.handle }
     };
@@ -117,7 +121,8 @@ function normalizeAutomationInput(input) {
     if (!actionId) throw new Error("reconcile_defi_action automation requires actionId");
     return {
       kind,
-      intervalMinutes,
+      ...interval,
+      maxRuns,
       name: input.name || `Watch ${actionId}`,
       payload: { actionId }
     };
@@ -126,7 +131,8 @@ function normalizeAutomationInput(input) {
   if (kind === "run_strategy_check") {
     return {
       kind,
-      intervalMinutes,
+      ...interval,
+      maxRuns,
       name: input.name || `Check strategy for ${input.handle}`,
       payload: {
         handle: input.handle,
@@ -140,7 +146,8 @@ function normalizeAutomationInput(input) {
   if (!prompt) throw new Error("run_agent_action automation requires prompt or text");
   return {
     kind,
-    intervalMinutes,
+    ...interval,
+    maxRuns,
     name: input.name || `Run agent: ${String(prompt).slice(0, 48)}`,
     payload: {
       handle: input.handle,
@@ -159,27 +166,57 @@ function inferKind(input) {
   return "run_agent_action";
 }
 
-function normalizeIntervalMinutes(value) {
-  const minutes = Number(value || 0);
-  if (!Number.isFinite(minutes) || minutes <= 0) throw new Error("Automation intervalMinutes must be greater than zero");
-  return Math.max(1, Math.round(minutes));
+function normalizeInterval(input) {
+  const parsed = parseInterval(input.text || input.prompt || "");
+  const intervalMs = Number(input.intervalMs || input.everyMs || 0)
+    || secondsToMs(input.intervalSeconds || input.everySeconds)
+    || minutesToMs(input.intervalMinutes || input.everyMinutes)
+    || parsed.intervalMs;
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) throw new Error("Automation interval must be greater than zero");
+  const normalizedMs = Math.max(5_000, Math.round(intervalMs));
+  return {
+    intervalMs: normalizedMs,
+    intervalMinutes: Math.round((normalizedMs / 60_000) * 1000) / 1000
+  };
 }
 
-function parseIntervalMinutes(text) {
+function parseInterval(text) {
   const raw = String(text || "").toLowerCase();
-  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(minute|minutes|min|hour|hours|hr|hrs|day|days)\b/);
-  if (!match) return 60;
+  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/);
+  if (!match) return { intervalMs: 60 * 60_000, intervalMinutes: 60 };
   const amount = Number(match[1]);
   const unit = match[2];
-  if (unit.startsWith("day")) return amount * 24 * 60;
-  if (unit.startsWith("hour") || unit.startsWith("hr")) return amount * 60;
-  return amount;
+  if (unit === "d" || unit.startsWith("day")) return { intervalMs: amount * 24 * 60 * 60_000, intervalMinutes: amount * 24 * 60 };
+  if (unit === "h" || unit.startsWith("hour") || unit.startsWith("hr")) return { intervalMs: amount * 60 * 60_000, intervalMinutes: amount * 60 };
+  if (unit === "m" || unit.startsWith("minute") || unit.startsWith("min")) return { intervalMs: amount * 60_000, intervalMinutes: amount };
+  return { intervalMs: amount * 1000, intervalMinutes: amount / 60 };
+}
+
+function minutesToMs(value) {
+  const minutes = Number(value || 0);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : 0;
+}
+
+function secondsToMs(value) {
+  const seconds = Number(value || 0);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+}
+
+function normalizeMaxRuns(value) {
+  const runs = Number(value || 0);
+  return Number.isFinite(runs) && runs > 0 ? Math.max(1, Math.floor(runs)) : null;
+}
+
+function parseMaxRuns(text) {
+  const match = String(text || "").match(/\b(?:for|until|stop\s+after)\s+(\d{1,4})\s*(?:times?|runs?|executions?)\b/i);
+  return match ? Number(match[1]) : null;
 }
 
 function stripScheduleText(text) {
   return String(text || "")
     .replace(/\b(auto(?:mate)?|schedule|repeat|run)\b/ig, "")
-    .replace(/\bevery\s+\d+(?:\.\d+)?\s*(?:minute|minutes|min|hour|hours|hr|hrs|day|days)\b/ig, "")
+    .replace(/\bevery\s+\d+(?:\.\d+)?\s*(?:second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/ig, "")
+    .replace(/\b(?:for|until|stop\s+after)\s+\d{1,4}\s*(?:times?|runs?|executions?)\b/ig, "")
     .trim();
 }
 
@@ -193,14 +230,24 @@ async function executeAutomation(automation) {
     const result = await executeAutomationPayload(automation);
     automation.lastResult = summarizeResult(result);
     automation.lastError = null;
-    automation.nextRunAt = nextRunAt(automation.intervalMinutes);
+    if (automation.maxRuns && automation.runCount >= automation.maxRuns) {
+      automation.status = "completed";
+      automation.nextRunAt = null;
+    } else {
+      automation.nextRunAt = nextRunAt(automation);
+    }
     automation.updatedAt = new Date().toISOString();
     recordAutomationEvent("automation_succeeded", automation);
     return { ok: true, automation, result };
   } catch (error) {
     automation.failureCount = Number(automation.failureCount || 0) + 1;
     automation.lastError = error.message;
-    automation.nextRunAt = nextRunAt(automation.intervalMinutes);
+    if (automation.maxRuns && automation.runCount >= automation.maxRuns) {
+      automation.status = "completed";
+      automation.nextRunAt = null;
+    } else {
+      automation.nextRunAt = nextRunAt(automation);
+    }
     automation.updatedAt = new Date().toISOString();
     recordAutomationEvent("automation_failed", automation, { error: error.message });
     return { ok: false, automation, error: error.message };
@@ -249,8 +296,8 @@ function summarizeResult(result) {
   };
 }
 
-function nextRunAt(intervalMinutes) {
-  return new Date(Date.now() + Number(intervalMinutes || 60) * 60_000).toISOString();
+function nextRunAt(automation) {
+  return new Date(Date.now() + Number(automation.intervalMs || Number(automation.intervalMinutes || 60) * 60_000)).toISOString();
 }
 
 function findAutomation(automationId) {

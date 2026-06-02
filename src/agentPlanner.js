@@ -81,6 +81,7 @@ import { getMarketIntelligence } from "./marketIntelligence.js";
 import { executionMonitorFromAgentResult } from "./executionMonitor.js";
 import { analyzePortfolio } from "./portfolioBrain.js";
 import { refreshMarketFeedSnapshot } from "./marketFeeds.js";
+import { ledger } from "./fixtures.js";
 import {
   createMandate,
   deleteMandate,
@@ -553,7 +554,11 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
   }
 
   if (plan.tool === "confirm_action") {
-    return await confirmAction({ ...args, handle: args.handle || handle });
+    return await confirmAction({
+      ...args,
+      approvalId: resolveApprovalId({ handle: args.handle || handle, approvalId: args.approvalId }),
+      handle: args.handle || handle
+    });
   }
 
   if (plan.tool === "get_receipt") {
@@ -682,16 +687,28 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
   }
 
   if (plan.tool === "reconcile_defi_action") {
+    const actionId = resolveDefiActionId({
+      handle,
+      actionId: args.actionId,
+      type: args.type
+    });
     const job = enqueueJob({
       type: "reconcile_defi_action",
-      payload: { actionId: args.actionId },
-      idempotencyKey: `terminal_reconcile_defi_action:${args.actionId}:${Date.now()}`
+      payload: { actionId },
+      idempotencyKey: `terminal_reconcile_defi_action:${actionId}:${Date.now()}`
     });
     return await runJob({ jobId: job.id });
   }
 
   if (plan.tool === "get_defi_action_receipt") {
-    return getDefiActionReceipt(args);
+    return getDefiActionReceipt({
+      ...args,
+      actionId: resolveDefiActionId({
+        handle,
+        actionId: args.actionId,
+        type: args.type
+      })
+    });
   }
 
   if (plan.tool === "list_perp_markets") {
@@ -805,14 +822,14 @@ function parseWithFallbacks(text, defaultSettlementRail) {
   }
 
   try {
+    const tool = parseToolCommand(text, defaultSettlementRail);
+    if (tool) return { parser: "deterministic_tool_command", intent: tool };
+
     const bridge = parseBridge(text, defaultSettlementRail);
     if (bridge) return { parser: "deterministic_bridge", intent: bridge };
 
     const swap = parseSwap(text, defaultSettlementRail);
     if (swap) return { parser: "deterministic_swap", intent: swap };
-
-    const tool = parseToolCommand(text, defaultSettlementRail);
-    if (tool) return { parser: "deterministic_tool_command", intent: tool };
   } catch {
     return {
       parser: "clarification_required",
@@ -989,7 +1006,8 @@ function parseToolCommand(text, defaultSettlementRail) {
   if (automationId && /\b(run|execute|trigger)\b/.test(lower)) {
     return toolIntent("run_automation", { automationId });
   }
-  if (/\b(automations?|scheduled tasks?|recurring tasks?)\b/.test(lower) && /\b(list|show|current|status)\b/.test(lower)) {
+  if (/^(?:list|show|current|status)\s+(?:my\s+)?(?:automations?|scheduled tasks?|recurring tasks?)\b/.test(lower)
+    || /^(?:automations?|scheduled tasks?|recurring tasks?)\s+(?:list|status|current)\b/.test(lower)) {
     return toolIntent("list_automations", { limit: extractLimit(raw) || 10 });
   }
   if (/\b(run|execute|trigger)\b.*\bdue\b.*\b(automations?|scheduled tasks?)\b|\bdue\b.*\b(automations?|scheduled tasks?)\b/.test(lower)) {
@@ -998,7 +1016,7 @@ function parseToolCommand(text, defaultSettlementRail) {
   if (isAutomationRequest(raw)) {
     return toolIntent("create_automation", {
       text: raw,
-      intervalMinutes: extractAutomationIntervalMinutes(raw),
+      ...extractAutomationSchedule(raw),
       defaultSettlementRail
     });
   }
@@ -1094,6 +1112,9 @@ function parseToolCommand(text, defaultSettlementRail) {
   if (approvalId && /\b(confirm|approve|execute)\b/i.test(raw)) {
     return toolIntent("confirm_action", { approvalId });
   }
+  if (/^(approve|approved|confirm|confirmed|execute|yes|yeah|yep|go|go ahead|do it|run it)$/i.test(raw)) {
+    return toolIntent("confirm_action", { approvalId: "__latest_pending__" });
+  }
 
   const paymentId = raw.match(/\b(pay_[a-zA-Z0-9_:-]+)\b/i)?.[1];
   if (paymentId && /\breceipt|status|tx|transaction\b/i.test(raw)) {
@@ -1106,6 +1127,14 @@ function parseToolCommand(text, defaultSettlementRail) {
   }
   if (defiActionId && /\breceipt|status|tx|transaction\b/i.test(raw)) {
     return toolIntent("get_defi_action_receipt", { actionId: defiActionId });
+  }
+  if (/\b(bridge|swap|defi|trade)\b.*\b(status|receipt|tx|transaction|what happened|update)\b|\b(status|receipt|tx|transaction|what happened|update)\b.*\b(bridge|swap|defi|trade)\b/i.test(raw)) {
+    const type = /\bbridge\b/i.test(raw) ? "bridge" : /\bswap\b/i.test(raw) ? "swap" : undefined;
+    return toolIntent("get_defi_action_receipt", { actionId: "__latest__", type });
+  }
+  if (/\b(bridge|swap|defi|trade)\b.*\b(reconcile|poll|refresh|check again)\b|\b(reconcile|poll|refresh|check again)\b.*\b(bridge|swap|defi|trade)\b/i.test(raw)) {
+    const type = /\bbridge\b/i.test(raw) ? "bridge" : /\bswap\b/i.test(raw) ? "swap" : undefined;
+    return toolIntent("reconcile_defi_action", { actionId: "__latest__", type });
   }
 
   const copy = raw.match(COPY_TRADE_PATTERN);
@@ -1327,18 +1356,35 @@ function extractLimit(text) {
 
 function isAutomationRequest(text) {
   const lower = String(text || "").toLowerCase();
-  return /\b(auto(?:mate)?|automation|schedule|scheduled|repeat|recurring|every\s+\d+(?:\.\d+)?\s*(?:minute|minutes|min|hour|hours|hr|hrs|day|days))\b/.test(lower);
+  return /\b(auto(?:mate)?|automation|schedule|scheduled|repeat|recurring|every\s+\d+(?:\.\d+)?\s*(?:second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d))\b/.test(lower);
 }
 
 function extractAutomationIntervalMinutes(text) {
+  return extractAutomationSchedule(text).intervalMinutes;
+}
+
+function extractAutomationSchedule(text) {
   const raw = String(text || "").toLowerCase();
-  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(minute|minutes|min|hour|hours|hr|hrs|day|days)\b/);
-  if (!match) return 60;
+  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/);
+  const maxRuns = extractAutomationMaxRuns(raw);
+  if (!match) return { intervalMinutes: 60, intervalMs: 60 * 60_000, ...(maxRuns ? { maxRuns } : {}) };
   const amount = Number(match[1]);
   const unit = match[2];
-  if (unit.startsWith("day")) return amount * 24 * 60;
-  if (unit.startsWith("hour") || unit.startsWith("hr")) return amount * 60;
-  return amount;
+  let intervalMs;
+  if (unit === "d" || unit.startsWith("day")) intervalMs = amount * 24 * 60 * 60_000;
+  else if (unit === "h" || unit.startsWith("hour") || unit.startsWith("hr")) intervalMs = amount * 60 * 60_000;
+  else if (unit === "m" || unit.startsWith("minute") || unit.startsWith("min")) intervalMs = amount * 60_000;
+  else intervalMs = amount * 1000;
+  return {
+    intervalMs,
+    intervalMinutes: Math.round((intervalMs / 60_000) * 1000) / 1000,
+    ...(maxRuns ? { maxRuns } : {})
+  };
+}
+
+function extractAutomationMaxRuns(text) {
+  const match = String(text || "").match(/\b(?:for|until|stop\s+after)\s+(\d{1,4})\s*(?:times?|runs?|executions?)\b/i);
+  return match ? Number(match[1]) : null;
 }
 
 function extractRail(text) {
@@ -1565,6 +1611,31 @@ function normalizeSwapToken(value) {
 
 function isSupportedSwapPair({ settlementRail, fromToken, toToken }) {
   return Boolean(settlementRail && fromToken && toToken && fromToken !== toToken);
+}
+
+function resolveApprovalId({ handle, approvalId } = {}) {
+  if (approvalId && approvalId !== "__latest_pending__") return approvalId;
+  const approval = ledger.approvals
+    .filter((item) => item.handle === handle && item.status === "pending")
+    .slice()
+    .reverse()[0];
+  if (!approval) {
+    throw new Error("I could not find a pending approval for this wallet.");
+  }
+  return approval.id;
+}
+
+function resolveDefiActionId({ handle, actionId, type } = {}) {
+  if (actionId && actionId !== "__latest__") return actionId;
+  const action = ledger.defiActions
+    .filter((item) => item.handle === handle)
+    .filter((item) => !type || item.type === type)
+    .slice()
+    .reverse()[0];
+  if (!action) {
+    throw new Error(`I could not find a recent ${type || "DeFi"} action for this wallet.`);
+  }
+  return action.id;
 }
 
 async function resolveClosePerpPositionArgs({ handle, args = {} } = {}) {

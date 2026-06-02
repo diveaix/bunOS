@@ -118,6 +118,7 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
                 "{\"action\":\"create_mandate\",\"text\":\"never bridge if fee is over 3%\"}",
                 "{\"action\":\"list_mandates\"}",
                 "{\"action\":\"create_automation\",\"text\":\"sync balances every 10 minutes\",\"intervalMinutes\":10}",
+                "{\"action\":\"create_automation\",\"text\":\"swap 1 USDC to EURC\",\"intervalSeconds\":10,\"maxRuns\":4}",
                 "{\"action\":\"list_automations\"}",
                 "{\"action\":\"pause_automation\",\"automationId\":\"auto_0001\"}",
                 "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
@@ -191,6 +192,10 @@ function intentSchema() {
       automationId: { type: ["string", "null"] },
       intervalMinutes: { type: ["number", "null"] },
       everyMinutes: { type: ["number", "null"] },
+      intervalSeconds: { type: ["number", "null"] },
+      everySeconds: { type: ["number", "null"] },
+      intervalMs: { type: ["number", "null"] },
+      maxRuns: { type: ["number", "null"] },
       kind: { type: ["string", "null"] },
       text: { type: ["string", "null"] },
       positionId: { type: ["number", "null"] },
@@ -226,6 +231,10 @@ function intentSchema() {
       "automationId",
       "intervalMinutes",
       "everyMinutes",
+      "intervalSeconds",
+      "everySeconds",
+      "intervalMs",
+      "maxRuns",
       "kind",
       "text",
       "positionId",
@@ -261,6 +270,10 @@ function intentSchema() {
       "automationId",
       "intervalMinutes",
       "everyMinutes",
+      "intervalSeconds",
+      "everySeconds",
+      "intervalMs",
+      "maxRuns",
       "kind",
       "text",
       "positionId",
@@ -495,6 +508,10 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
   if (intent.automationId) args.automationId = String(intent.automationId);
   if (positive(intent.intervalMinutes)) args.intervalMinutes = Number(intent.intervalMinutes);
   if (positive(intent.everyMinutes)) args.everyMinutes = Number(intent.everyMinutes);
+  if (positive(intent.intervalSeconds)) args.intervalSeconds = Number(intent.intervalSeconds);
+  if (positive(intent.everySeconds)) args.everySeconds = Number(intent.everySeconds);
+  if (positive(intent.intervalMs)) args.intervalMs = Number(intent.intervalMs);
+  if (positive(intent.maxRuns)) args.maxRuns = Number(intent.maxRuns);
   if (intent.kind) args.kind = String(intent.kind);
   if (intent.text) args.text = String(intent.text);
   if (positive(intent.positionId)) args.positionId = Number(intent.positionId);
@@ -509,7 +526,7 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
   if (intent.toRail) args.toRail = normalizeRail(intent.toRail);
   args.settlementRail = rail;
 
-  if (tool === "confirm_action" && !args.approvalId) return clarify("Which approval ID should I confirm?");
+  if (tool === "confirm_action" && !args.approvalId) args.approvalId = "__latest_pending__";
   if (tool === "get_receipt" && !args.paymentId) return clarify("Which payment ID should I look up?");
   if (["reconcile_defi_action", "get_defi_action_receipt"].includes(tool) && !args.actionId) return clarify("Which DeFi action ID should I use?");
   if (tool === "create_mandate" && !args.text) return clarify("What standing trading rule should I save?");

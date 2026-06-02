@@ -88,6 +88,10 @@ import {
   getAgentMetrics,
   listAgentDecisionEvents
 } from "../src/agentObservability.js";
+import {
+  createAutomation,
+  runDueAutomations
+} from "../src/automations.js";
 
 config.providerMode = "mock";
 config.transferProvider = "mock";
@@ -1550,6 +1554,56 @@ const tests = [
     }
   ],
   [
+    "parses short automation intervals and finite run counts",
+    async () => {
+      const planned = planAgentAction({
+        handle: "@sara",
+        text: "run an automation. swap $1 of USDC to EURC every 10 secs for 4 times",
+        source: "test-automation"
+      });
+      assert.equal(planned.plan.tool, "create_automation");
+      assert.equal(planned.plan.arguments.intervalMs, 10_000);
+      assert.equal(planned.plan.arguments.maxRuns, 4);
+
+      const balanceSchedule = planAgentAction({
+        handle: "@sara",
+        text: "run an automation. show my balance every 10 secs for 4 times",
+        source: "test-automation"
+      });
+      assert.equal(balanceSchedule.plan.tool, "create_automation");
+      assert.equal(balanceSchedule.plan.arguments.intervalMs, 10_000);
+      assert.equal(balanceSchedule.plan.arguments.maxRuns, 4);
+
+      const createdFromText = createAutomation({
+        handle: "@sara",
+        text: "run an automation. swap $1 of USDC to EURC every 10 secs for 4 times"
+      });
+      assert.equal(createdFromText.automation.intervalMs, 10_000);
+      assert.equal(createdFromText.automation.intervalMinutes, 0.167);
+      assert.equal(createdFromText.automation.maxRuns, 4);
+      assert.match(createdFromText.automation.payload.text, /swap \$1 of USDC to EURC/i);
+      assert.doesNotMatch(createdFromText.automation.payload.text, /every 10 secs|for 4 times/i);
+
+      const runner = createAutomation({
+        handle: "@sara",
+        text: "sync balances every 10 secs for 2 times",
+        nextRunAt: new Date(Date.now() - 1_000).toISOString()
+      });
+      assert.equal(runner.automation.intervalMs, 10_000);
+      assert.equal(runner.automation.maxRuns, 2);
+
+      for (let i = 0; i < 2; i += 1) {
+        runner.automation.nextRunAt = new Date(Date.now() - 1_000).toISOString();
+        const due = await runDueAutomations({ limit: 20 });
+        assert.ok(due.ran.find((item) => item.automation.id === runner.automation.id));
+      }
+
+      assert.equal(runner.automation.runCount, 2);
+      assert.equal(runner.automation.status, "completed");
+      assert.equal(runner.automation.nextRunAt, null);
+    }
+  ],
+  [
     "creates copy trading and perps proposals as approvals",
     async () => {
       const copy = await callMcpTool("propose_copy_trade", {
@@ -2004,6 +2058,42 @@ const tests = [
       assert.equal(closePerp.signer.backendSignerAllowed, false);
       assert.match(closePerp.execution.reason, /user wallet|Circle user wallet|Set ARC_PERPS/i);
       assert.match(closePerp.narrative.summary, /close-position|wallet signing|No backend signer/i);
+
+      const perpProposal = await runAgentAction({
+        handle: "@sara",
+        text: "long BTC with $1 2x",
+        source: "test-agent-run",
+        idempotencyKey: "test_agent_perp_approval_memory"
+      });
+      assert.equal(perpProposal.ok, true);
+      assert.equal(perpProposal.planned.plan.tool, "propose_perp_trade");
+      assert.equal(perpProposal.result.proposal.status, "requires_confirmation");
+
+      const approvalMemory = planAgentAction({
+        handle: "@sara",
+        text: "approved",
+        source: "test-agent-run"
+      });
+      assert.equal(approvalMemory.plan.tool, "confirm_action");
+      assert.equal(approvalMemory.plan.arguments.approvalId, "__latest_pending__");
+
+      const approved = await runAgentAction({
+        handle: "@sara",
+        text: "approved",
+        source: "test-agent-run",
+        idempotencyKey: "test_agent_latest_approval_confirm"
+      });
+      assert.equal(approved.planned.plan.tool, "confirm_action");
+      assert.equal(approved.result.approval.status, "approved");
+
+      const bridgeStatus = planAgentAction({
+        handle: "@sara",
+        text: "bridge status?",
+        source: "test-agent-run"
+      });
+      assert.equal(bridgeStatus.plan.tool, "get_defi_action_receipt");
+      assert.equal(bridgeStatus.plan.arguments.actionId, "__latest__");
+      assert.equal(bridgeStatus.plan.arguments.type, "bridge");
 
       const unclear = await callMcpTool("run_agent_action", {
         handle: "@sara",

@@ -81,7 +81,7 @@ export const config = {
   },
   automations: {
     workerEnabled: process.env.AUTOMATION_WORKER_ENABLED !== "0",
-    tickMs: Math.max(5_000, Number(process.env.AUTOMATION_WORKER_INTERVAL_MS || 60_000)),
+    tickMs: Math.max(5_000, Number(process.env.AUTOMATION_WORKER_INTERVAL_MS || 10_000)),
     limit: Math.max(1, Number(process.env.AUTOMATION_WORKER_LIMIT || 20))
   },
   settlement: {
