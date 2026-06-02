@@ -669,12 +669,20 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
   if (plan.tool === "close_arc_perp_user_position") {
     const closeArgs = await resolveClosePerpPositionArgs({ handle, args });
     if (closeArgs.ok === false) return closeArgs;
-    return await closeArcPerpPositionWithUserWallet({
+    const result = await closeArcPerpPositionWithUserWallet({
       ...args,
       ...closeArgs,
       handle: args.handle || handle,
       idempotencyKey
     });
+    if (result && result.ok === false) {
+      result.target ||= {
+        positionId: closeArgs.positionId,
+        position: closeArgs.memory?.position || null,
+        resolvedFrom: closeArgs.memory?.resolvedFrom || args.positionRef || null
+      };
+    }
+    return result;
   }
 
   if (plan.tool === "appkit_readiness") {
@@ -1458,7 +1466,28 @@ function extractHandles(text) {
 }
 
 function extractSymbol(text) {
-  const ignored = new Set(["ARC", "BASE", "USDC", "EURC", "CIRBTC", "PRICE", "ORACLE", "PERP"]);
+  const ignored = new Set([
+    "ARC",
+    "BASE",
+    "USDC",
+    "EURC",
+    "CIRBTC",
+    "PRICE",
+    "ORACLE",
+    "PERP",
+    "POSITION",
+    "POSITIONS",
+    "TRADE",
+    "TRADES",
+    "CLOSE",
+    "EXIT",
+    "FLATTEN",
+    "MY",
+    "THE",
+    "LAST",
+    "LATEST",
+    "CURRENT"
+  ]);
   const match = String(text || "").toUpperCase().match(/\b[A-Z]{2,12}\b/g)?.find((item) => !ignored.has(item));
   return match || null;
 }
@@ -1744,7 +1773,28 @@ async function resolveClosePerpPositionArgs({ handle, args = {} } = {}) {
     .filter((position) => position.open)
     .filter((position) => !symbol || position.symbol?.toUpperCase() === symbol)
     .filter((position) => !side || position.side === side);
-  const position = openPositions[0];
+  let position = openPositions[0];
+
+  if (!position) {
+    const proposal = ledger.perpProposals
+      .filter((item) => item.handle === profile.handle)
+      .filter((item) => item.positionId)
+      .filter((item) => ["submitted", "settled", "open"].includes(String(item.status || "").toLowerCase()))
+      .filter((item) => !symbol || String(item.symbol || "").toUpperCase() === symbol)
+      .filter((item) => !side || String(item.side || "").toLowerCase() === side)
+      .slice()
+      .reverse()[0];
+    if (proposal) {
+      position = {
+        id: Number(proposal.positionId),
+        symbol: proposal.symbol,
+        side: proposal.side,
+        owner: arcWallet.address,
+        open: true,
+        source: "agent_memory"
+      };
+    }
+  }
 
   if (!position) {
     const filters = [symbol, side].filter(Boolean).join(" ");

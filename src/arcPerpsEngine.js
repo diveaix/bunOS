@@ -504,8 +504,14 @@ export async function closeArcPerpPositionWithUserWallet({
   const profile = getWalletProfile(handle);
   const wallet = walletForRail(profile, "arc-testnet");
   const before = await getArcPerpsPosition({ positionId }).then((result) => result.position);
+  if (!before?.owner || before.owner === "0x0000000000000000000000000000000000000000") {
+    throw new Error("Position does not exist on ArcPerps");
+  }
   if (before.owner.toLowerCase() !== wallet.address.toLowerCase()) {
     throw new Error("Position does not belong to this user's Arc wallet");
+  }
+  if (!before.open) {
+    throw new Error("Position is already closed");
   }
 
   const close = await submitUserContractExecution({

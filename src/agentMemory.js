@@ -558,7 +558,11 @@ function deriveLastTrade({ memory, defiActions, perpProposals }) {
       txHash: proposal.txHash || proposal.execution?.txHash || null,
       reason: proposal.failureReason || proposal.execution?.reason || null
     })),
-    memory.lastTrade ? { ...memory.lastTrade, at: memory.lastTrade.at || "" } : null
+    memory.lastTrade ? {
+      ...memory.lastTrade,
+      id: memory.lastTrade.id || memory.lastTrade.proposalId || memory.lastTrade.actionId || memory.lastTrade.paymentId || null,
+      at: memory.lastTrade.at || ""
+    } : null
   ].filter(Boolean);
   candidates.sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
   return candidates[0] || null;

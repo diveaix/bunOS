@@ -1933,6 +1933,14 @@ const tests = [
       assert.equal(closePerp.plan.arguments.positionId, 42);
       assert.equal(closePerp.signer.backendSignerAllowed, false);
 
+      const closeNaturalPerp = planAgentAction({
+        handle: "@sara",
+        text: "close my perp position"
+      });
+      assert.equal(closeNaturalPerp.plan.tool, "close_arc_perp_user_position");
+      assert.equal(closeNaturalPerp.plan.arguments.positionRef, "latest_open");
+      assert.equal(closeNaturalPerp.plan.arguments.symbol, undefined);
+
       const balance = planAgentAction({
         handle: "@sara",
         text: "show my balance"
@@ -2054,6 +2062,31 @@ const tests = [
       assert.equal(closePerp.signer.backendSignerAllowed, false);
       assert.match(closePerp.execution.reason, /user wallet|Circle user wallet|Set ARC_PERPS/i);
       assert.match(closePerp.narrative.summary, /close-position|wallet signing|No backend signer/i);
+
+      ledger.perpProposals.push({
+        id: "perp_memory_close_001",
+        handle: "@sara",
+        symbol: "BTC",
+        side: "long",
+        collateralUsd: 1,
+        leverage: 2,
+        settlementRail: "arc-testnet",
+        status: "submitted",
+        positionId: 77,
+        txHash: "0xabc",
+        createdAt: new Date().toISOString()
+      });
+      const closeLatestPerp = await callMcpTool("run_agent_action", {
+        handle: "@sara",
+        text: "close my perp position",
+        source: "test-agent-run"
+      });
+      assert.equal(closeLatestPerp.ok, false);
+      assert.equal(closeLatestPerp.planned.plan.tool, "close_arc_perp_user_position");
+      assert.equal(closeLatestPerp.planned.plan.arguments.symbol, undefined);
+      assert.equal(closeLatestPerp.result.status, "user_wallet_signing_required");
+      assert.equal(closeLatestPerp.result.target?.positionId, 77);
+      assert.doesNotMatch(closeLatestPerp.execution.reason || "", /\bCLOSE\b/);
 
       const perpProposal = await runAgentAction({
         handle: "@sara",
