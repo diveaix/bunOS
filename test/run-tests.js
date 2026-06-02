@@ -88,6 +88,7 @@ import {
   getAgentMetrics,
   listAgentDecisionEvents
 } from "../src/agentObservability.js";
+import { buildAgentMemoryReport } from "../src/agentMemory.js";
 import {
   createAutomation,
   runDueAutomations
@@ -1218,7 +1219,7 @@ const tests = [
     "exposes core Arc/Circle MCP money tools with approval routing",
     async () => {
       const names = mcpTools.map((tool) => tool.name);
-      for (const name of ["create_wallet", "get_balance", "get_wallet_capabilities", "send_usdc", "create_airdrop", "award_airdrop", "list_airdrops", "get_airdrop_receipt", "list_arc_trading_primitives", "bridge_usdc", "demo_bridge_arc_to_base", "quote_swap", "list_approvals", "confirm_action", "get_receipt", "list_defi_actions", "reconcile_defi_action", "get_defi_action_receipt"]) {
+      for (const name of ["create_wallet", "get_balance", "get_agent_memory", "get_wallet_capabilities", "send_usdc", "create_airdrop", "award_airdrop", "list_airdrops", "get_airdrop_receipt", "list_arc_trading_primitives", "bridge_usdc", "demo_bridge_arc_to_base", "quote_swap", "list_approvals", "confirm_action", "get_receipt", "list_defi_actions", "reconcile_defi_action", "get_defi_action_receipt"]) {
         assert.ok(names.includes(name), `${name} missing`);
       }
 
@@ -1650,8 +1651,9 @@ const tests = [
       assert.equal(confirmed.ok, true);
       assert.equal(confirmed.result.job.type, "execute_perp_proposal");
       assert.equal(confirmed.result.worker.ok, true);
-      assert.equal(confirmed.result.proposal.status, "user_wallet_signing_required");
       assert.equal(confirmed.result.proposal.execution.backendSignerAllowed, false);
+      assert.equal(confirmed.result.executionSummary.kind, "perp_trade");
+      assert.equal(confirmed.result.executionSummary.proposalId, confirmed.result.proposal.id);
     }
   ],
   [
@@ -2280,6 +2282,36 @@ const tests = [
         handle: "@sara",
         tool: "malicious_tool"
       }), /backend signer cannot spend/);
+    }
+  ],
+  [
+    "routes memory questions to agent memory and exposes recent trading context",
+    async () => {
+      await callMcpTool("create_wallet", { handle: "@memorytrader" });
+      const proposed = await runAgentAction({
+        handle: "@memorytrader",
+        text: "long BTC with $1 2x",
+        source: "test-memory",
+        fast: true
+      });
+      assert.equal(proposed.planned.plan.tool, "propose_perp_trade");
+      assert.equal(proposed.result.proposal.status, "requires_confirmation");
+
+      const planned = planAgentAction({
+        handle: "@memorytrader",
+        text: "what happened with my last trade?",
+        source: "test-memory"
+      });
+      assert.equal(planned.plan.tool, "get_agent_memory");
+
+      const memory = buildAgentMemoryReport({ handle: "@memorytrader" });
+      assert.equal(memory.ok, true);
+      assert.ok(memory.recent.trades.find((trade) => trade.id === proposed.result.proposal.id));
+      assert.equal(memory.memory.lastTrade.id, proposed.result.proposal.id);
+
+      const mcpMemory = await callMcpTool("get_agent_memory", { handle: "@memorytrader" });
+      assert.equal(mcpMemory.ok, true);
+      assert.ok(mcpMemory.recent.trades.find((trade) => trade.id === proposed.result.proposal.id));
     }
   ],
   [

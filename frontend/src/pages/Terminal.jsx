@@ -552,7 +552,15 @@ function extractExecutionMonitorTarget(data) {
   const actionId = extractDefiActionId(data);
   if (actionId) return { kind: "defi_action", id: actionId };
 
-  const proposalId = data?.execution?.ids?.proposalId || data?.result?.proposal?.id || data?.proposal?.id;
+  const proposalId = data?.execution?.ids?.proposalId
+    || data?.result?.executionSummary?.proposalId
+    || data?.result?.proposal?.id
+    || data?.result?.worker?.result?.proposal?.id
+    || data?.result?.worker?.job?.payload?.proposalId
+    || (data?.approval?.kind === "perp_trade" ? data.approval.targetId : null)
+    || data?.approval?.result?.executionSummary?.proposalId
+    || data?.approval?.result?.proposal?.id
+    || data?.proposal?.id;
   if (proposalId) return { kind: "perp_proposal", id: proposalId };
 
   return null;
@@ -583,8 +591,9 @@ function shouldPollExecution(data, target) {
     return ["queued", "submitted", "pending"].includes(status);
   }
   if (target.kind === "perp_proposal") {
-    const status = String(monitor.lifecycle || data?.result?.proposal?.status || data?.proposal?.status || "").toLowerCase();
-    return ["queued", "submitted", "confirmed"].includes(status);
+    const summary = data?.result?.executionSummary || data?.approval?.result?.executionSummary || {};
+    const status = String(monitor.lifecycle || summary.status || data?.result?.proposal?.status || data?.approval?.result?.proposal?.status || data?.proposal?.status || "").toLowerCase();
+    return !summary.txHash && ["approved", "queued", "submitted", "confirmed", "succeeded", "running"].includes(status);
   }
   return false;
 }
@@ -857,6 +866,9 @@ function formatResult(data) {
   if (tool?.includes("automation") || result.automation || Array.isArray(result.automations)) {
     return formatAutomationResult(result.automation || result.automations ? result : data);
   }
+  if (tool === "get_agent_memory" || result.memoryReport || result.memory?.lastTrade || result.recent?.trades) {
+    return renderAgentMemory(result.memoryReport || result);
+  }
   const readable = data.narrative?.summary || data.execution?.reason || data.reason || data.clarification;
   if (readable) return esc(friendlyReason(readable));
   let summary = "";
@@ -981,6 +993,51 @@ function formatResult(data) {
   return summary;
 }
 
+function renderAgentMemory(report = {}) {
+  const recent = report.recent || {};
+  const memory = report.memory || {};
+  const lastTrade = memory.lastTrade || recent.trades?.[0] || null;
+  const activeAutomations = (recent.automations || []).filter((item) => item.status === "active");
+  const pending = recent.pendingActions || [];
+  const failures = recent.failures || memory.recentFailures || [];
+  const title = report.summary || (lastTrade ? "Here is what I remember about the last trade." : "Here is the current wallet memory.");
+  const rows = [];
+  if (lastTrade) {
+    rows.push(["Last trade", esc(memoryTradeLine(lastTrade))]);
+    rows.push(["Trade status", statusBadge(lastTrade.status || "unknown", memoryStatusType(lastTrade.status))]);
+    rows.push(["Trade tx", renderTxLink(lastTrade.txHash, lastTrade.explorerUrl)]);
+  }
+  rows.push(["Pending", esc(pending.length ? `${pending.length} action(s)` : "none")]);
+  rows.push(["Automations", esc(activeAutomations.length ? `${activeAutomations.length} active` : "none active")]);
+  if (activeAutomations[0]) {
+    const a = activeAutomations[0];
+    rows.push(["Top automation", esc(`${a.name || a.kind || a.id} - ${a.maxRuns ? `${a.runCount || 0}/${a.maxRuns}` : `${a.runCount || 0} runs`}`)]);
+  }
+  if (failures[0]) rows.push(["Last issue", esc(friendlyReason(failures[0].reason || failures[0].status || "unknown"))]);
+  rows.push(["Next", esc(report.nextAction || "ready")]);
+  return `${esc(title)}${renderResultCard(rows)}`;
+}
+
+function memoryTradeLine(trade = {}) {
+  if (trade.type === "perp") {
+    return `${trade.side || "perp"} ${trade.symbol || ""}${trade.leverage ? ` ${trade.leverage}x` : ""}${trade.positionId ? `, position #${trade.positionId}` : ""}`;
+  }
+  if (trade.type === "swap") {
+    return `swap ${trade.amount || "some"} ${trade.fromToken || "USDC"} to ${trade.toToken || "token"}`;
+  }
+  if (trade.type === "bridge") {
+    return `bridge ${trade.amount || "some"} ${trade.fromToken || "USDC"}`;
+  }
+  return trade.tool || trade.intent || trade.type || "action";
+}
+
+function memoryStatusType(status) {
+  const value = String(status || "").toLowerCase();
+  if (["settled", "submitted", "succeeded", "completed"].includes(value)) return "ok";
+  if (["failed", "rejected", "quote_unavailable", "execution_failed"].includes(value)) return "fail";
+  return "warn";
+}
+
 function renderPerpProposalResult({ result = {}, intent = {}, data = {} } = {}) {
   const proposal = result.proposal || {};
   let summary = `I prepared the perp trade. Review it before anything moves.`;
@@ -1057,28 +1114,55 @@ function userFriendlyExecutionTitle(execution = {}) {
 }
 
 function formatApprovalResult(data) {
-  const result = data.result || {};
-  const worker = result.worker || data.worker?.ran?.find?.((item) => item?.job?.id === result.job?.id) || data.worker?.ran?.[0] || {};
-  const job = worker.job || result.job || result.result?.job || {};
-  const execution = worker.result?.execution || result.execution || result.action?.execution || result.proposal?.execution || {};
-  const proposal = result.proposal || {};
-  const action = result.action || {};
-  const status = worker.result?.status || proposal.status || action.status || execution.status || job.status || "approved";
-  const txHash = execution.txHash || proposal.txHash || action.txHash || worker.result?.txHash;
-  const explorerUrl = execution.explorerUrl || action.explorerUrl || worker.result?.explorerUrl;
-  const reason = worker.error || execution.reason || proposal.execution?.reason || action.failureReason || result.reason || "";
-  const finished = ["settled", "submitted", "succeeded", "approved"].includes(String(status).toLowerCase());
+  const payload = approvalExecutionPayload(data);
+  const status = payload.status || "approved";
+  const txHash = payload.txHash;
+  const reason = payload.reason || "";
+  const kind = payload.kind || data.approval?.kind || "action";
+  const lowerStatus = String(status).toLowerCase();
+  const failed = ["failed", "rejected", "execution_failed", "user_wallet_signing_required", "execution_not_enabled"].includes(lowerStatus)
+    || (!txHash && reason && /failed|not enough|missing|disabled|could not|not configured/i.test(reason));
   const title = txHash
-    ? "Approved. I submitted it on-chain."
-    : finished
-      ? "Approved. I ran the execution step."
-      : "Approved, but I could not finish execution yet.";
+    ? (kind === "perp_trade" ? "Perp trade submitted on Arc." : "Approved. I submitted it on-chain.")
+    : failed
+      ? "Approved, but execution did not finish."
+      : kind === "perp_trade"
+        ? "Approved. I am checking the perp execution now."
+        : "Approved. I am checking the execution now.";
   return `${esc(title)}
 ${renderResultCard([
-  ["Status", statusBadge(status, txHash || finished ? "ok" : "warn")],
-  ["Transaction", renderTxLink(txHash, explorerUrl)],
-  ["Next", esc(reason || result.nextAction || action.nextAction || "check activity/receipt")],
+  ["Status", statusBadge(status, txHash ? "ok" : failed ? "fail" : "warn")],
+  ["Transaction", renderTxLink(txHash, payload.explorerUrl)],
+  ["Next", esc(friendlyReason(reason || payload.nextAction || "I will keep checking the receipt."))],
 ])}`;
+}
+
+function approvalExecutionPayload(data = {}) {
+  const result = data.result || data.approval?.result || {};
+  const summary = result.executionSummary || data.approval?.result?.executionSummary || {};
+  const worker = result.worker
+    || data.worker?.ran?.find?.((item) => item?.job?.id === result.job?.id)
+    || data.worker?.ran?.[0]
+    || {};
+  const workerResult = worker.result || {};
+  const job = worker.job || result.job || workerResult.job || {};
+  const proposal = workerResult.proposal || result.proposal || {};
+  const action = workerResult.action || result.action || {};
+  const payment = workerResult.payment || result.payment || {};
+  const execution = workerResult.execution
+    || result.execution
+    || action.execution
+    || proposal.execution
+    || payment.transfer
+    || {};
+  return {
+    kind: summary.kind || data.approval?.kind,
+    status: summary.status || execution.status || proposal.status || action.status || payment.status || workerResult.status || job.status || data.approval?.status || "approved",
+    txHash: summary.txHash || execution.txHash || proposal.txHash || action.txHash || payment.transfer?.txHash || workerResult.txHash || null,
+    explorerUrl: summary.explorerUrl || execution.explorerUrl || action.explorerUrl || payment.transfer?.explorerUrl || workerResult.explorerUrl || null,
+    reason: summary.reason || worker.error || workerResult.error || workerResult.reason || execution.reason || proposal.execution?.reason || action.failureReason || job.lastError || result.reason || "",
+    nextAction: summary.nextAction || result.nextAction || action.nextAction || execution.nextAction || data.nextAction || ""
+  };
 }
 
 function formatClarification(data) {

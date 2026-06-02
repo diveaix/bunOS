@@ -66,6 +66,7 @@ import { circleUserSigner, readOnlySigner, userWalletSigningRequired } from "./s
 import { composeExecutionReplyWithModel, getAgentModelReadiness, planIntentWithModel } from "./modelPlanner.js";
 import {
   buildAgentDecision,
+  buildAgentMemoryReport,
   buildAgentStateSnapshot,
   rememberAgentExecution
 } from "./agentMemory.js";
@@ -93,6 +94,7 @@ import {
 
 const ALLOWED_TOOLS = new Set([
   "get_balance",
+  "get_agent_memory",
   "get_wallet_capabilities",
   "sync_circle_balances",
   "request_testnet_usdc",
@@ -567,6 +569,10 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
 
   if (plan.tool === "get_wallet_capabilities") {
     return getWalletCapabilities(args.handle || handle);
+  }
+
+  if (plan.tool === "get_agent_memory") {
+    return buildAgentMemoryReport({ ...args, handle: args.handle || handle });
   }
 
   if (plan.tool === "get_balance") {
@@ -1071,6 +1077,14 @@ function parseToolCommand(text, defaultSettlementRail) {
     });
   }
 
+  if (/\b(memory|remember|last trade|recent trades?|trade history|what happened|what did you do|what are you doing|what happened with|status update|catch me up|recap)\b/.test(lower)
+    && /\b(agent|wallet|trade|trades?|swap|bridge|perp|position|automation|actions?|history|last|recent|you)\b/.test(lower)) {
+    return toolIntent("get_agent_memory", { limit: extractLimit(raw) || 8 });
+  }
+  if (/\b(perp|position)\b.*\b(status|update|receipt|what happened)\b|\b(status|update|receipt|what happened)\b.*\b(perp|position)\b/.test(lower)) {
+    return toolIntent("get_agent_memory", { limit: extractLimit(raw) || 8 });
+  }
+
   if (targetAllocations && /\b(keep|target|allocate|allocation|portfolio|strategy)\b/.test(lower)) {
     return toolIntent("create_strategy_policy", {
       targetAllocations,
@@ -1356,6 +1370,7 @@ function signerForTool(tool, args) {
 
 function reasonForTool(tool) {
   if (tool === "get_balance") return "The agent will read the current wallet profile.";
+  if (tool === "get_agent_memory") return "The agent will read recent trades, perps, automations, approvals, and failures from its wallet memory.";
   if (tool === "sync_circle_balances") return "The agent will refresh Circle balances into the local ledger.";
   if (tool.includes("airdrop")) return "The agent will use the Arc airdrop campaign ledger and Circle user-wallet payment path.";
   if (tool.startsWith("appkit")) return "The agent will use the Arc AppKit/Circle user-wallet path when configured.";

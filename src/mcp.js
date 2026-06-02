@@ -79,6 +79,9 @@ import {
 import { getMarketIntelligence } from "./marketIntelligence.js";
 import { refreshMarketFeedSnapshot } from "./marketFeeds.js";
 import {
+  buildAgentMemoryReport
+} from "./agentMemory.js";
+import {
   createMandate,
   deleteMandate,
   listMandates,
@@ -114,6 +117,18 @@ export const mcpTools = [
         idempotencyKey: { type: "string" }
       },
       required: ["text"]
+    }
+  },
+  {
+    name: "get_agent_memory",
+    description: "Read the agent's wallet memory: recent trades, perps, pending approvals, active automations, failures, and last known action.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        limit: { type: "number" }
+      },
+      required: ["handle"]
     }
   },
   {
@@ -1071,6 +1086,10 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "list_agent_tools") {
     return listAgentTools();
+  }
+
+  if (tool === "get_agent_memory") {
+    return buildAgentMemoryReport(args);
   }
 
   if (tool === "list_arc_trading_primitives") {

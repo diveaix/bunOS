@@ -81,6 +81,128 @@ export function buildAgentStateSnapshot({ handle, planned } = {}) {
   };
 }
 
+export function buildAgentMemoryReport({ handle = "@sara", limit = 8 } = {}) {
+  const normalizedHandle = normalizeHandleLocal(handle);
+  const profile = safe(() => getWalletProfile(normalizedHandle), null);
+  const memory = getAgentMemory(normalizedHandle);
+  const max = Math.max(1, Math.min(Number(limit) || 8, 25));
+  const defiActions = recentForHandle(ledger.defiActions, normalizedHandle, max);
+  const payments = recentForHandle(ledger.payments, normalizedHandle, max, (item) => (
+    item.senderHandle === normalizedHandle || item.recipientHandle === normalizedHandle
+  ));
+  const approvals = recentForHandle(ledger.approvals, normalizedHandle, max);
+  const perpProposals = recentForHandle(ledger.perpProposals, normalizedHandle, max);
+  const automations = recentForHandle(ledger.automations, normalizedHandle, max);
+  const openPerps = perpProposals.filter((proposal) => (
+    proposal.positionId && ["submitted", "settled", "open"].includes(String(proposal.status || "").toLowerCase())
+  ));
+  const pendingActions = [
+    ...approvals.filter((approval) => approval.status === "pending").map((approval) => ({
+      kind: "approval",
+      id: approval.id,
+      targetId: approval.targetId,
+      status: approval.status,
+      label: approval.title || approval.kind
+    })),
+    ...defiActions.filter((action) => ["quoted", "confirmed", "submitted"].includes(String(action.status || "").toLowerCase())).map((action) => ({
+      kind: action.type,
+      id: action.id,
+      status: action.status,
+      label: describeDefiAction(action)
+    })),
+    ...automations.filter((automation) => automation.status === "active").map((automation) => ({
+      kind: "automation",
+      id: automation.id,
+      status: automation.status,
+      label: automation.name || automation.payload?.text || automation.kind,
+      runs: automation.maxRuns ? `${automation.runCount || 0}/${automation.maxRuns}` : `${automation.runCount || 0}`
+    }))
+  ].slice(0, max);
+  const lastTrade = deriveLastTrade({ memory, defiActions, perpProposals });
+  const failures = [
+    ...defiActions.filter((action) => failedStatus(action.status)).map((action) => ({
+      id: action.id,
+      kind: action.type,
+      status: action.status,
+      reason: action.failureReason || action.reason || action.lastExecutionError || null,
+      at: action.failedAt || action.completedAt || action.createdAt || null
+    })),
+    ...perpProposals.filter((proposal) => failedStatus(proposal.status)).map((proposal) => ({
+      id: proposal.id,
+      kind: "perp",
+      status: proposal.status,
+      reason: proposal.failureReason || proposal.execution?.reason || null,
+      at: proposal.executedAt || proposal.confirmedAt || proposal.createdAt || null
+    })),
+    ...(memory.recentFailures || [])
+  ].slice(0, max);
+
+  return {
+    ok: Boolean(profile),
+    handle: normalizedHandle,
+    wallet: profile ? {
+      address: profile.walletAddress || null,
+      onboarded: Boolean(profile.onboarded),
+      totalBalanceUsd: profile.balance || 0,
+      rails: profile.wallets || []
+    } : null,
+    summary: summarizeMemory({ lastTrade, pendingActions, openPerps, failures, automations }),
+    memory: {
+      riskProfile: memory.riskProfile || "balanced",
+      lastAction: memory.lastAction || null,
+      lastTrade,
+      recentDecisions: memory.recentDecisions || [],
+      recentFailures: failures
+    },
+    recent: {
+      trades: [
+        ...summarizeRecentActions(defiActions),
+        ...perpProposals.map((proposal) => ({
+          id: proposal.id,
+          type: "perp",
+          status: proposal.status,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          collateralUsd: proposal.collateralUsd,
+          leverage: proposal.leverage,
+          positionId: proposal.positionId || null,
+          txHash: proposal.txHash || proposal.execution?.txHash || null,
+          reason: proposal.failureReason || proposal.execution?.reason || null
+        }))
+      ].slice(0, max),
+      payments: summarizeRecentPayments(payments),
+      approvals: approvals.map((approval) => ({
+        id: approval.id,
+        kind: approval.kind,
+        status: approval.status,
+        targetId: approval.targetId,
+        title: approval.title,
+        risk: approval.risk
+      })),
+      automations: automations.map((automation) => ({
+        id: automation.id,
+        name: automation.name,
+        kind: automation.kind,
+        status: automation.status,
+        intervalMs: automation.intervalMs,
+        maxRuns: automation.maxRuns || null,
+        runCount: automation.runCount || 0,
+        lastRunAt: automation.lastRunAt || null,
+        nextRunAt: automation.nextRunAt || null,
+        lastResult: automation.lastResult ? {
+          status: automation.lastResult.status || (automation.lastResult.ok === false ? "failed" : "ok"),
+          txHash: automation.lastResult.txHash || automation.lastResult.execution?.txHash || null,
+          reason: automation.lastResult.reason || automation.lastResult.error || automation.lastError || null
+        } : null
+      })),
+      openPerps,
+      pendingActions,
+      failures
+    },
+    nextAction: pendingActions.length ? "ask_about_pending_action_or_continue_monitoring" : "ready_for_next_instruction"
+  };
+}
+
 export function buildAgentDecision({ planned, result = {}, execution = {}, state = null } = {}) {
   const status = String(execution.status || result.status || "").toLowerCase();
   const ok = execution.ok !== false && result.ok !== false && !failedStatus(status);
@@ -408,6 +530,70 @@ function recentForHandle(rows = [], handle, limit, predicate) {
 
 function failedStatus(status) {
   return ["failed", "rejected", "quote_unavailable", "execution_not_enabled", "wallet_not_found", "position_not_found"].includes(String(status || "").toLowerCase());
+}
+
+function deriveLastTrade({ memory, defiActions, perpProposals }) {
+  const candidates = [
+    ...defiActions.map((action) => ({
+      at: action.completedAt || action.confirmedAt || action.createdAt || "",
+      id: action.id,
+      type: action.type,
+      status: action.status,
+      fromToken: action.request?.fromToken,
+      toToken: action.request?.toToken,
+      amount: action.request?.amount || action.request?.amountUsd,
+      txHash: action.txHash || action.execution?.txHash || null,
+      reason: action.failureReason || action.reason || action.lastExecutionError || null
+    })),
+    ...perpProposals.map((proposal) => ({
+      at: proposal.executedAt || proposal.confirmedAt || proposal.createdAt || "",
+      id: proposal.id,
+      type: "perp",
+      status: proposal.status,
+      symbol: proposal.symbol,
+      side: proposal.side,
+      amount: proposal.collateralUsd,
+      leverage: proposal.leverage,
+      positionId: proposal.positionId || null,
+      txHash: proposal.txHash || proposal.execution?.txHash || null,
+      reason: proposal.failureReason || proposal.execution?.reason || null
+    })),
+    memory.lastTrade ? { ...memory.lastTrade, at: memory.lastTrade.at || "" } : null
+  ].filter(Boolean);
+  candidates.sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
+  return candidates[0] || null;
+}
+
+function summarizeMemory({ lastTrade, pendingActions, openPerps, failures, automations }) {
+  if (lastTrade) {
+    return `Last trade: ${lastTrade.type || lastTrade.tool} ${lastTrade.status || "unknown"}${lastTrade.txHash ? " with an on-chain transaction." : "."}`;
+  }
+  if (pendingActions.length) {
+    return `There are ${pendingActions.length} pending action(s) to watch or approve.`;
+  }
+  if (openPerps.length) {
+    return `There are ${openPerps.length} recent open perp position(s) in memory.`;
+  }
+  if (failures.length) {
+    return `No recent successful trade found. Last issue: ${failures[0].reason || failures[0].status}.`;
+  }
+  const activeAutomations = automations.filter((automation) => automation.status === "active").length;
+  if (activeAutomations) {
+    return `${activeAutomations} automation(s) are active.`;
+  }
+  return "No recent trading activity is recorded for this wallet yet.";
+}
+
+function describeDefiAction(action) {
+  const req = action.request || {};
+  if (action.type === "bridge") return `Bridge ${req.amount || req.amountUsd || "some"} ${req.fromToken || "USDC"} from ${req.fromRail || "Arc"} to ${req.toRail || "destination"}`;
+  if (action.type === "swap") return `Swap ${req.amount || req.amountUsd || "some"} ${req.fromToken || "USDC"} to ${req.toToken || "token"}`;
+  return action.type || "DeFi action";
+}
+
+function normalizeHandleLocal(handle) {
+  const value = String(handle || "").trim().toLowerCase();
+  return value.startsWith("@") ? value : `@${value}`;
 }
 
 function check(name, ok, message) {

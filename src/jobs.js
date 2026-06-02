@@ -123,6 +123,10 @@ export async function runJob({ jobId }) {
 }
 
 function markJobTargetFailure(job, error) {
+  if (job.type === "execute_perp_proposal") {
+    markPerpJobTargetFailure(job, error);
+    return;
+  }
   if (job.type !== "execute_defi_action") return;
   const action = ledger.defiActions.find((item) => item.id === job.payload?.actionId);
   if (!action) return;
@@ -147,6 +151,30 @@ function markJobTargetFailure(job, error) {
     };
   } else {
     action.nextAction = "retry_execution_worker";
+  }
+}
+
+function markPerpJobTargetFailure(job, error) {
+  const proposal = ledger.perpProposals.find((item) => item.id === job.payload?.proposalId);
+  if (!proposal) return;
+
+  proposal.execution = {
+    ...(proposal.execution || {}),
+    ok: false,
+    status: job.status === "failed" ? "failed" : "retrying",
+    mode: proposal.execution?.mode || "circle_user_wallet_contract_execution",
+    backendSignerAllowed: false,
+    reason: error.message,
+    jobId: job.id,
+    attempts: job.attempts
+  };
+  proposal.failureReason = error.message;
+  proposal.lastExecutionAttemptAt = job.updatedAt;
+  if (job.status === "failed") {
+    proposal.status = "execution_failed";
+    proposal.failedAt = job.updatedAt;
+  } else {
+    proposal.status = "confirmed";
   }
 }
 

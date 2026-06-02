@@ -9,6 +9,7 @@ import { redactSensitive } from "./redaction.js";
 import { getArcReadiness } from "./arcRpc.js";
 import { confirmAction } from "./agentActions.js";
 import { listAgentTools, planAgentActionWithModel, runAgentAction } from "./agentPlanner.js";
+import { buildAgentMemoryReport } from "./agentMemory.js";
 import {
   getArcPerpsPosition,
   getArcPerpsReadiness,
@@ -746,6 +747,13 @@ export const server = http.createServer(async (req, res) => {
         idempotencyKey: key
       });
       return jsonPersisted(res, terminalAgentResponse(body, result));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/agent/memory") {
+      return json(res, sanitizeAgentMemoryReport(buildAgentMemoryReport({
+        handle: url.searchParams.get("handle") || "@sara",
+        limit: url.searchParams.get("limit") || 8
+      })));
     }
 
     if (req.method === "GET" && url.pathname === "/mcp") {
@@ -1821,8 +1829,14 @@ function sanitizeAgentResult(result = {}) {
   if (result.proposal) {
     sanitized.proposal = result.proposal;
   }
+  if (result.executionSummary) {
+    sanitized.executionSummary = sanitizeExecutionSummary(result.executionSummary);
+  }
   if (result.automation) {
     sanitized.automation = sanitizeAutomation(result.automation);
+  }
+  if (result.memory || result.recent?.trades) {
+    sanitized.memoryReport = sanitizeAgentMemoryReport(result);
   }
   if (Array.isArray(result.automations)) {
     sanitized.automations = result.automations.map(sanitizeAutomation);
@@ -1837,6 +1851,110 @@ function sanitizeAgentResult(result = {}) {
     sanitized.approval = result.approval;
   }
   return dropUndefined(sanitized);
+}
+
+function sanitizeExecutionSummary(summary = {}) {
+  return dropUndefined({
+    kind: summary.kind,
+    targetId: summary.targetId,
+    status: summary.status,
+    txHash: summary.txHash || null,
+    explorerUrl: summary.explorerUrl || null,
+    reason: cleanTerminalReason(summary.reason),
+    proposalId: summary.proposalId || null,
+    actionId: summary.actionId || null,
+    paymentId: summary.paymentId || null,
+    jobStatus: summary.jobStatus || null,
+    attempts: summary.attempts || null,
+    nextAction: summary.nextAction || null
+  });
+}
+
+function sanitizeAgentMemoryReport(report = {}) {
+  return dropUndefined({
+    ok: report.ok,
+    handle: report.handle,
+    summary: cleanTerminalReason(report.summary),
+    wallet: report.wallet ? {
+      address: report.wallet.address || null,
+      onboarded: report.wallet.onboarded,
+      totalBalanceUsd: report.wallet.totalBalanceUsd
+    } : undefined,
+    memory: report.memory ? {
+      riskProfile: report.memory.riskProfile,
+      lastAction: report.memory.lastAction ? sanitizeMemoryItem(report.memory.lastAction) : null,
+      lastTrade: report.memory.lastTrade ? sanitizeMemoryItem(report.memory.lastTrade) : null,
+      recentDecisions: Array.isArray(report.memory.recentDecisions)
+        ? report.memory.recentDecisions.slice(0, 8).map(sanitizeMemoryItem)
+        : [],
+      recentFailures: Array.isArray(report.memory.recentFailures)
+        ? report.memory.recentFailures.slice(0, 8).map(sanitizeMemoryItem)
+        : []
+    } : undefined,
+    recent: report.recent ? {
+      trades: Array.isArray(report.recent.trades) ? report.recent.trades.slice(0, 8).map(sanitizeMemoryItem) : [],
+      payments: Array.isArray(report.recent.payments) ? report.recent.payments.slice(0, 8).map(sanitizeMemoryItem) : [],
+      approvals: Array.isArray(report.recent.approvals) ? report.recent.approvals.slice(0, 8).map(sanitizeMemoryItem) : [],
+      automations: Array.isArray(report.recent.automations) ? report.recent.automations.slice(0, 8).map((automation) => ({
+        id: automation.id,
+        name: automation.name,
+        kind: automation.kind,
+        status: automation.status,
+        intervalMs: automation.intervalMs,
+        maxRuns: automation.maxRuns,
+        runCount: automation.runCount,
+        lastRunAt: automation.lastRunAt,
+        nextRunAt: automation.nextRunAt,
+        lastResult: automation.lastResult ? sanitizeMemoryItem(automation.lastResult) : null
+      })) : [],
+      openPerps: Array.isArray(report.recent.openPerps) ? report.recent.openPerps.slice(0, 8).map(sanitizeMemoryItem) : [],
+      pendingActions: Array.isArray(report.recent.pendingActions) ? report.recent.pendingActions.slice(0, 8).map(sanitizeMemoryItem) : [],
+      failures: Array.isArray(report.recent.failures) ? report.recent.failures.slice(0, 8).map(sanitizeMemoryItem) : []
+    } : undefined,
+    nextAction: report.nextAction
+  });
+}
+
+function sanitizeMemoryItem(item = {}) {
+  const allowed = [
+    "id",
+    "kind",
+    "type",
+    "tool",
+    "intent",
+    "status",
+    "at",
+    "label",
+    "targetId",
+    "title",
+    "risk",
+    "amount",
+    "amountUsd",
+    "collateralUsd",
+    "fromToken",
+    "toToken",
+    "symbol",
+    "side",
+    "leverage",
+    "positionId",
+    "paymentId",
+    "actionId",
+    "proposalId",
+    "runCount",
+    "runs",
+    "settlementRail",
+    "senderHandle",
+    "recipientHandle",
+    "nextAction",
+    "txHash"
+  ];
+  const output = {};
+  for (const key of allowed) {
+    if (item[key] !== undefined) output[key] = item[key];
+  }
+  const reason = cleanTerminalReason(item.reason || item.error);
+  if (reason) output.reason = reason;
+  return dropUndefined(output);
 }
 
 function sanitizeAutomation(automation = {}) {
