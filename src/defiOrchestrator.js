@@ -20,12 +20,32 @@ import {
   applyRouteIntelligenceToSimulation
 } from "./marketIntelligence.js";
 import { evaluateMandatesForAction } from "./mandates.js";
+import {
+  checkRouteCapability,
+  listRouteCapabilities,
+  probeDefaultRoutes,
+  probeRouteCapability,
+  routeCapabilityForUi
+} from "./routeRegistry.js";
 
 export function listDefiTools() {
   return {
     ...listDefiProtocols(),
-    execution: getDefiExecutionReadiness()
+    execution: getDefiExecutionReadiness(),
+    routeCapabilities: routeCapabilityForUi()
   };
+}
+
+export function listDefiRouteCapabilities(args = {}) {
+  return listRouteCapabilities(args);
+}
+
+export async function probeDefiRouteCapability(args = {}) {
+  return await probeRouteCapability(args);
+}
+
+export async function probeDefiRouteCapabilities(args = {}) {
+  return await probeDefaultRoutes(args);
 }
 
 export async function quoteDefiRoute(input) {
@@ -76,6 +96,36 @@ export async function quoteDefiRoute(input) {
     return { ok: false, action: record, policy, simulation: record.simulation, marketIntelligence: record.marketIntelligence, reason: policy.reason, nextAction: "adjust_trade_or_fund_wallet" };
   }
 
+  const routeCapability = checkRouteCapability(action);
+  record.routeCapability = routeCapability.route || {
+    status: routeCapability.status,
+    descriptor: routeCapability.descriptor
+  };
+  if (!routeCapability.ok) {
+    record.status = "quote_unavailable";
+    record.reason = routeCapability.reason;
+    record.suggestions = routeCapability.suggestions;
+    record.signer = userWalletSigningRequired({
+      operation: record.type,
+      settlementRail: action.fromRail,
+      reason: "No live route is registered for this user action."
+    });
+    record.completedAt = new Date().toISOString();
+    attachMarketIntelligence({ user, record });
+    recordEvent("defi_action_route_capability_unavailable", record);
+    return {
+      ok: false,
+      action: record,
+      policy,
+      simulation: record.simulation,
+      routeCapability,
+      marketIntelligence: record.marketIntelligence,
+      reason: routeCapability.reason,
+      suggestions: routeCapability.suggestions,
+      nextAction: routeCapability.nextAction || "choose_supported_route"
+    };
+  }
+
   const fromAddress = input.fromAddress || walletForRail(wallet, action.fromRail)?.address || wallet.walletAddress;
   const toAddress = input.toAddress || walletForRail(wallet, action.toRail)?.address || fromAddress;
   let quote;
@@ -115,6 +165,7 @@ export async function quoteDefiRoute(input) {
   record.policy = policy;
   record.simulation = simulation;
   record.quote = quote;
+  record.routeCapability = routeCapability.route || record.routeCapability;
   record.mandateCheck = evaluateMandatesForAction({
     handle: user.handle,
     action,

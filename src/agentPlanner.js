@@ -26,6 +26,7 @@ import {
   confirmDefiAction,
   getDefiActionReceipt,
   listDefiActions,
+  listDefiRouteCapabilities,
   listDefiTools,
   listPerpMarkets,
   quoteDefiRoute
@@ -133,6 +134,7 @@ const ALLOWED_TOOLS = new Set([
   "appkit_unified_balance",
   "resolve_x_handle",
   "list_defi_tools",
+  "list_route_capabilities",
   "list_defi_actions",
   "confirm_defi_action",
   "reconcile_defi_action",
@@ -729,6 +731,10 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
     return listDefiTools();
   }
 
+  if (plan.tool === "list_route_capabilities") {
+    return listDefiRouteCapabilities(args);
+  }
+
   if (plan.tool === "list_defi_actions") {
     return listDefiActions(args);
   }
@@ -1316,6 +1322,15 @@ function parseToolCommand(text, defaultSettlementRail) {
   if (/\bdefi\b.*\btools?\b|\bwhat defi/.test(lower)) {
     return toolIntent("list_defi_tools");
   }
+  if (/\b(live|available|supported|route|routes|routable|tradable)\b/.test(lower)
+    && /\b(swap|bridge|route|routes|pairs?)\b/.test(lower)
+    && /\b(show|list|what|which|available|live|supported)\b/.test(lower)) {
+    return toolIntent("list_route_capabilities", {
+      status: /\b(live|available|routable|tradable)\b/.test(lower) ? "live" : undefined,
+      type: /\bbridge\b/.test(lower) ? "bridge" : /\b(swap|pairs?)\b/.test(lower) ? "swap" : undefined,
+      limit: extractLimit(raw) || 25
+    });
+  }
   if (/\b(arc|trading)\b.*\bprimitives?\b|\bwhat can.*\b(trade|arc)\b/.test(lower)) {
     return toolIntent("list_arc_trading_primitives");
   }
@@ -1343,6 +1358,7 @@ function withAgentHandle(tool, args, handle) {
     "appkit_readiness",
     "list_appkit_capabilities",
     "list_defi_tools",
+    "list_route_capabilities",
     "list_arc_trading_primitives",
     "quote_arc_perp_position",
     "read_arc_perps_oracle_price",
@@ -1394,6 +1410,7 @@ function reasonForTool(tool) {
   if (tool === "get_market_feed_snapshot") return "The agent will refresh external market feeds and mark unavailable data as stale instead of inventing prices.";
   if (tool.includes("mandate")) return "The agent will save or inspect standing trading rules and enforce them before future trades.";
   if (tool.includes("automation")) return "The agent will create or manage a recurring automation through the same policy-gated execution path.";
+  if (tool === "list_route_capabilities") return "The agent will read the live route registry before suggesting swaps or bridges.";
   if (tool.includes("strategy") || tool.includes("rebalance")) return "The agent will create a portfolio strategy plan without executing trades automatically.";
   if (tool.includes("defi")) return "The agent will use the DeFi action ledger and user-wallet execution provider.";
   return "The agent will call the matching allowlisted tool.";

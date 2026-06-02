@@ -130,8 +130,11 @@ import {
   confirmDefiAction,
   getDefiActionReceipt,
   listDefiActions,
+  listDefiRouteCapabilities,
   listDefiTools,
   listPerpMarkets,
+  probeDefiRouteCapabilities,
+  probeDefiRouteCapability,
   quoteDefiRoute,
   searchPredictionMarkets
 } from "./defiOrchestrator.js";
@@ -192,7 +195,13 @@ export const server = http.createServer(async (req, res) => {
         },
         defi: {
           actions: ledger.defiActions.length,
-          liveAdapters: config.defi.liveAdapters
+          liveAdapters: config.defi.liveAdapters,
+          routeCapabilities: {
+            total: ledger.routeCapabilities.length,
+            live: ledger.routeCapabilities.filter((route) => route.status === "live").length,
+            probeEnabled: config.defi.routeProbeEnabled,
+            probeIntervalMs: config.defi.routeProbeIntervalMs
+          }
         },
         ai: getAgentModelReadiness()
       });
@@ -942,6 +951,25 @@ export const server = http.createServer(async (req, res) => {
       return jsonPersisted(res, await quoteDefiRoute(body));
     }
 
+    if (req.method === "GET" && url.pathname === "/api/defi/routes") {
+      return json(res, listDefiRouteCapabilities({
+        type: url.searchParams.get("type"),
+        fromRail: url.searchParams.get("fromRail"),
+        toRail: url.searchParams.get("toRail"),
+        status: url.searchParams.get("status"),
+        includeHidden: url.searchParams.get("includeHidden") === "1",
+        limit: url.searchParams.get("limit") || 100
+      }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/defi/routes/probe") {
+      const body = await readJson(req);
+      const result = body?.type
+        ? await probeDefiRouteCapability(body)
+        : await probeDefiRouteCapabilities(body);
+      return jsonPersisted(res, result);
+    }
+
     if (req.method === "POST" && url.pathname === "/api/social/proposals") {
       const body = await readJson(req);
       return jsonPersisted(res, proposeCopyTrade(body));
@@ -1181,6 +1209,7 @@ export const ready = loadStore();
 await ready;
 
 let backgroundWorkerRunning = false;
+let lastRouteProbeAt = 0;
 
 if (!process.env.VERCEL) {
   server.listen(port, () => {
@@ -1215,19 +1244,35 @@ async function runBackgroundWorkerTick() {
   backgroundWorkerRunning = true;
 
   try {
-    const [jobs, automations, oracleSync] = await Promise.all([
+    const [jobs, automations, oracleSync, routeProbe] = await Promise.all([
       runDueJobs({ limit: config.automations.limit }),
       runDueAutomations({ limit: config.automations.limit }),
-      safeOracleSync()
+      safeOracleSync(),
+      safeRouteProbe()
     ]);
 
     const oracleUpdates = oracleSync.ok ? oracleSync.updates.filter((item) => !item.skipped).length : 0;
-    if (jobs.ran.length || automations.ran.length || oracleUpdates) {
+    const routeProbeUpdates = routeProbe.ok ? Number(routeProbe.probed || 0) : 0;
+    if (jobs.ran.length || automations.ran.length || oracleUpdates || routeProbeUpdates) {
       await persistStore();
-      console.log(`Background worker ran ${jobs.ran.length} jobs, ${automations.ran.length} automations, and ${oracleUpdates} oracle updates`);
+      console.log(`Background worker ran ${jobs.ran.length} jobs, ${automations.ran.length} automations, ${oracleUpdates} oracle updates, and ${routeProbeUpdates} route probes`);
     }
   } finally {
     backgroundWorkerRunning = false;
+  }
+}
+
+async function safeRouteProbe() {
+  if (!config.defi.routeProbeEnabled) return { ok: true, probed: 0, skipped: true };
+  if (Date.now() - lastRouteProbeAt < config.defi.routeProbeIntervalMs) {
+    return { ok: true, probed: 0, skipped: true };
+  }
+  lastRouteProbeAt = Date.now();
+  try {
+    return await probeDefiRouteCapabilities({ limit: 20 });
+  } catch (error) {
+    console.error("Background route probe failed", error);
+    return { ok: false, probed: 0, error: error.message };
   }
 }
 

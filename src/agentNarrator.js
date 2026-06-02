@@ -211,6 +211,13 @@ function readOnlySummary({ tool, result, details }) {
     const freshness = result.freshness?.status || "unknown";
     return `I refreshed market feeds. Regime is ${regime}; data freshness is ${freshness}.`;
   }
+  if (tool === "list_route_capabilities" || Array.isArray(result.routes)) {
+    const live = (result.routes || []).filter((route) => route.status === "live");
+    if (live.length) {
+      return `I checked live routes. Available now: ${live.slice(0, 4).map((route) => route.type === "bridge" ? `${route.fromToken} ${route.fromRail}->${route.toRail}` : `${route.fromToken}->${route.toToken} on ${route.fromRail}`).join(", ")}.`;
+    }
+    return "I checked the route registry. No live routes match that filter right now.";
+  }
   if (tool === "analyze_portfolio" || result.portfolio) {
     const total = Number(result.portfolio?.totalValueUsd || 0);
     const recommendation = result.recommendation?.reason || "Portfolio reviewed.";
@@ -259,6 +266,7 @@ function humanActionLabel(tool, result = {}) {
   if (tool === "get_balance") return "balance check";
   if (tool === "get_market_intelligence") return "market check";
   if (tool === "get_market_feed_snapshot") return "market feed refresh";
+  if (tool === "list_route_capabilities") return "route registry check";
   if (tool === "create_mandate") return "mandate creation";
   if (tool === "list_mandates") return "mandate review";
   if (tool === "update_mandate") return "mandate update";

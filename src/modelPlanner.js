@@ -39,6 +39,7 @@ const ALLOWED_ACTIONS = new Set([
   "appkit_unified_balance",
   "resolve_x_handle",
   "list_defi_tools",
+  "list_route_capabilities",
   "list_arc_trading_primitives",
   "list_defi_actions",
   "reconcile_defi_action",
@@ -207,6 +208,9 @@ function intentSchema() {
       intervalMs: { type: ["number", "null"] },
       maxRuns: { type: ["number", "null"] },
       kind: { type: ["string", "null"] },
+      type: { type: ["string", "null"] },
+      status: { type: ["string", "null"] },
+      includeHidden: { type: ["boolean", "null"] },
       text: { type: ["string", "null"] },
       positionId: { type: ["number", "null"] },
       marginUsd: { type: ["number", "null"] },
@@ -246,6 +250,9 @@ function intentSchema() {
       "intervalMs",
       "maxRuns",
       "kind",
+      "type",
+      "status",
+      "includeHidden",
       "text",
       "positionId",
       "marginUsd",
@@ -285,6 +292,9 @@ function intentSchema() {
       "intervalMs",
       "maxRuns",
       "kind",
+      "type",
+      "status",
+      "includeHidden",
       "text",
       "positionId",
       "marginUsd",
@@ -424,6 +434,7 @@ function intentPlannerPrompt() {
     "{\"action\":\"create_automation\",\"text\":\"sync balances every 10 minutes\",\"intervalMinutes\":10}",
     "{\"action\":\"create_automation\",\"text\":\"swap 1 USDC to EURC\",\"intervalSeconds\":10,\"maxRuns\":4}",
     "{\"action\":\"list_automations\"}",
+    "{\"action\":\"list_route_capabilities\",\"status\":\"live\",\"type\":\"swap\"}",
     "{\"action\":\"pause_automations\",\"status\":\"active\"}",
     "{\"action\":\"pause_automation\",\"automationId\":\"auto_0001\"}",
     "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
@@ -610,6 +621,7 @@ const MODEL_TOOL_ACTIONS = new Set([
   "appkit_unified_balance",
   "resolve_x_handle",
   "list_defi_tools",
+  "list_route_capabilities",
   "list_arc_trading_primitives",
   "list_defi_actions",
   "reconcile_defi_action",
@@ -653,6 +665,9 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
   if (positive(intent.intervalMs)) args.intervalMs = Number(intent.intervalMs);
   if (positive(intent.maxRuns)) args.maxRuns = Number(intent.maxRuns);
   if (intent.kind) args.kind = String(intent.kind);
+  if (intent.type) args.type = String(intent.type);
+  if (intent.status) args.status = String(intent.status);
+  if (typeof intent.includeHidden === "boolean") args.includeHidden = intent.includeHidden;
   if (intent.text) args.text = String(intent.text);
   if (positive(intent.positionId)) args.positionId = Number(intent.positionId);
   if (positive(intent.marginUsd)) args.marginUsd = Number(intent.marginUsd);
@@ -747,6 +762,9 @@ function publicArgs(args = {}) {
     "side",
     "collateralUsd",
     "leverage",
+    "type",
+    "status",
+    "includeHidden",
     "intervalMs",
     "intervalMinutes",
     "maxRuns",

@@ -117,6 +117,7 @@ export const ledger = {
   automations: [],
   defiActions: [],
   approvals: [],
+  routeCapabilities: [],
   securityLocks: [],
   rateLimits: [],
   agentObservability: [],

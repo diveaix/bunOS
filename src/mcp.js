@@ -25,8 +25,11 @@ import {
   confirmDefiAction,
   getDefiActionReceipt,
   listDefiActions,
+  listDefiRouteCapabilities,
   listDefiTools,
   listPerpMarkets,
+  probeDefiRouteCapabilities,
+  probeDefiRouteCapability,
   quoteDefiRoute
 } from "./defiOrchestrator.js";
 import { enqueueJob, runJob } from "./jobs.js";
@@ -983,6 +986,50 @@ export const mcpTools = [
     }
   },
   {
+    name: "list_route_capabilities",
+    description: "List live and unavailable swap/bridge route capabilities. Agents should check this before asking for a swap or bridge.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        fromRail: { type: "string" },
+        toRail: { type: "string" },
+        status: { type: "string" },
+        includeHidden: { type: "boolean" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "probe_route_capability",
+    description: "Run a live AppKit quote probe for one route and update the route capability registry.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        type: { type: "string", enum: ["swap", "bridge"] },
+        fromRail: { type: "string" },
+        toRail: { type: "string" },
+        fromToken: { type: "string" },
+        toToken: { type: "string" },
+        amount: { type: "number" }
+      },
+      required: ["type", "fromRail", "toRail", "fromToken", "toToken"]
+    }
+  },
+  {
+    name: "probe_route_capabilities",
+    description: "Probe the default route registry and update live/unavailable statuses.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        amount: { type: "number" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
     name: "quote_defi_route",
     description: "Create a policy-checked bridge or swap quote. This does not execute the transaction.",
     inputSchema: {
@@ -1443,6 +1490,18 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "list_defi_tools") {
     return listDefiTools();
+  }
+
+  if (tool === "list_route_capabilities") {
+    return listDefiRouteCapabilities(args);
+  }
+
+  if (tool === "probe_route_capability") {
+    return await probeDefiRouteCapability(args);
+  }
+
+  if (tool === "probe_route_capabilities") {
+    return await probeDefiRouteCapabilities(args);
   }
 
   if (tool === "quote_defi_route") {

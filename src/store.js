@@ -37,6 +37,7 @@ export async function loadStore() {
   ledger.automations = loadJsonRows("automations");
   ledger.defiActions = loadJsonRows("defi_actions");
   ledger.approvals = loadJsonRows("approvals");
+  ledger.routeCapabilities = loadJsonRows("route_capabilities");
   ledger.securityLocks = loadJsonRows("security_locks");
   ledger.rateLimits = loadJsonRows("rate_limits");
   ledger.agentObservability = loadJsonRows("agent_observability");
@@ -84,6 +85,7 @@ export async function persistStore() {
     replaceJsonRows("automations", ledger.automations, "id");
     replaceJsonRows("defi_actions", ledger.defiActions, "id");
     replaceJsonRows("approvals", ledger.approvals, "id");
+    replaceJsonRows("route_capabilities", ledger.routeCapabilities, "id");
     replaceJsonRows("security_locks", ledger.securityLocks, "id");
     replaceJsonRows("rate_limits", ledger.rateLimits, "id");
     replaceJsonRows("agent_observability", ledger.agentObservability, "id");
@@ -217,6 +219,12 @@ function migrateDb() {
     );
 
     CREATE TABLE IF NOT EXISTS approvals (
+      id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS route_capabilities (
       id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
       updated_at TEXT NOT NULL

@@ -54,6 +54,7 @@ import {
   getDefiActionReceipt,
   listDefiActions,
   listDefiTools,
+  listDefiRouteCapabilities,
   listPerpMarkets,
   quoteDefiRoute,
   searchPredictionMarkets
@@ -870,6 +871,38 @@ const tests = [
       assert.equal(quoted.action.request.fromToken, "cirBTC");
       assert.equal(quoted.quote.request.fromToken, "0xf0C4a4CE82A5746AbAAd9425360Ab04fbBA432BF");
       assert.equal(quoted.quote.request.fromAmount, "100000");
+    }
+  ],
+  [
+    "uses route capability registry before live swap provider calls",
+    async () => {
+      const previousLiveAdapters = config.defi.liveAdapters;
+      try {
+        config.defi.liveAdapters = true;
+        const routes = listDefiRouteCapabilities({ type: "swap", fromRail: "arc-testnet" });
+        assert.equal(routes.ok, true);
+        assert.ok(routes.routes.find((route) => route.fromToken === "USDC" && route.toToken === "EURC" && route.status === "live"));
+        assert.ok(routes.routes.find((route) => route.fromToken === "USDC" && route.toToken === "cirBTC" && route.status === "unavailable"));
+
+        const blocked = await quoteDefiRoute({
+          handle: "@sara",
+          fromRail: "arc-testnet",
+          toRail: "arc-testnet",
+          type: "swap",
+          amount: 1,
+          fromToken: "USDC",
+          toToken: "cirBTC",
+          slippage: 0.005
+        });
+
+        assert.equal(blocked.ok, false);
+        assert.equal(blocked.action.status, "quote_unavailable");
+        assert.equal(blocked.routeCapability.status, "unavailable");
+        assert.match(blocked.reason, /cannot find a live swap route/i);
+        assert.doesNotMatch(blocked.reason, /AppKit|LI\.FI|server error|fallback/i);
+      } finally {
+        config.defi.liveAdapters = previousLiveAdapters;
+      }
     }
   ],
   [

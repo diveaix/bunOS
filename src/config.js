@@ -45,6 +45,8 @@ export const config = {
     executionEnabled: process.env.DEFI_EXECUTION_ENABLED === "1",
     lifiBaseUrl: process.env.LIFI_API_BASE_URL || "https://li.quest/v1",
     lifiApiKey: process.env.LIFI_API_KEY || "",
+    routeProbeEnabled: process.env.ROUTE_PROBE_ENABLED === "1",
+    routeProbeIntervalMs: Math.max(60_000, Number(process.env.ROUTE_PROBE_INTERVAL_MS || 10 * 60_000)),
     polymarketGammaUrl: process.env.POLYMARKET_GAMMA_URL || "https://gamma-api.polymarket.com",
     hyperliquidInfoUrl: process.env.HYPERLIQUID_INFO_URL || "https://api.hyperliquid.xyz/info",
     maxActionUsd: Number(process.env.DEFI_MAX_ACTION_USD || 25),
