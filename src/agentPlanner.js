@@ -1948,7 +1948,7 @@ function narrateAgentFailure({ planned, error }) {
 function shouldUseModelNarrator({ planned, result, execution }) {
   const tool = planned?.plan?.tool;
   if (!tool) return false;
-  if (["get_balance", "sync_circle_balances", "get_wallet_capabilities"].includes(tool)) return false;
+  if (["get_balance", "sync_circle_balances", "get_wallet_capabilities", "list_route_capabilities"].includes(tool)) return false;
   if (result?.wallet) return false;
   return execution?.status !== "clarification_required";
 }
