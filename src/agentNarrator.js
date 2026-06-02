@@ -187,6 +187,11 @@ function happenedText({ mode, status, details, why, tool, result, execution }) {
   if (tool === "close_arc_perp_user_position" && status === "user_wallet_signing_required") return "The close request was blocked before submission because user-wallet signing is not available.";
   if (tool === "close_arc_perp_user_position" && status === "position_not_found") return "No matching open position was found.";
   if (result.wallet) return "Wallet state was read and returned.";
+  if (tool === "pause_automations") return `The agent paused ${Number(result.paused || 0)} active automation(s).`;
+  if (tool === "pause_automation") return "The automation was paused.";
+  if (tool === "resume_automation") return "The automation was resumed.";
+  if (tool === "delete_automation") return "The automation was deleted.";
+  if (tool === "create_automation") return "A new automation was created.";
   return why || `The ${humanActionLabel(tool, result)} finished with status ${status}.`;
 }
 
@@ -218,6 +223,26 @@ function readOnlySummary({ tool, result, details }) {
     if (result.mandate) return `I saved or updated mandate ${result.mandate.id}. It will be enforced before future trades.`;
     return `I checked standing trading mandates. ${result.activeCount || 0} active rule(s) are currently enforced.`;
   }
+  if (tool === "pause_automations") {
+    const paused = Number(result.paused || 0);
+    return paused > 0
+      ? `I stopped ${paused} active automation${paused === 1 ? "" : "s"}. They are paused now, so they will not run again until you resume them.`
+      : "I checked your automations. Nothing was running, so there was nothing to stop.";
+  }
+  if (tool === "pause_automation" && result.automation) {
+    return `I paused automation ${result.automation.id}. It will not run again until you resume it.`;
+  }
+  if (tool === "resume_automation" && result.automation) {
+    return `I resumed automation ${result.automation.id}.`;
+  }
+  if (tool === "delete_automation" && result.automation) {
+    return `I deleted automation ${result.automation.id}.`;
+  }
+  if (tool === "create_automation" && result.automation) {
+    const every = result.automation.intervalMinutes ? ` every ${result.automation.intervalMinutes} minute${result.automation.intervalMinutes === 1 ? "" : "s"}` : "";
+    const runs = result.automation.maxRuns ? ` for ${result.automation.maxRuns} run${result.automation.maxRuns === 1 ? "" : "s"}` : "";
+    return `I created automation ${result.automation.id}${every}${runs}.`;
+  }
   if (tool === "send_usdc" && result.payment) {
     return `I created the payment to ${details.recipient || "the recipient"} and it is waiting on the configured transfer path.`;
   }
@@ -238,6 +263,11 @@ function humanActionLabel(tool, result = {}) {
   if (tool === "list_mandates") return "mandate review";
   if (tool === "update_mandate") return "mandate update";
   if (tool === "delete_mandate") return "mandate deletion";
+  if (tool === "pause_automations") return "automation pause";
+  if (tool === "pause_automation") return "automation pause";
+  if (tool === "resume_automation") return "automation resume";
+  if (tool === "delete_automation") return "automation deletion";
+  if (tool === "create_automation") return "automation creation";
   return "action";
 }
 

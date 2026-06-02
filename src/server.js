@@ -1818,7 +1818,8 @@ function sanitizeAgentResult(result = {}) {
     reason: cleanTerminalReason(result.reason || result.error),
     error: result.error ? cleanTerminalReason(result.error) : undefined,
     nextAction: result.nextAction,
-    fast: result.fast
+    fast: result.fast,
+    paused: Number.isFinite(Number(result.paused)) ? Number(result.paused) : undefined
   };
   if (result.action) {
     sanitized.action = sanitizeDefiAction(result.action);
