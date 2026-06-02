@@ -1049,6 +1049,13 @@ function parseToolCommand(text, defaultSettlementRail) {
   }
 
   const automationId = raw.match(/\b(auto_[a-zA-Z0-9_:-]+)\b/i)?.[1];
+  if (/\b(?:pause|stop|disable|close|cancel|turn\s+off|shut\s+down|kill)\b[\s\S]{0,80}\b(?:all|every|active|running)\b[\s\S]{0,80}\b(?:automations?|scheduled tasks?|recurring tasks?|schedules?)\b/.test(lower)
+    || /\b(?:all|every|active|running)\b[\s\S]{0,80}\b(?:automations?|scheduled tasks?|recurring tasks?|schedules?)\b[\s\S]{0,80}\b(?:pause|stop|disable|close|cancel|turn\s+off|shut\s+down|kill)\b/.test(lower)) {
+    return toolIntent("pause_automations", {
+      status: "active",
+      limit: extractLimit(raw) || 100000
+    });
+  }
   if (automationId && /\b(delete|remove|cancel)\b/.test(lower)) {
     return toolIntent("delete_automation", { automationId });
   }

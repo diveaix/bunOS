@@ -1509,6 +1509,7 @@ const tests = [
         "list_automations",
         "run_automation",
         "run_due_automations",
+        "pause_automations",
         "pause_automation",
         "resume_automation",
         "delete_automation"
@@ -1536,6 +1537,19 @@ const tests = [
       assert.equal(paused.automation.status, "paused");
       const resumed = await callMcpTool("resume_automation", { automationId: created.automation.id });
       assert.equal(resumed.automation.status, "active");
+
+      const second = await callMcpTool("create_automation", {
+        handle: "@automator",
+        kind: "sync_circle_balances",
+        intervalMinutes: 1
+      });
+      const bulkPaused = await callMcpTool("pause_automations", { handle: "@automator" });
+      assert.equal(bulkPaused.ok, true);
+      assert.equal(bulkPaused.paused, 2);
+      const afterBulkPause = await callMcpTool("list_automations", { handle: "@automator", status: "active" });
+      assert.equal(afterBulkPause.automations.length, 0);
+      await callMcpTool("resume_automation", { automationId: created.automation.id });
+      await callMcpTool("delete_automation", { automationId: second.automation.id });
 
       const due = await callMcpTool("run_due_automations", { limit: 10 });
       const ran = due.ran.find((result) => result.automation.id === created.automation.id);
@@ -1574,6 +1588,14 @@ const tests = [
       assert.equal(balanceSchedule.plan.tool, "create_automation");
       assert.equal(balanceSchedule.plan.arguments.intervalMs, 10_000);
       assert.equal(balanceSchedule.plan.arguments.maxRuns, 4);
+
+      const stopAll = planAgentAction({
+        handle: "@sara",
+        text: "close all the automations running now",
+        source: "test-automation"
+      });
+      assert.equal(stopAll.plan.tool, "pause_automations");
+      assert.equal(stopAll.plan.arguments.status, "active");
 
       const createdFromText = createAutomation({
         handle: "@sara",

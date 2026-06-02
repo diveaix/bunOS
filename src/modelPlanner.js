@@ -53,6 +53,7 @@ const ALLOWED_ACTIONS = new Set([
   "list_automations",
   "run_automation",
   "run_due_automations",
+  "pause_automations",
   "pause_automation",
   "resume_automation",
   "delete_automation",
@@ -423,6 +424,7 @@ function intentPlannerPrompt() {
     "{\"action\":\"create_automation\",\"text\":\"sync balances every 10 minutes\",\"intervalMinutes\":10}",
     "{\"action\":\"create_automation\",\"text\":\"swap 1 USDC to EURC\",\"intervalSeconds\":10,\"maxRuns\":4}",
     "{\"action\":\"list_automations\"}",
+    "{\"action\":\"pause_automations\",\"status\":\"active\"}",
     "{\"action\":\"pause_automation\",\"automationId\":\"auto_0001\"}",
     "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
     "{\"action\":\"get_defi_action_receipt\",\"actionId\":\"defi_0001\"}",
@@ -622,6 +624,7 @@ const MODEL_TOOL_ACTIONS = new Set([
   "list_automations",
   "run_automation",
   "run_due_automations",
+  "pause_automations",
   "pause_automation",
   "resume_automation",
   "delete_automation"

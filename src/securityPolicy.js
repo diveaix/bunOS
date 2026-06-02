@@ -79,6 +79,7 @@ const AUTOMATION_TOOLS = new Set([
   "list_automations",
   "run_automation",
   "run_due_automations",
+  "pause_automations",
   "pause_automation",
   "resume_automation",
   "delete_automation"
