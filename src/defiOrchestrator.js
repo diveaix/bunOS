@@ -27,6 +27,7 @@ import {
   resolveRouteCapability,
   routeCapabilityForUi
 } from "./routeRegistry.js";
+import { publicUrl } from "./publicUrls.js";
 
 export function listDefiTools() {
   return {
@@ -419,7 +420,7 @@ export function getDefiActionReceipt({ actionId, host, protocol = "http" } = {})
       marketIntelligence: receiptAction.marketIntelligence || null,
       txHash,
       explorerUrl: txHash && rail?.explorerBaseUrl ? `${rail.explorerBaseUrl}${txHash}` : null,
-      publicUrl: host ? `${protocol}://${host}/defi/actions/${action.id}` : null,
+      publicUrl: publicUrl(`/defi/actions/${action.id}`, { host, protocol }),
       timeline: buildDefiTimeline(receiptAction, events),
       nextAction: nextActionForDefiAction(receiptAction)
     }

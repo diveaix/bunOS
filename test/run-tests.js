@@ -1366,6 +1366,30 @@ const tests = [
       assert.equal(receipt.receipt.explorerUrl, "https://testnet.arcscan.app/tx/0xabc123");
       assert.equal(receipt.receipt.simulation.recommendation, "route_is_possible_but_uneconomical");
       assert.equal(receipt.receipt.nextAction, "reconcile_defi_action");
+
+      const railwayReceipt = getDefiActionReceipt({
+        actionId: quoted.action.id,
+        host: "backend-production-efc9.up.railway.app",
+        protocol: "https"
+      });
+      assert.equal(railwayReceipt.receipt.publicUrl, `https://bunos.xyz/defi/actions/${quoted.action.id}`);
+
+      const previousPublicBase = process.env.PUBLIC_APP_BASE_URL;
+      try {
+        process.env.PUBLIC_APP_BASE_URL = "https://bunos.xyz";
+        const canonicalReceipt = getDefiActionReceipt({
+          actionId: quoted.action.id,
+          host: "backend-production-efc9.up.railway.app",
+          protocol: "https"
+        });
+        assert.equal(canonicalReceipt.receipt.publicUrl, `https://bunos.xyz/defi/actions/${quoted.action.id}`);
+      } finally {
+        if (previousPublicBase === undefined) {
+          delete process.env.PUBLIC_APP_BASE_URL;
+        } else {
+          process.env.PUBLIC_APP_BASE_URL = previousPublicBase;
+        }
+      }
     }
   ],
   [

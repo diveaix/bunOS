@@ -5,6 +5,7 @@ import { refreshExecutionMonitor } from "./executionMonitor.js";
 import { ledger } from "./fixtures.js";
 import { nextXCommandId } from "./ids.js";
 import { createApprovalToken } from "./securityGuards.js";
+import { publicUrl as buildPublicUrl } from "./publicUrls.js";
 
 export function verifyXWebhook({ headers, rawBody = "" }) {
   if (!config.webhookSecret) {
@@ -333,7 +334,7 @@ export function getXCommandReceipt({ commandId, host, protocol = "http" } = {}) 
   if (!command) {
     throw new Error("X command not found");
   }
-  const publicUrl = host ? `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}` : null;
+  const publicUrl = buildPublicUrl(`/x/commands/${encodeURIComponent(command.id)}`, { host, protocol });
   const approvalUrl = relatedApprovalUrl(command, { host, protocol });
   const links = {
     receiptUrl: publicUrl,
@@ -516,7 +517,7 @@ export async function refreshXCommandExecution({
     };
   }
   command.finalReply = buildXCommandFinalReply(command, refreshed.monitor, {
-    publicUrl: host ? `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}` : null
+    publicUrl: buildPublicUrl(`/x/commands/${encodeURIComponent(command.id)}`, { host, protocol })
   });
 
   return {
@@ -651,14 +652,14 @@ function buildXCommandIdempotencyKey({
 
 function relatedApprovalUrl(command, { host, protocol = "http" } = {}) {
   const approvalId = command.resultRefs?.approvalId;
-  if (!approvalId || !host) {
+  if (!approvalId) {
     return null;
   }
 
   const approval = ledger.approvals.find((item) => item.id === approvalId);
   const token = approval ? createApprovalToken({ approval, commandId: command.id }) : null;
   const suffix = token ? `?approvalToken=${encodeURIComponent(token)}` : "";
-  return `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}/approve${suffix}`;
+  return buildPublicUrl(`/x/commands/${encodeURIComponent(command.id)}/approve${suffix}`, { host, protocol });
 }
 
 function normalizeCommandText(text) {

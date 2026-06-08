@@ -76,6 +76,7 @@ For the split deploy, use the Vercel frontend URL as the X redirect URL:
 
 ```env
 APP_BASE_URL=https://YOUR-FRONTEND.vercel.app
+PUBLIC_APP_BASE_URL=https://bunos.xyz
 X_AUTH_MODE=real
 X_REDIRECT_URI=https://YOUR-FRONTEND.vercel.app/auth/x/callback
 ```

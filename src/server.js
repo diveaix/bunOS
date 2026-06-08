@@ -38,6 +38,7 @@ import {
 } from "./orchestrator.js";
 import { getCircleReadiness } from "./circleProvider.js";
 import { config } from "./config.js";
+import { publicUrl } from "./publicUrls.js";
 import { getAgentModelReadiness } from "./modelPlanner.js";
 import {
   createAutomation,
@@ -557,7 +558,10 @@ export const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       return jsonPersisted(res, await postXCommandReply({
         commandId: xCommandReplyMatch[1],
-        publicUrl: body.publicUrl || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers.host}/x/commands/${encodeURIComponent(xCommandReplyMatch[1])}`,
+        publicUrl: body.publicUrl || publicUrl(`/x/commands/${encodeURIComponent(xCommandReplyMatch[1])}`, {
+          host: req.headers.host,
+          protocol: req.headers["x-forwarded-proto"] || "http"
+        }),
         force: Boolean(body.force)
       }));
     }
