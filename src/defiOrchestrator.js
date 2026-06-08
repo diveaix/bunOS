@@ -21,10 +21,10 @@ import {
 } from "./marketIntelligence.js";
 import { evaluateMandatesForAction } from "./mandates.js";
 import {
-  checkRouteCapability,
   listRouteCapabilities,
   probeDefaultRoutes,
   probeRouteCapability,
+  resolveRouteCapability,
   routeCapabilityForUi
 } from "./routeRegistry.js";
 
@@ -96,7 +96,10 @@ export async function quoteDefiRoute(input) {
     return { ok: false, action: record, policy, simulation: record.simulation, marketIntelligence: record.marketIntelligence, reason: policy.reason, nextAction: "adjust_trade_or_fund_wallet" };
   }
 
-  const routeCapability = checkRouteCapability(action);
+  const routeCapability = await resolveRouteCapability(action, {
+    handle: user.handle,
+    amount: action.amountUsd || action.amount
+  });
   record.routeCapability = routeCapability.route || {
     status: routeCapability.status,
     descriptor: routeCapability.descriptor

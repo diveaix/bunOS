@@ -57,6 +57,30 @@ export function listJobs({ status, type, limit = 50 } = {}) {
   return { ok: true, jobs };
 }
 
+export function getJobQueueHealth({
+  recentWindowMs = 6 * 60 * 60_000,
+  overdueAfterMs = 5 * 60_000,
+  now = Date.now()
+} = {}) {
+  const recentSince = now - Math.max(60_000, Number(recentWindowMs) || 6 * 60 * 60_000);
+  const overdueBefore = now - Math.max(60_000, Number(overdueAfterMs) || 5 * 60_000);
+  const queued = ledger.jobs.filter((job) => job.status === "queued");
+  const running = ledger.jobs.filter((job) => job.status === "running");
+  const failed = ledger.jobs.filter((job) => job.status === "failed");
+  const recentFailed = failed.filter((job) => jobTimestamp(job) >= recentSince);
+  const overdue = queued.filter((job) => new Date(job.runAfter || job.createdAt || 0).getTime() <= overdueBefore);
+
+  return {
+    ok: recentFailed.length === 0 && overdue.length === 0,
+    queued: queued.length,
+    running: running.length,
+    overdue: overdue.length,
+    recentFailed: recentFailed.length,
+    historicalFailed: failed.length,
+    recentWindowMs: Math.max(60_000, Number(recentWindowMs) || 6 * 60 * 60_000)
+  };
+}
+
 export async function runDueJobs({ limit = 20 } = {}) {
   const now = Date.now();
   const due = ledger.jobs
@@ -69,6 +93,10 @@ export async function runDueJobs({ limit = 20 } = {}) {
   }
 
   return { ok: true, ran: results };
+}
+
+function jobTimestamp(job) {
+  return new Date(job.updatedAt || job.finishedAt || job.startedAt || job.createdAt || 0).getTime();
 }
 
 export async function runJob({ jobId }) {

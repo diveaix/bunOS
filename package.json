@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node test/run-tests.js",
+    "test": "node test/run-all.js",
+    "test:core": "node test/run-tests.js",
+    "test:agent": "node test/agent-evals.js",
     "compile:contracts": "node scripts/compile-contracts.js",
     "deploy:arc-perps": "node scripts/deploy-arc-perps.js",
     "mcp:stdio": "node scripts/mcp-stdio.js",

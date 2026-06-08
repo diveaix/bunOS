@@ -2,6 +2,7 @@ import { ledger } from "./fixtures.js";
 import { runJob } from "./jobs.js";
 import { getPaymentReceipt } from "./queries.js";
 import { getDefiActionReceipt } from "./defiOrchestrator.js";
+import { buildExecutionTruth } from "./executionTruth.js";
 
 const FINAL_STATES = new Set(["settled", "failed", "expired", "rejected", "claimable", "claimed", "execution_not_enabled", "user_wallet_signing_required"]);
 
@@ -111,6 +112,9 @@ function paymentMonitorSnapshot({ paymentId, worker = null }) {
     handle: payment.senderHandle,
     status,
     rawStatus: payment.status,
+    amount: payment.amount,
+    asset: payment.asset || "USDC",
+    route: payment.recipientHandle ? `${payment.amount} ${payment.asset || "USDC"} to ${payment.recipientHandle}` : null,
     txHash: payment.transfer?.txHash || null,
     explorerUrl: payment.transfer?.explorerUrl || null,
     reason: payment.failureReason || payment.transfer?.failureReason || job?.lastError || null,
@@ -131,6 +135,10 @@ function defiMonitorSnapshot({ actionId, host, protocol }) {
     handle: action.handle,
     status,
     rawStatus: action.status,
+    actionType: action.type,
+    amount: action.request?.amountUsd || action.request?.amount,
+    asset: action.request?.fromToken || action.request?.asset,
+    route: routeForDefiAction(action),
     txHash: receipt.txHash || action.txHash || action.execution?.txHash || null,
     explorerUrl: receipt.explorerUrl || action.explorerUrl || action.execution?.explorerUrl || null,
     reason: action.failureReason || action.reason || action.execution?.reason || job?.lastError || null,
@@ -153,6 +161,10 @@ function perpMonitorSnapshot({ proposalId, worker = null }) {
     handle: proposal.handle,
     status,
     rawStatus: proposal.status,
+    actionType: "perp",
+    amount: proposal.collateralUsd,
+    asset: proposal.symbol,
+    route: `${proposal.side || "perp"} ${proposal.symbol || "market"}${proposal.leverage ? ` ${proposal.leverage}x` : ""}`,
     txHash: proposal.txHash || proposal.execution?.txHash || null,
     explorerUrl: proposal.execution?.explorerUrl || null,
     reason: proposal.failureReason || proposal.execution?.reason || job?.lastError || null,
@@ -162,7 +174,24 @@ function perpMonitorSnapshot({ proposalId, worker = null }) {
   });
 }
 
-function commonMonitor({ kind, id, handle, status, rawStatus, txHash, explorerUrl, reason, nextAction, job, worker, receiptUrl, timeline = [] }) {
+function commonMonitor({ kind, id, handle, status, rawStatus, actionType, amount, asset, route, txHash, explorerUrl, reason, nextAction, job, worker, receiptUrl, timeline = [] }) {
+  const truth = buildExecutionTruth({
+    kind,
+    status,
+    rawStatus,
+    actionType,
+    amount,
+    asset,
+    route,
+    txHash,
+    explorerUrl,
+    reason,
+    nextAction,
+    job,
+    receiptUrl,
+    handle,
+    terminal: FINAL_STATES.has(status)
+  });
   return {
     kind,
     id,
@@ -176,11 +205,30 @@ function commonMonitor({ kind, id, handle, status, rawStatus, txHash, explorerUr
     receiptUrl,
     reason,
     nextAction,
+    truth,
     job: job ? publicJob(job) : null,
     worker: worker ? summarizeWorker(worker) : null,
     timeline,
     updatedAt: new Date().toISOString()
   };
+}
+
+function routeForDefiAction(action = {}) {
+  const request = action.request || {};
+  const amount = request.amountUsd || request.amount || "some";
+  const fromToken = request.fromToken || request.asset || "USDC";
+  if (action.type === "bridge" || (request.fromRail && request.toRail && request.fromRail !== request.toRail)) {
+    return `${amount} ${fromToken} from ${humanRail(request.fromRail || request.settlementRail)} to ${humanRail(request.toRail)}`;
+  }
+  if (request.toToken) return `${amount} ${fromToken} to ${request.toToken} on ${humanRail(request.fromRail || request.settlementRail)}`;
+  return null;
+}
+
+function humanRail(rail) {
+  const value = String(rail || "").toLowerCase();
+  if (value === "arc" || value === "arc-testnet") return "Arc";
+  if (value === "base" || value === "base-sepolia") return "Base Sepolia";
+  return rail || "Arc";
 }
 
 function lifecycleForPayment(payment, job) {

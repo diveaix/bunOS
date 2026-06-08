@@ -1,6 +1,11 @@
 import { createPaymentIntent, createSocialBounty } from "./orchestrator.js";
 import { confirmAction } from "./agentActions.js";
-import { listAgentTools, planAgentActionWithModel, runAgentAction } from "./agentPlanner.js";
+import {
+  listAgentTools,
+  planAgentActionWithModel,
+  resumeAgentWorkflowsFromMonitor,
+  runAgentAction
+} from "./agentPlanner.js";
 import {
   getArcPerpsPosition,
   getArcPerpsReadiness,
@@ -1522,7 +1527,17 @@ export async function callMcpTool(tool, args) {
       payload: { actionId: args.actionId },
       idempotencyKey: `reconcile_defi_action:${args.actionId}:mcp:${Date.now()}`
     });
-    return await runJob({ jobId: job.id });
+    const ran = await runJob({ jobId: job.id });
+    const continuation = await resumeAgentWorkflowsFromMonitor({
+      kind: "defi_action",
+      id: args.actionId,
+      handle: args.handle,
+      source: "mcp_reconcile"
+    });
+    return {
+      ...ran,
+      workflowContinuation: continuation
+    };
   }
 
   if (tool === "get_defi_action_receipt") {
@@ -1534,10 +1549,20 @@ export async function callMcpTool(tool, args) {
   }
 
   if (tool === "refresh_execution_monitor") {
-    return await refreshExecutionMonitor({
+    const refreshed = await refreshExecutionMonitor({
       ...args,
       runWorker: args.runWorker !== false
     });
+    const continuation = await resumeAgentWorkflowsFromMonitor({
+      kind: args.kind,
+      id: args.id,
+      handle: args.handle,
+      source: "mcp_execution_monitor"
+    });
+    return {
+      ...refreshed,
+      workflowContinuation: continuation
+    };
   }
 
   if (tool === "list_perp_markets") {

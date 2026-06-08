@@ -35,10 +35,21 @@ function redactSecretValue(value) {
 }
 
 function redactString(value) {
-  return String(value)
+  const protectedHashes = [];
+  const protectedText = String(value).replace(
+    /("(?:txHash|transactionHash|blockHash)"\s*:\s*")0x[a-fA-F0-9]{64}(")/g,
+    (match) => {
+      const token = `__BUNOS_PUBLIC_HASH_${protectedHashes.length}__`;
+      protectedHashes.push(match);
+      return token;
+    }
+  );
+
+  const redacted = protectedText
     .replace(/KIT_KEY:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+/g, "KIT_KEY:<redacted>")
     .replace(/bunos_mcp_[A-Za-z0-9_-]+/g, "bunos_mcp_<redacted>")
     .replace(/(?<!\/(?:tx|transaction|block)\/)0x[a-fA-F0-9]{64}/g, "0x<redacted_private_key>");
+  return protectedHashes.reduce((text, hash, index) => text.replace(`__BUNOS_PUBLIC_HASH_${index}__`, hash), redacted);
 }
 
 function isHexHash(value) {

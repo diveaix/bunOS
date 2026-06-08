@@ -5,6 +5,7 @@ import { quoteCircleAppKitRoute } from "./appKitCircleAdapter.js";
 
 const FRESH_MS = 5 * 60_000;
 const DEFAULT_PROBE_AMOUNT = 1;
+const AUTO_PROBE_STATUSES = new Set(["stale_probe_required", "stale", "probe_failed", "unavailable"]);
 
 const SEEDED_ROUTES = [
   seededRoute({ type: "swap", fromRail: "arc-testnet", toRail: "arc-testnet", fromToken: "USDC", toToken: "EURC", status: "live", provider: "circle-app-kit", source: "manual_seed", reason: "Known Arc AppKit route." }),
@@ -22,14 +23,15 @@ const SEEDED_ROUTES = [
 export function listRouteCapabilities({ type, fromRail, toRail, status, includeHidden = false, limit = 100 } = {}) {
   ensureSeedRoutes();
   const normalizedType = type ? String(type).toLowerCase() : null;
+  const routes = (ledger.routeCapabilities || []).map(withEffectiveStatus);
   return {
     ok: true,
-    routes: (ledger.routeCapabilities || [])
+    routes: routes
       .filter((route) => (
         (!normalizedType || route.type === normalizedType)
         && (!fromRail || route.fromRail === normalizeRail(fromRail))
         && (!toRail || route.toRail === normalizeRail(toRail))
-        && (!status || route.status === status)
+        && (!status || route.effectiveStatus === status || route.status === status)
         && (includeHidden || route.status !== "hidden")
       ))
       .slice()
@@ -53,14 +55,25 @@ export function checkRouteCapability(action = {}) {
     });
   }
 
-  if (record.status === "live") {
-    return { ok: true, status: "live", route: record, descriptor };
+  const effectiveStatus = effectiveRouteStatus(record);
+
+  if (effectiveStatus === "live") {
+    return { ok: true, status: "live", route: withEffectiveStatus(record), descriptor };
+  }
+
+  if (effectiveStatus === "stale_probe_required") {
+    return unavailableDecision({
+      descriptor,
+      route: withEffectiveStatus(record),
+      status: "stale_probe_required",
+      reason: `I know ${formatRoute(descriptor)} as a possible route, but I do not have a fresh live quote for it yet.`
+    });
   }
 
   if (record.status === "probe_failed" && !isFresh(record)) {
     return unavailableDecision({
       descriptor,
-      route: record,
+      route: withEffectiveStatus(record),
       status: "stale",
       reason: `The last probe for ${formatRoute(descriptor)} is stale and did not prove a live route.`
     });
@@ -68,9 +81,45 @@ export function checkRouteCapability(action = {}) {
 
   return unavailableDecision({
     descriptor,
-    route: record,
-    status: record.status,
+    route: withEffectiveStatus(record),
+    status: effectiveStatus,
     reason: userReasonForRoute(record, descriptor)
+  });
+}
+
+export async function resolveRouteCapability(action = {}, { handle, amount, autoProbe = true } = {}) {
+  const initial = checkRouteCapability(action);
+  if (
+    initial.ok
+    || !autoProbe
+    || !config.defi.liveAdapters
+    || !config.defi.routeProbeEnabled
+    || !shouldAutoProbeRoute(initial)
+  ) {
+    return initial;
+  }
+
+  const probe = await probeRouteCapability({
+    ...(initial.descriptor || normalizeRouteDescriptor(action)),
+    handle: handle || action.handle || action.senderHandle,
+    amount: amount || action.amount || action.amountUsd || DEFAULT_PROBE_AMOUNT
+  });
+
+  if (probe.ok) {
+    return {
+      ok: true,
+      status: "live",
+      route: withEffectiveStatus(probe.route),
+      descriptor: initial.descriptor,
+      probe
+    };
+  }
+
+  return unavailableDecision({
+    descriptor: initial.descriptor,
+    route: withEffectiveStatus(probe.route),
+    status: "probe_failed",
+    reason: `I checked ${formatRoute(initial.descriptor)} live, but the provider did not return a tradable route.`
   });
 }
 
@@ -98,6 +147,24 @@ export async function probeRouteCapability(input = {}) {
       amount,
       amountUsd: amount
     });
+    const quality = quoteQuality({ quote, descriptor });
+    if (!quality.ok) {
+      const route = upsertRouteCapability({
+        ...descriptor,
+        status: "probe_failed",
+        provider: quote.provider || "circle-app-kit",
+        source: "probe",
+        lastQuotedAt: new Date().toISOString(),
+        lastError: quality.reason,
+        inputAmount: amount,
+        estimatedFee: estimateFeeUsd(quote),
+        expectedOutput: estimateOutput(quote),
+        reason: quality.reason,
+        raw: summarizeQuote(quote)
+      });
+      return { ok: false, route, quote, error: quality.reason };
+    }
+
     const route = upsertRouteCapability({
       ...descriptor,
       status: "live",
@@ -108,7 +175,7 @@ export async function probeRouteCapability(input = {}) {
       inputAmount: amount,
       estimatedFee: estimateFeeUsd(quote),
       expectedOutput: estimateOutput(quote),
-      reason: "Live quote probe succeeded.",
+      reason: quality.reason || "Live quote probe succeeded.",
       raw: summarizeQuote(quote)
     });
     return { ok: true, route, quote };
@@ -129,6 +196,14 @@ export async function probeRouteCapability(input = {}) {
   }
 }
 
+function shouldAutoProbeRoute(decision) {
+  if (!AUTO_PROBE_STATUSES.has(decision.status)) return false;
+  const route = decision.route;
+  if (!route) return false;
+  if (["hidden", "needs_address"].includes(route.status)) return false;
+  return route.provider === "circle-app-kit" || route.source === "manual_seed" || route.source === "probe";
+}
+
 export async function probeDefaultRoutes({ handle = "@sara", amount = DEFAULT_PROBE_AMOUNT, limit = 20 } = {}) {
   ensureSeedRoutes();
   const routes = listRouteCapabilities({ includeHidden: false, limit }).routes
@@ -143,10 +218,11 @@ export async function probeDefaultRoutes({ handle = "@sara", amount = DEFAULT_PR
 
 export function routeCapabilityForUi() {
   const { routes } = listRouteCapabilities({ includeHidden: false, limit: 200 });
+  const normalized = routes.map(withEffectiveStatus);
   return {
     ok: true,
-    live: routes.filter((route) => route.status === "live"),
-    unavailable: routes.filter((route) => route.status !== "live")
+    live: normalized.filter((route) => route.status === "live"),
+    unavailable: normalized.filter((route) => route.status !== "live")
   };
 }
 
@@ -284,20 +360,52 @@ function normalizeRouteToken(token) {
 }
 
 function routeSortKey(route) {
-  return `${route.status === "live" ? "0" : "1"}:${route.type}:${route.fromRail}:${route.fromToken}:${route.toToken}:${route.toRail}`;
+  return `${effectiveRouteStatus(route) === "live" ? "0" : "1"}:${route.type}:${route.fromRail}:${route.fromToken}:${route.toToken}:${route.toRail}`;
 }
 
 function isFresh(route) {
   return route.lastQuotedAt && Date.now() - new Date(route.lastQuotedAt).getTime() <= FRESH_MS;
 }
 
+function effectiveRouteStatus(route) {
+  if (!route) return "unavailable";
+  if (route.status !== "live") return route.status;
+  if (!config.defi.liveAdapters || !config.defi.routeProbeEnabled) return "live";
+  if (route.source === "probe" && isFresh(route)) return "live";
+  return "stale_probe_required";
+}
+
+function withEffectiveStatus(route) {
+  if (!route) return route;
+  const effectiveStatus = effectiveRouteStatus(route);
+  return {
+    ...route,
+    effectiveStatus,
+    probeRequired: route.status === "live" && effectiveStatus !== "live",
+    fresh: route.source === "probe" && isFresh(route)
+  };
+}
+
 function estimateFeeUsd(quote) {
-  const fee = quote?.estimate?.gasCostUSD || quote?.estimate?.feeUsd || quote?.estimatedFee;
-  return fee === null || fee === undefined ? null : Number(fee);
+  const fee = firstFiniteNumber([
+    quote?.estimate?.gasCostUSD,
+    quote?.estimate?.gasCostUsd,
+    quote?.estimate?.feeUsd,
+    quote?.estimate?.feeUSD,
+    quote?.estimatedFee,
+    sumFees(quote?.estimate?.fees)
+  ]);
+  return fee;
 }
 
 function estimateOutput(quote) {
-  return quote?.estimate?.toAmount || quote?.estimate?.toAmountMin || quote?.expectedOutput || null;
+  return quote?.estimate?.estimatedOutput?.amount
+    || quote?.estimate?.toAmount
+    || quote?.estimate?.toAmountMin
+    || quote?.estimate?.amountOut
+    || quote?.estimate?.outputAmount
+    || quote?.expectedOutput
+    || null;
 }
 
 function summarizeQuote(quote) {
@@ -308,6 +416,77 @@ function summarizeQuote(quote) {
     estimate: quote?.estimate || null,
     request: quote?.request || null
   };
+}
+
+function quoteQuality({ quote, descriptor }) {
+  if (!quote?.ok) {
+    return { ok: false, reason: quote?.reason || "Provider did not return a usable quote." };
+  }
+
+  if (descriptor.type === "swap") {
+    const output = Number(estimateOutput(quote));
+    if (!Number.isFinite(output) || output <= 0) {
+      return {
+        ok: false,
+        reason: `Circle returned a ${formatRoute(descriptor)} quote, but it did not include a usable output amount.`
+      };
+    }
+    return { ok: true, reason: "Live swap quote returned a usable output amount." };
+  }
+
+  if (descriptor.type === "bridge") {
+    if (descriptor.fromToken !== "USDC" || descriptor.toToken !== "USDC") {
+      return {
+        ok: false,
+        reason: "Circle AppKit bridge execution is USDC-only on the configured rails."
+      };
+    }
+    const amount = Number(quote?.estimate?.amount ?? quote?.request?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return {
+        ok: false,
+        reason: `Circle returned a ${formatRoute(descriptor)} bridge quote, but it did not include a usable amount.`
+      };
+    }
+    return { ok: true, reason: "Live bridge quote returned a usable transfer amount." };
+  }
+
+  return { ok: false, reason: "Unsupported route type." };
+}
+
+function firstFiniteNumber(values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const number = Number(value);
+    if (Number.isFinite(number) && number >= 0) return number;
+  }
+  return null;
+}
+
+function sumFees(fees) {
+  if (!Array.isArray(fees)) return null;
+  let total = 0;
+  let found = false;
+  for (const fee of fees) {
+    const token = fee?.token?.symbol || fee?.token || fee?.currency;
+    if (String(token || "").toUpperCase() !== "USDC") continue;
+    const amount = normalizedStableAmount(fee?.amount, fee?.token?.decimals ?? fee?.decimals);
+    if (amount === null) continue;
+    total += amount;
+    found = true;
+  }
+  return found ? total : null;
+}
+
+function normalizedStableAmount(value, decimals = 6) {
+  if (value === null || value === undefined || value === "") return null;
+  const raw = String(value);
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  if (/^\d+$/.test(raw) && amount > 100 && Number(decimals) >= 6) {
+    return amount / 10 ** Number(decimals);
+  }
+  return amount;
 }
 
 function cleanProviderError(message) {

@@ -46,6 +46,7 @@ export const config = {
     lifiBaseUrl: process.env.LIFI_API_BASE_URL || "https://li.quest/v1",
     lifiApiKey: process.env.LIFI_API_KEY || "",
     routeProbeEnabled: process.env.ROUTE_PROBE_ENABLED === "1",
+    routeProbeWorkerEnabled: process.env.ROUTE_PROBE_WORKER_ENABLED === "1",
     routeProbeIntervalMs: Math.max(60_000, Number(process.env.ROUTE_PROBE_INTERVAL_MS || 10 * 60_000)),
     polymarketGammaUrl: process.env.POLYMARKET_GAMMA_URL || "https://gamma-api.polymarket.com",
     hyperliquidInfoUrl: process.env.HYPERLIQUID_INFO_URL || "https://api.hyperliquid.xyz/info",
@@ -66,7 +67,8 @@ export const config = {
     provider: process.env.AGENT_MODEL_PROVIDER || (process.env.XAI_API_KEY ? "xai" : "gemini"),
     model: process.env.AGENT_MODEL || process.env.XAI_MODEL || process.env.GEMINI_MODEL || (process.env.XAI_API_KEY ? "grok-4.3" : "gemini-2.5-flash"),
     apiKey: process.env.XAI_API_KEY || process.env.GEMINI_API_KEY || "",
-    baseUrl: process.env.AGENT_MODEL_BASE_URL || process.env.XAI_API_BASE_URL || process.env.GEMINI_API_BASE_URL || (process.env.XAI_API_KEY ? "https://api.x.ai/v1" : "https://generativelanguage.googleapis.com/v1beta")
+    baseUrl: process.env.AGENT_MODEL_BASE_URL || process.env.XAI_API_BASE_URL || process.env.GEMINI_API_BASE_URL || (process.env.XAI_API_KEY ? "https://api.x.ai/v1" : "https://generativelanguage.googleapis.com/v1beta"),
+    routerMode: process.env.AGENT_ROUTER_MODE || "model_first"
   },
   arcPerps: {
     usdcAddress: process.env.ARC_PERPS_USDC_ADDRESS || "",
@@ -78,13 +80,19 @@ export const config = {
       .split(",")
       .map((symbol) => symbol.trim().toUpperCase())
       .filter(Boolean),
+    oracleSyncIntervalMs: Math.max(60_000, Number(process.env.ARC_PERPS_ORACLE_SYNC_INTERVAL_MS || 5 * 60_000)),
     oracleMaxAgeMs: Math.max(15_000, Number(process.env.ARC_PERPS_ORACLE_MAX_AGE_MS || 60_000)),
     maxLeverage: Number(process.env.ARC_PERPS_MAX_LEVERAGE || 3)
   },
   automations: {
     workerEnabled: process.env.AUTOMATION_WORKER_ENABLED !== "0",
     tickMs: Math.max(5_000, Number(process.env.AUTOMATION_WORKER_INTERVAL_MS || 10_000)),
-    limit: Math.max(1, Number(process.env.AUTOMATION_WORKER_LIMIT || 20))
+    limit: Math.max(1, Number(process.env.AUTOMATION_WORKER_LIMIT || 20)),
+    workflowWorkerEnabled: process.env.WORKFLOW_WORKER_ENABLED !== "0",
+    workflowLimit: Math.max(1, Number(process.env.WORKFLOW_WORKER_LIMIT || 10)),
+    leaseEnabled: process.env.BACKGROUND_WORKER_LEASE_ENABLED !== "0",
+    leaseName: process.env.BACKGROUND_WORKER_LEASE_NAME || "bunos-background-worker",
+    leaseTtlMs: Math.max(15_000, Number(process.env.BACKGROUND_WORKER_LEASE_TTL_MS || 60_000))
   },
   settlement: {
     defaultRail: process.env.DEFAULT_SETTLEMENT_RAIL || "arc-testnet",

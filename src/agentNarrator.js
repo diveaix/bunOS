@@ -77,6 +77,7 @@ function responseMode({ ok, status, tool, result, plan }) {
   if (tool === "get_balance" || tool === "sync_circle_balances" || tool === "get_market_intelligence" || tool === "get_market_feed_snapshot" || tool === "analyze_portfolio" || tool.includes("strategy") || tool.includes("mandate")) {
     return "waiting";
   }
+  if (tool === "answer_agent_question") return "waiting";
   if (status === "settled" || status === "completed" || Boolean(result.txHash)) return "executed";
   if (MONITORING_STATUSES.has(status)) return "monitoring";
   return "waiting";
@@ -201,6 +202,9 @@ function happenedText({ mode, status, details, why, tool, result, execution }) {
 }
 
 function readOnlySummary({ tool, result, details }) {
+  if (tool === "answer_agent_question" || result.answer) {
+    return result.answer || "I answered that without moving funds.";
+  }
   if (tool === "get_balance" || tool === "sync_circle_balances") {
     const total = result.wallet?.balance ?? result.wallet?.totalBalanceUsd;
     return total !== undefined

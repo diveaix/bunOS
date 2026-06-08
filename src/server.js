@@ -8,7 +8,13 @@ import { handleMcpJsonRpc, toMcpError } from "./mcpJsonRpc.js";
 import { redactSensitive } from "./redaction.js";
 import { getArcReadiness } from "./arcRpc.js";
 import { confirmAction } from "./agentActions.js";
-import { listAgentTools, planAgentActionWithModel, runAgentAction } from "./agentPlanner.js";
+import {
+  listAgentTools,
+  planAgentActionWithModel,
+  runDueAgentWorkflowsFromWorker,
+  resumeAgentWorkflowsFromMonitor,
+  runAgentAction
+} from "./agentPlanner.js";
 import { buildAgentMemoryReport } from "./agentMemory.js";
 import {
   getArcPerpsPosition,
@@ -38,6 +44,7 @@ import {
   deleteAutomation,
   listAutomations,
   pauseAutomations,
+  repairAutomationPayloads,
   runAutomation,
   runDueAutomations,
   updateAutomation
@@ -64,9 +71,16 @@ import {
   retryFailedTransfers,
   retryPaymentTransfer
 } from "./reconciliation.js";
-import { enqueueJob, listJobs, runDueJobs, runJob } from "./jobs.js";
+import { enqueueJob, getJobQueueHealth, listJobs, runDueJobs, runJob } from "./jobs.js";
 import { listSettlementRails } from "./settlement.js";
-import { loadStore, persistStore } from "./store.js";
+import {
+  acquireWorkerLease,
+  getWorkerLease,
+  loadStore,
+  persistStore,
+  releaseWorkerLease,
+  renewWorkerLease
+} from "./store.js";
 import {
   reconcileCircleNotification,
   verifyCircleWebhook
@@ -142,6 +156,7 @@ import {
   buildExecutionMonitorSnapshot,
   refreshExecutionMonitor
 } from "./executionMonitor.js";
+import { truthFromAgentPayload } from "./executionTruth.js";
 import { analyzePortfolio } from "./portfolioBrain.js";
 import { getMarketFeedSnapshot, refreshMarketFeedSnapshot } from "./marketFeeds.js";
 import {
@@ -159,6 +174,10 @@ import {
 const root = fileURLToPath(new URL("..", import.meta.url));
 const port = Number(process.env.PORT || 4317);
 const sseClients = new Map();
+const backgroundWorkerOwnerId = [
+  process.env.RAILWAY_REPLICA_ID || process.env.HOSTNAME || "local",
+  randomUUID()
+].join(":");
 
 export const server = http.createServer(async (req, res) => {
   try {
@@ -191,7 +210,11 @@ export const server = http.createServer(async (req, res) => {
           total: ledger.automations.length,
           active: ledger.automations.filter((automation) => automation.status === "active").length,
           workerEnabled: config.automations.workerEnabled,
-          workerIntervalMs: config.automations.tickMs
+          workerIntervalMs: config.automations.tickMs,
+          leaseEnabled: config.automations.leaseEnabled,
+          lease: config.automations.leaseEnabled
+            ? await getWorkerLease(config.automations.leaseName)
+            : null
         },
         defi: {
           actions: ledger.defiActions.length,
@@ -200,6 +223,7 @@ export const server = http.createServer(async (req, res) => {
             total: ledger.routeCapabilities.length,
             live: ledger.routeCapabilities.filter((route) => route.status === "live").length,
             probeEnabled: config.defi.routeProbeEnabled,
+            probeWorkerEnabled: config.defi.routeProbeWorkerEnabled,
             probeIntervalMs: config.defi.routeProbeIntervalMs
           }
         },
@@ -403,7 +427,7 @@ export const server = http.createServer(async (req, res) => {
     const paymentRefreshMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/refresh$/);
     if (req.method === "POST" && paymentRefreshMatch) {
       const body = await readJson(req);
-      const refreshed = await refreshExecutionMonitor({
+      const refreshed = await refreshAndContinueExecutionMonitor({
         kind: "payment",
         id: paymentRefreshMatch[1],
         runWorker: true
@@ -426,7 +450,7 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && monitorMatch) {
       const body = await readJson(req);
-      const refreshed = await refreshExecutionMonitor({
+      const refreshed = await refreshAndContinueExecutionMonitor({
         kind: monitorMatch[1],
         id: decodeURIComponent(monitorMatch[2]),
         host: req.headers.host,
@@ -1040,7 +1064,18 @@ export const server = http.createServer(async (req, res) => {
         payload: { actionId: reconcileDefiMatch[1] },
         idempotencyKey: `reconcile_defi_action:${reconcileDefiMatch[1]}:manual:${Date.now()}`
       });
-      return jsonPersisted(res, await runJob({ jobId: job.id }));
+      const ran = await runJob({ jobId: job.id });
+      const refreshed = await refreshAndContinueExecutionMonitor({
+        kind: "defi_action",
+        id: reconcileDefiMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http",
+        runWorker: false
+      });
+      return jsonPersisted(res, {
+        ...ran,
+        monitor: publicExecutionMonitorResponse({}, refreshed)
+      });
     }
 
     const defiReceiptMatch = url.pathname.match(/^\/api\/defi\/actions\/([^/]+)\/receipt$/);
@@ -1055,7 +1090,7 @@ export const server = http.createServer(async (req, res) => {
     const defiRefreshMatch = url.pathname.match(/^\/api\/defi\/actions\/([^/]+)\/refresh$/);
     if (req.method === "POST" && defiRefreshMatch) {
       const body = await readJson(req);
-      const refreshed = await refreshExecutionMonitor({
+      const refreshed = await refreshAndContinueExecutionMonitor({
         kind: "defi_action",
         id: defiRefreshMatch[1],
         host: req.headers.host,
@@ -1095,7 +1130,19 @@ export const server = http.createServer(async (req, res) => {
         notificationType: body.notificationType || body.type || "circle_webhook",
         raw: body
       });
-      return jsonPersisted(res, reconcileCircleNotification({ ledger, notification: body }));
+      const reconciled = reconcileCircleNotification({ ledger, notification: body });
+      const continuation = reconciled.payment?.id
+        ? await resumeAgentWorkflowsFromMonitor({
+          kind: "payment",
+          id: reconciled.payment.id,
+          handle: reconciled.payment.senderHandle,
+          source: "circle_webhook"
+        })
+        : null;
+      return jsonPersisted(res, {
+        ...reconciled,
+        workflowContinuation: continuation
+      });
     }
 
     if (req.method === "POST" && url.pathname === "/api/x/command") {
@@ -1143,7 +1190,8 @@ export const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const jobs = await runDueJobs({ limit: body.limit || 20 });
       const automations = await runDueAutomations({ limit: body.automationLimit || body.limit || 20 });
-      return jsonPersisted(res, { ok: true, jobs, automations });
+      const workflows = await runDueAgentWorkflowsFromWorker({ limit: body.workflowLimit || body.limit || 10 });
+      return jsonPersisted(res, { ok: true, jobs, automations, workflows });
     }
 
     const runJobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/run$/);
@@ -1207,9 +1255,15 @@ export const server = http.createServer(async (req, res) => {
 
 export const ready = loadStore();
 await ready;
+const startupAutomationRepair = repairAutomationPayloads({ includePaused: true });
+if (startupAutomationRepair.repaired || startupAutomationRepair.paused) {
+  await persistStore();
+  console.log(`Automation payload repair: ${startupAutomationRepair.repaired} repaired, ${startupAutomationRepair.paused} paused`);
+}
 
 let backgroundWorkerRunning = false;
 let lastRouteProbeAt = 0;
+let lastOracleSyncAttemptAt = 0;
 
 if (!process.env.VERCEL) {
   server.listen(port, () => {
@@ -1242,28 +1296,75 @@ function startBackgroundWorker() {
 async function runBackgroundWorkerTick() {
   if (backgroundWorkerRunning) return;
   backgroundWorkerRunning = true;
+  let leaseAcquired = false;
+  let leaseHeartbeat = null;
 
   try {
-    const [jobs, automations, oracleSync, routeProbe] = await Promise.all([
+    const lease = config.automations.leaseEnabled
+      ? await acquireWorkerLease({
+          name: config.automations.leaseName,
+          ownerId: backgroundWorkerOwnerId,
+          ttlMs: config.automations.leaseTtlMs
+        })
+      : { acquired: true };
+    if (!lease.acquired) return;
+    leaseAcquired = true;
+
+    if (config.automations.leaseEnabled) {
+      const renewEveryMs = Math.max(5_000, Math.floor(config.automations.leaseTtlMs / 3));
+      leaseHeartbeat = setInterval(() => {
+        renewWorkerLease({
+          name: config.automations.leaseName,
+          ownerId: backgroundWorkerOwnerId,
+          ttlMs: config.automations.leaseTtlMs
+        }).catch((error) => {
+          console.error("Background worker lease renewal failed", error);
+        });
+      }, renewEveryMs);
+      leaseHeartbeat.unref?.();
+    }
+
+    const [jobs, automations, workflows, oracleSync, routeProbe] = await Promise.all([
       runDueJobs({ limit: config.automations.limit }),
       runDueAutomations({ limit: config.automations.limit }),
+      safeWorkflowRetry(),
       safeOracleSync(),
       safeRouteProbe()
     ]);
 
     const oracleUpdates = oracleSync.ok ? oracleSync.updates.filter((item) => !item.skipped).length : 0;
     const routeProbeUpdates = routeProbe.ok ? Number(routeProbe.probed || 0) : 0;
-    if (jobs.ran.length || automations.ran.length || oracleUpdates || routeProbeUpdates) {
+    const workflowRuns = workflows.ok ? workflows.ran.length : 0;
+    if (jobs.ran.length || automations.ran.length || workflowRuns || oracleUpdates || routeProbeUpdates) {
       await persistStore();
-      console.log(`Background worker ran ${jobs.ran.length} jobs, ${automations.ran.length} automations, ${oracleUpdates} oracle updates, and ${routeProbeUpdates} route probes`);
+      console.log(`Background worker ran ${jobs.ran.length} jobs, ${automations.ran.length} automations, ${workflowRuns} workflows, ${oracleUpdates} oracle updates, and ${routeProbeUpdates} route probes`);
     }
   } finally {
+    if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+    if (config.automations.leaseEnabled && leaseAcquired) {
+      await releaseWorkerLease({
+        name: config.automations.leaseName,
+        ownerId: backgroundWorkerOwnerId
+      }).catch((error) => {
+        console.error("Background worker lease release failed", error);
+      });
+    }
     backgroundWorkerRunning = false;
   }
 }
 
+async function safeWorkflowRetry() {
+  if (!config.automations.workflowWorkerEnabled) return { ok: true, due: 0, ran: [], failed: [], skipped: true };
+  try {
+    return await runDueAgentWorkflowsFromWorker({ limit: config.automations.workflowLimit });
+  } catch (error) {
+    console.error("Background workflow retry failed", error);
+    return { ok: false, due: 0, ran: [], failed: [{ error: error.message }] };
+  }
+}
+
 async function safeRouteProbe() {
-  if (!config.defi.routeProbeEnabled) return { ok: true, probed: 0, skipped: true };
+  if (!config.defi.routeProbeWorkerEnabled) return { ok: true, probed: 0, skipped: true };
   if (Date.now() - lastRouteProbeAt < config.defi.routeProbeIntervalMs) {
     return { ok: true, probed: 0, skipped: true };
   }
@@ -1277,6 +1378,13 @@ async function safeRouteProbe() {
 }
 
 async function safeOracleSync() {
+  if (!config.arcPerps.oracleSyncEnabled) {
+    return { ok: true, updates: [], skipped: true, reason: "oracle_sync_disabled" };
+  }
+  if (Date.now() - lastOracleSyncAttemptAt < config.arcPerps.oracleSyncIntervalMs) {
+    return { ok: true, updates: [], skipped: true, reason: "oracle_sync_interval" };
+  }
+  lastOracleSyncAttemptAt = Date.now();
   try {
     return await syncArcPerpsOracleFromHyperliquid();
   } catch (error) {
@@ -1624,8 +1732,7 @@ async function getHackathonStatus() {
   const arc = await safeAsync(() => getArcReadiness());
   const circle = getCircleReadiness();
   const pendingApprovals = ledger.approvals.filter((approval) => approval.status === "pending");
-  const queuedJobs = ledger.jobs.filter((job) => job.status === "queued");
-  const failedJobs = ledger.jobs.filter((job) => job.status === "failed");
+  const jobHealth = getJobQueueHealth();
   const openPositions = positions.ok ? positions.positions.filter((position) => position.open) : [];
 
   const checks = [
@@ -1664,8 +1771,10 @@ async function getHackathonStatus() {
     {
       id: "jobs",
       label: "Worker queue",
-      ok: failedJobs.length === 0,
-      detail: `${queuedJobs.length} queued, ${failedJobs.length} failed`
+      ok: jobHealth.ok,
+      detail: jobHealth.ok
+        ? `${jobHealth.queued} queued, no recent failures`
+        : `${jobHealth.overdue} overdue, ${jobHealth.recentFailed} recent failures`
     }
   ];
 
@@ -1682,8 +1791,11 @@ async function getHackathonStatus() {
       wallets: listWalletProfiles().length,
       payments: ledger.payments.length,
       approvalsPending: pendingApprovals.length,
-      jobsQueued: queuedJobs.length,
-      jobsFailed: failedJobs.length,
+      jobsQueued: jobHealth.queued,
+      jobsRunning: jobHealth.running,
+      jobsOverdue: jobHealth.overdue,
+      jobsRecentFailed: jobHealth.recentFailed,
+      jobsHistoricalFailed: jobHealth.historicalFailed,
       defiActions: ledger.defiActions.length,
       perpProposals: ledger.perpProposals.length,
       xCommands: ledger.xCommands.length,
@@ -1766,9 +1878,27 @@ function terminalAgentResponse(requestBody = {}, payload = {}) {
     txHash: payload.execution.txHash || payload.txHash || null,
     explorerUrl: payload.execution.explorerUrl || payload.explorerUrl || null,
     receiptUrl: payload.execution.receiptUrl || payload.receiptUrl || null,
-    nextAction: payload.execution.nextAction || payload.nextAction || null,
+    nextAction: publicTerminalNextAction(payload.execution.nextAction || payload.nextAction),
     ids: payload.execution.ids || undefined
   } : undefined;
+  const executionMonitor = payload.executionMonitor ? {
+    kind: payload.executionMonitor.kind,
+    id: payload.executionMonitor.id,
+    lifecycle: payload.executionMonitor.lifecycle,
+    status: payload.executionMonitor.status,
+    txHash: payload.executionMonitor.txHash || null,
+    explorerUrl: payload.executionMonitor.explorerUrl || null,
+    receiptUrl: payload.executionMonitor.receiptUrl || null,
+    terminal: payload.executionMonitor.terminal,
+    truth: payload.executionMonitor.truth
+  } : undefined;
+  const isPlainAnswer = payload.planned?.plan?.tool === "answer_agent_question" || Boolean(result?.answer);
+  const truth = isPlainAnswer ? undefined : truthFromAgentPayload({
+    ...payload,
+    result,
+    execution,
+    executionMonitor
+  });
 
   return {
     ok: payload.ok,
@@ -1789,22 +1919,14 @@ function terminalAgentResponse(requestBody = {}, payload = {}) {
     } : undefined,
     result,
     execution,
-    executionMonitor: payload.executionMonitor ? {
-      kind: payload.executionMonitor.kind,
-      id: payload.executionMonitor.id,
-      lifecycle: payload.executionMonitor.lifecycle,
-      status: payload.executionMonitor.status,
-      txHash: payload.executionMonitor.txHash || null,
-      explorerUrl: payload.executionMonitor.explorerUrl || null,
-      receiptUrl: payload.executionMonitor.receiptUrl || null,
-      terminal: payload.executionMonitor.terminal
-    } : undefined,
+    executionMonitor,
+    truth,
     signer: payload.signer,
     txHash: payload.txHash || execution?.txHash || null,
     explorerUrl: payload.explorerUrl || execution?.explorerUrl || null,
     receiptUrl: payload.receiptUrl || execution?.receiptUrl || null,
     summary: cleanTerminalReason(payload.summary || payload.reason),
-    nextAction: payload.nextAction,
+    nextAction: publicTerminalNextAction(payload.nextAction),
     timing: payload.timing
   };
 }
@@ -1820,6 +1942,34 @@ function publicExecutionMonitorResponse(requestBody = {}, payload = {}) {
     receipt: payload.receipt ? sanitizeExecutionMonitorReceipt(payload.receipt) : undefined,
     worker: undefined
   });
+}
+
+async function refreshAndContinueExecutionMonitor({
+  kind,
+  id,
+  handle,
+  host,
+  protocol = "http",
+  runWorker = false
+} = {}) {
+  const refreshed = await refreshExecutionMonitor({
+    kind,
+    id,
+    host,
+    protocol,
+    runWorker
+  });
+  const continuation = await resumeAgentWorkflowsFromMonitor({
+    kind,
+    id,
+    handle: handle || refreshed.monitor?.handle,
+    source: "execution_monitor",
+    fast: true
+  });
+  return {
+    ...refreshed,
+    workflowContinuation: continuation
+  };
 }
 
 function sanitizeExecutionMonitorSnapshot(monitor = {}) {
@@ -1862,7 +2012,7 @@ function sanitizeAgentResult(result = {}) {
     status: result.status,
     reason: cleanTerminalReason(result.reason || result.error),
     error: result.error ? cleanTerminalReason(result.error) : undefined,
-    nextAction: result.nextAction,
+    nextAction: publicTerminalNextAction(result.nextAction),
     fast: result.fast,
     paused: Number.isFinite(Number(result.paused)) ? Number(result.paused) : undefined
   };
@@ -1878,8 +2028,19 @@ function sanitizeAgentResult(result = {}) {
   if (result.executionSummary) {
     sanitized.executionSummary = sanitizeExecutionSummary(result.executionSummary);
   }
+  if (result.wallet) {
+    sanitized.wallet = sanitizeTerminalWallet(result.wallet);
+  }
+  if (Array.isArray(result.routes)) {
+    sanitized.routes = result.routes.slice(0, 20).map(sanitizeRouteCapability);
+  }
   if (result.automation) {
     sanitized.automation = sanitizeAutomation(result.automation);
+  }
+  if (result.answer) {
+    sanitized.answer = cleanTerminalReason(result.answer);
+    sanitized.topic = result.topic;
+    sanitized.capabilities = Array.isArray(result.capabilities) ? result.capabilities.slice(0, 10) : undefined;
   }
   if (result.memory || result.recent?.trades) {
     sanitized.memoryReport = sanitizeAgentMemoryReport(result);
@@ -1897,6 +2058,42 @@ function sanitizeAgentResult(result = {}) {
     sanitized.approval = result.approval;
   }
   return dropUndefined(sanitized);
+}
+
+function sanitizeTerminalWallet(wallet = {}) {
+  return dropUndefined({
+    handle: wallet.handle,
+    onboarded: wallet.onboarded,
+    balance: wallet.balance,
+    totalBalanceUsd: wallet.totalBalanceUsd,
+    balances: wallet.balances,
+    tokenBalances: wallet.tokenBalances,
+    wallets: Array.isArray(wallet.wallets)
+      ? wallet.wallets.map((item) => dropUndefined({
+        rail: item.rail,
+        address: item.address,
+        id: item.id,
+        state: item.state
+      }))
+      : undefined
+  });
+}
+
+function publicTerminalNextAction(nextAction) {
+  const value = String(nextAction || "");
+  if (!value || value === "none") return value || undefined;
+  return {
+    send_natural_language_request: "Tell me what you want to do next.",
+    ask_for_swap_amount: "Tell me the amount you want to swap.",
+    ask_for_bridge_amount: "Tell me the amount you want to bridge.",
+    check_route_registry_later: "Ask me to check live routes again later.",
+    give_automation_schedule: "Give me the action, interval, and when to stop.",
+    ready_for_next_instruction: "Tell me what you want to do next.",
+    choose_supported_route: "Try a different token pair or route.",
+    adjust_trade_or_fund_wallet: "Add funds or lower the amount.",
+    reconcile_defi_action: "Wait for the final receipt.",
+    monitor_receipt: "Wait for the final receipt."
+  }[value] || value.replaceAll("_", " ");
 }
 
 function sanitizeExecutionSummary(summary = {}) {
@@ -1935,7 +2132,8 @@ function sanitizeAgentMemoryReport(report = {}) {
         : [],
       recentFailures: Array.isArray(report.memory.recentFailures)
         ? report.memory.recentFailures.slice(0, 8).map(sanitizeMemoryItem)
-        : []
+        : [],
+      working: report.memory.working ? sanitizeAgentWorkingMemory(report.memory.working) : undefined
     } : undefined,
     recent: report.recent ? {
       trades: Array.isArray(report.recent.trades) ? report.recent.trades.slice(0, 8).map(sanitizeMemoryItem) : [],
@@ -2000,7 +2198,61 @@ function sanitizeMemoryItem(item = {}) {
   }
   const reason = cleanTerminalReason(item.reason || item.error);
   if (reason) output.reason = reason;
+  if (item.truth) {
+    output.truth = sanitizeTruth(item.truth);
+  }
   return dropUndefined(output);
+}
+
+function sanitizeAgentWorkingMemory(working = {}) {
+  return dropUndefined({
+    status: working.status,
+    topic: working.topic,
+    objective: cleanTerminalReason(working.objective),
+    pendingClarification: working.pendingClarification ? {
+      question: cleanTerminalReason(working.pendingClarification.question),
+      missing: Array.isArray(working.pendingClarification.missing)
+        ? working.pendingClarification.missing.slice(0, 8)
+        : [],
+      draft: sanitizeMemoryItem(working.pendingClarification.draft || {})
+    } : null,
+    lastOutcome: working.lastOutcome ? sanitizeMemoryItem(working.lastOutcome) : null,
+    recentTurns: Array.isArray(working.recentTurns)
+      ? working.recentTurns.slice(0, 8).map(sanitizeMemoryItem)
+      : []
+  });
+}
+
+function sanitizeTruth(truth = {}) {
+  return dropUndefined({
+    kind: truth.kind,
+    label: truth.label,
+    phase: truth.phase,
+    status: truth.status,
+    message: cleanTerminalReason(truth.message),
+    txHash: truth.txHash || null,
+    explorerUrl: truth.explorerUrl || null,
+    receiptUrl: truth.receiptUrl || null,
+    reason: cleanTerminalReason(truth.reason),
+    nextAction: truth.nextAction || null,
+    target: truth.target || null
+  });
+}
+
+function sanitizeRouteCapability(route = {}) {
+  return dropUndefined({
+    id: route.id,
+    key: route.key,
+    type: route.type,
+    status: route.status,
+    fromRail: route.fromRail,
+    toRail: route.toRail,
+    fromToken: route.fromToken,
+    toToken: route.toToken,
+    provider: route.provider,
+    lastQuotedAt: route.lastQuotedAt || null,
+    estimatedFeeRatio: route.estimatedFeeRatio ?? route.feeRatio ?? null
+  });
 }
 
 function sanitizeAutomation(automation = {}) {

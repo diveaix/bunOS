@@ -5,6 +5,7 @@ import { enqueueJob, runJob } from "./jobs.js";
 import { runAgentAction } from "./agentPlanner.js";
 import { syncWalletBalances } from "./walletAccounts.js";
 import { runStrategyCheck } from "./strategyAgent.js";
+import { truthFromAgentPayload } from "./executionTruth.js";
 
 const SUPPORTED_KINDS = new Set([
   "sync_circle_balances",
@@ -42,6 +43,7 @@ export function createAutomation(input = {}) {
 }
 
 export function listAutomations({ handle, status, kind, limit = 50 } = {}) {
+  repairAutomationPayloads({ handle });
   const normalized = handle ? normalizeHandle(handle) : null;
   const automations = (ledger.automations || [])
     .filter((automation) => (
@@ -103,11 +105,13 @@ export function deleteAutomation({ automationId } = {}) {
 }
 
 export async function runAutomation({ automationId } = {}) {
+  repairAutomationPayloads();
   const automation = findAutomation(automationId);
   return await executeAutomation(automation);
 }
 
 export async function runDueAutomations({ limit = 20 } = {}) {
+  repairAutomationPayloads();
   const now = Date.now();
   const due = (ledger.automations || [])
     .filter((automation) => (
@@ -121,6 +125,57 @@ export async function runDueAutomations({ limit = 20 } = {}) {
     results.push(await executeAutomation(automation));
   }
   return { ok: true, ran: results };
+}
+
+export function repairAutomationPayloads({ handle, includePaused = true } = {}) {
+  const normalized = handle ? normalizeHandle(handle) : null;
+  const now = new Date().toISOString();
+  const report = { ok: true, repaired: 0, paused: 0 };
+  for (const automation of ledger.automations || []) {
+    if (normalized && automation.handle !== normalized) continue;
+    if (!includePaused && automation.status === "paused") continue;
+    if (automation.kind !== "run_agent_action") continue;
+
+    const before = String(automation.payload?.text || "");
+    if (looksLikeAutomationCreation(before) && /^\s*(?:create|make|start|schedule|automate)\b/i.test(before)) {
+      if (automation.status !== "paused") {
+        automation.status = "paused";
+        automation.nextRunAt = null;
+        automation.lastError = "Automation payload still looked like it would create another automation.";
+        automation.updatedAt = now;
+        report.paused += 1;
+        recordAutomationEvent("automation_recursive_payload_paused", automation);
+      }
+      continue;
+    }
+
+    const cleaned = stripScheduleText(before);
+    if (cleaned && cleaned !== before) {
+      automation.payload = {
+        ...(automation.payload || {}),
+        text: cleaned
+      };
+      if (!automation.name || /run agent:|automation/i.test(automation.name)) {
+        automation.name = `Run agent: ${cleaned.slice(0, 48)}`;
+      }
+      automation.updatedAt = now;
+      report.repaired += 1;
+      recordAutomationEvent("automation_payload_repaired", automation, {
+        oldText: before.slice(0, 240),
+        newText: cleaned.slice(0, 240)
+      });
+    }
+
+    if (looksLikeAutomationCreation(cleaned || before) && automation.status !== "paused") {
+      automation.status = "paused";
+      automation.nextRunAt = null;
+      automation.lastError = "Automation payload still looked like it would create another automation.";
+      automation.updatedAt = now;
+      report.paused += 1;
+      recordAutomationEvent("automation_recursive_payload_paused", automation);
+    }
+  }
+  return report;
 }
 
 function normalizeAutomationInput(input) {
@@ -169,14 +224,15 @@ function normalizeAutomationInput(input) {
 
   const prompt = input.prompt || input.text || input.payload?.text;
   if (!prompt) throw new Error("run_agent_action automation requires prompt or text");
+  const cleanedPrompt = stripScheduleText(prompt);
   return {
     kind,
     ...interval,
     maxRuns,
-    name: input.name || `Run agent: ${String(prompt).slice(0, 48)}`,
+    name: input.name || `Run agent: ${String(cleanedPrompt || prompt).slice(0, 48)}`,
     payload: {
       handle: input.handle,
-      text: stripScheduleText(prompt),
+      text: cleanedPrompt,
       defaultSettlementRail: input.defaultSettlementRail || input.payload?.defaultSettlementRail || "arc-testnet",
       fast: input.fast !== false,
       useModel: input.useModel === true || input.payload?.useModel === true
@@ -255,15 +311,21 @@ function normalizeMaxRuns(value) {
 }
 
 function parseMaxRuns(text) {
-  const match = String(text || "").match(/\b(?:for|until|stop\s+after)\s+(\d{1,4})\s*(?:times?|runs?|executions?)\b/i);
-  return match ? Number(match[1]) : null;
+  const match = String(text || "").match(/\b(?:for|until|stop\s+after)\s+(\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\s*(?:times?|runs?|executions?)\b/i);
+  return match ? parseNumberWord(match[1]) : null;
 }
 
 function stripScheduleText(text) {
+  const numberWord = "(?:\\d+(?:\\.\\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)";
   return String(text || "")
-    .replace(/\b(auto(?:mate)?|schedule|repeat|run)\b/ig, "")
-    .replace(/\bevery\s+\d+(?:\.\d+)?\s*(?:second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/ig, "")
-    .replace(/\b(?:for|until|stop\s+after)\s+\d{1,4}\s*(?:times?|runs?|executions?)\b/ig, "")
+    .replace(/^\s*(?:run|create|make|start|schedule|automate)\s+(?:an?\s+)?(?:automation|scheduled task|recurring task)\s*[:.-]?\s*/ig, "")
+    .replace(/^\s*(?:an?\s+)?(?:automation|scheduled task|recurring task)\s*[:.-]?\s*/ig, "")
+    .replace(/^\s*run\s+agent\s*:\s*/ig, "")
+    .replace(/^\s*(?:an?\s+)?(?:automation|scheduled task|recurring task)\s*[:.-]?\s*/ig, "")
+    .replace(new RegExp(`\\bevery\\s+${numberWord}\\s*(?:second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\\b`, "ig"), "")
+    .replace(new RegExp(`\\b(?:for|until|stop\\s+after)\\s+${numberWord}\\s*(?:times?|runs?|executions?)\\b`, "ig"), "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^\s*[,.;:-]\s*/, "")
     .trim();
 }
 
@@ -357,9 +419,14 @@ function recursiveAutomationError(message) {
 }
 
 function summarizeResult(result) {
+  const truth = truthFromAgentPayload(result || {});
   return {
     ok: result?.ok !== false,
     status: result?.status || result?.action?.status || result?.payment?.status || result?.job?.status || null,
+    txHash: result?.txHash || result?.execution?.txHash || result?.action?.txHash || result?.payment?.transfer?.txHash || null,
+    explorerUrl: result?.explorerUrl || result?.execution?.explorerUrl || result?.action?.explorerUrl || result?.payment?.transfer?.explorerUrl || null,
+    receiptUrl: result?.receiptUrl || result?.execution?.receiptUrl || result?.receipt?.publicUrl || null,
+    truth,
     nextAction: result?.nextAction || null,
     at: new Date().toISOString()
   };

@@ -72,6 +72,7 @@ export function getAgentMetrics({ windowMs = 24 * 60 * 60_000 } = {}) {
   const approvals = approvalConversion();
   const x = xCommandMetrics();
   const route = routeMetrics();
+  const workflows = workflowMetrics();
 
   return {
     ok: true,
@@ -88,6 +89,7 @@ export function getAgentMetrics({ windowMs = 24 * 60 * 60_000 } = {}) {
     xCommandSuccessRate: x.successRate,
     xCommands: x,
     route,
+    workflows,
     latest: events.slice(-10).reverse()
   };
 }
@@ -100,6 +102,8 @@ export function getAgentHealth({ windowMs = 24 * 60 * 60_000 } = {}) {
   if (metrics.routeFailureRate > 0.5 && metrics.route.total >= 3) alerts.push(alert("high_route_failure_rate", "warning", `Route failure rate is ${(metrics.routeFailureRate * 100).toFixed(1)}%.`));
   if (metrics.pendingActions.total > 10) alerts.push(alert("pending_actions_backlog", "warning", `${metrics.pendingActions.total} actions are pending or queued.`));
   if (metrics.approvalConversion.pending > 10) alerts.push(alert("approval_backlog", "warning", `${metrics.approvalConversion.pending} approvals are still pending.`));
+  if (metrics.workflows.exhausted > 0) alerts.push(alert("workflow_retry_exhausted", "warning", `${metrics.workflows.exhausted} workflow(s) exhausted receipt refresh attempts.`));
+  if (metrics.workflows.dueForRefresh > 5) alerts.push(alert("workflow_refresh_backlog", "warning", `${metrics.workflows.dueForRefresh} workflow(s) are due for receipt refresh.`));
   if (metrics.xCommands.total >= 5 && metrics.xCommandSuccessRate < 0.6) alerts.push(alert("low_x_command_success", "warning", `X command success rate is ${(metrics.xCommandSuccessRate * 100).toFixed(1)}%.`));
 
   const status = alerts.some((item) => item.severity === "critical")
@@ -116,7 +120,7 @@ export function getAgentHealth({ windowMs = 24 * 60 * 60_000 } = {}) {
     alerts,
     summaries: [
       `${metrics.actionsPlanned} agent action(s) planned in window.`,
-      `${metrics.failures} failure(s), ${metrics.pendingActions.total} pending/queued action(s).`,
+      `${metrics.failures} failure(s), ${metrics.pendingActions.total} pending/queued action(s), ${metrics.workflows.waiting} waiting workflow(s).`,
       `X success rate ${(metrics.xCommandSuccessRate * 100).toFixed(1)}%, route failure rate ${(metrics.routeFailureRate * 100).toFixed(1)}%.`
     ]
   };
@@ -191,6 +195,27 @@ function routeMetrics() {
     total: actions.length,
     failures,
     failureRate: actions.length ? failures / actions.length : 0
+  };
+}
+
+function workflowMetrics() {
+  const workflows = ledger.agentWorkflows || [];
+  const now = Date.now();
+  const waiting = workflows.filter((item) => ["waiting_execution", "waiting_approval"].includes(item.status));
+  const exhausted = waiting.filter((item) => item.retry?.exhausted).length;
+  const dueForRefresh = waiting.filter((item) => {
+    if (item.retry?.exhausted) return false;
+    if (!item.retry?.nextRefreshAt) return false;
+    return new Date(item.retry.nextRefreshAt).getTime() <= now;
+  }).length;
+  return {
+    total: workflows.length,
+    waiting: waiting.length,
+    dueForRefresh,
+    exhausted,
+    completed: workflows.filter((item) => item.status === "completed").length,
+    failed: workflows.filter((item) => item.status === "failed").length,
+    cancelled: workflows.filter((item) => item.status === "cancelled").length
   };
 }
 

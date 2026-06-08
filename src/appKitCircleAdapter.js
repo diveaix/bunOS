@@ -64,7 +64,8 @@ export async function createCircleAppKitContext({ handle } = {}) {
 
 export async function estimateCircleAppKitBridge(input = {}) {
   const params = await buildBridgeParams(input);
-  const estimate = await params.kit.estimateBridge(params.request);
+  const rawEstimate = await params.kit.estimateBridge(params.request);
+  const estimate = normalizeBridgeEstimate(rawEstimate, params);
   return {
     ok: true,
     provider: "circle-app-kit",
@@ -72,7 +73,9 @@ export async function estimateCircleAppKitBridge(input = {}) {
     operation: "bridge",
     executable: getCircleAppKitReadiness().executionReady,
     request: summarizeBridgeRequest(params),
-    estimate: jsonSafe(estimate),
+    estimate,
+    rawEstimate: jsonSafe(rawEstimate),
+    quoteQuality: bridgeQuoteQuality(estimate),
     signer: signerMetadata(params.profile, input.fromRail || "arc-testnet")
   };
 }
@@ -100,7 +103,8 @@ export async function executeCircleAppKitBridge(input = {}) {
 
 export async function estimateCircleAppKitSwap(input = {}) {
   const params = await buildSwapParams(input);
-  const estimate = await retryAppKitEstimate(() => params.kit.estimateSwap(params.request));
+  const rawEstimate = await retryAppKitEstimate(() => params.kit.estimateSwap(params.request));
+  const estimate = normalizeSwapEstimate(rawEstimate, params);
   return {
     ok: true,
     provider: "circle-app-kit",
@@ -108,7 +112,9 @@ export async function estimateCircleAppKitSwap(input = {}) {
     operation: "swap",
     executable: getCircleAppKitReadiness().executionReady,
     request: summarizeSwapRequest(params),
-    estimate: jsonSafe(estimate),
+    estimate,
+    rawEstimate: jsonSafe(rawEstimate),
+    quoteQuality: swapQuoteQuality(estimate),
     signer: signerMetadata(params.profile, params.rail.id)
   };
 }
@@ -500,11 +506,14 @@ function normalizeAppKitResultStatus(state = "", context = null) {
 
 function extractTxHash(result) {
   const steps = Array.isArray(result?.steps) ? result.steps : [];
+  const executed = Array.isArray(result?.executedTransactions) ? result.executedTransactions : [];
+  const swapTx = executed.find((item) => String(item.type || "").toLowerCase() === "swap");
   const preferredStep = steps.find((step) => ["burn", "swap", "send"].includes(String(step.name || step.type).toLowerCase()))
     || steps.findLast?.((step) => step.txHash || step.transactionHash || step.hash);
   return result?.txHash
     || result?.transactionHash
     || result?.hash
+    || swapTx?.txHash
     || preferredStep?.txHash
     || preferredStep?.transactionHash
     || preferredStep?.hash
@@ -513,7 +522,7 @@ function extractTxHash(result) {
 
 function extractSubmissions(result) {
   const steps = Array.isArray(result?.steps) ? result.steps : [];
-  return steps
+  const fromSteps = steps
     .map((step, index) => ({
       refId: step.name || step.type || `appkit:${index}`,
       status: normalizeAppKitResultStatus(step.state || step.status, step),
@@ -522,6 +531,124 @@ function extractSubmissions(result) {
       submittedAt: new Date().toISOString()
     }))
     .filter((step) => step.txHash || step.rawStatus);
+  const executed = Array.isArray(result?.executedTransactions) ? result.executedTransactions : [];
+  const fromExecuted = executed
+    .map((tx, index) => ({
+      refId: tx.type || `appkit:tx:${index}`,
+      status: "submitted",
+      txHash: tx.txHash || tx.transactionHash || tx.hash || null,
+      rawStatus: "SUBMITTED",
+      submittedAt: new Date().toISOString()
+    }))
+    .filter((tx) => tx.txHash);
+  return [...fromSteps, ...fromExecuted];
+}
+
+function normalizeSwapEstimate(estimate, params) {
+  const safe = jsonSafe(estimate) || {};
+  const estimatedOutput = normalizeTokenAmount(
+    safe.estimatedOutput || safe.output || safe.toAmount,
+    params.request.tokenOut
+  );
+  const stopLimit = normalizeTokenAmount(
+    safe.stopLimit || safe.minimumOutput || safe.minOutput,
+    params.request.tokenOut
+  );
+  return {
+    ...safe,
+    tokenIn: safe.tokenIn || params.request.tokenIn,
+    tokenOut: safe.tokenOut || params.request.tokenOut,
+    amountIn: safe.amountIn || params.request.amountIn,
+    chain: safe.chain || params.rail.appKitChain,
+    fromAddress: safe.fromAddress || params.wallet.address,
+    toAddress: safe.toAddress || params.wallet.address,
+    estimatedOutput,
+    stopLimit,
+    amountOut: safe.amountOut || estimatedOutput?.amount || null,
+    fees: normalizeFeeList(safe.fees)
+  };
+}
+
+function normalizeBridgeEstimate(estimate, params) {
+  const safe = jsonSafe(estimate) || {};
+  return {
+    ...safe,
+    token: safe.token || params.request.token || "USDC",
+    amount: safe.amount || params.request.amount,
+    source: safe.source || {
+      address: params.fromWallet.address,
+      chain: params.fromRail.appKitChain
+    },
+    destination: safe.destination || {
+      address: params.toAddress,
+      chain: params.toRail.appKitChain,
+      recipientAddress: params.toAddress
+    },
+    gasFees: Array.isArray(safe.gasFees) ? safe.gasFees : [],
+    fees: normalizeFeeList(safe.fees)
+  };
+}
+
+function normalizeTokenAmount(value, fallbackToken) {
+  if (!value) return null;
+  if (typeof value === "object") {
+    const amount = value.amount ?? value.value ?? value.toAmount ?? value.amountOut;
+    return {
+      ...value,
+      token: value.token || value.symbol || fallbackToken,
+      amount: amount === undefined || amount === null ? null : String(amount)
+    };
+  }
+  return {
+    token: fallbackToken,
+    amount: String(value)
+  };
+}
+
+function normalizeFeeList(fees) {
+  if (!Array.isArray(fees)) return [];
+  return fees.map((fee) => {
+    const token = fee?.token?.symbol || fee?.token || fee?.currency;
+    const decimals = fee?.token?.decimals ?? fee?.decimals;
+    return {
+      ...fee,
+      token,
+      amount: normalizeStableFeeAmount(fee?.amount, token, decimals)
+    };
+  });
+}
+
+function normalizeStableFeeAmount(amount, token, decimals = 6) {
+  if (amount === null || amount === undefined || amount === "") return amount ?? null;
+  const raw = String(amount);
+  const number = Number(raw);
+  if (!Number.isFinite(number) || number < 0) return raw;
+  if (String(token || "").toUpperCase() === "USDC" && /^\d+$/.test(raw) && number > 100 && Number(decimals) >= 6) {
+    return String(number / 10 ** Number(decimals));
+  }
+  return raw;
+}
+
+function swapQuoteQuality(estimate) {
+  const amount = Number(estimate?.estimatedOutput?.amount);
+  return {
+    ok: Number.isFinite(amount) && amount > 0,
+    outputAmount: Number.isFinite(amount) ? amount : null,
+    reason: Number.isFinite(amount) && amount > 0
+      ? "Swap quote includes a positive estimated output."
+      : "Swap quote did not include a positive estimated output."
+  };
+}
+
+function bridgeQuoteQuality(estimate) {
+  const amount = Number(estimate?.amount);
+  return {
+    ok: Number.isFinite(amount) && amount > 0 && estimate?.token === "USDC",
+    outputAmount: Number.isFinite(amount) ? amount : null,
+    reason: Number.isFinite(amount) && amount > 0
+      ? "Bridge quote includes a positive USDC transfer amount."
+      : "Bridge quote did not include a positive USDC transfer amount."
+  };
 }
 
 function jsonSafe(value) {

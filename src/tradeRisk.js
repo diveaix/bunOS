@@ -188,11 +188,17 @@ function estimateFeeUsd({ action, quote, sourceTokenFeeAmount = 0, fromToken }) 
 
 function estimateOutput({ action, quote, toToken }) {
   const estimate = quote?.estimate || {};
+  const humanOutput = estimate.estimatedOutput?.amount || null;
+  const humanMin = estimate.stopLimit?.amount || null;
   const rawToAmount = estimate.toAmount || estimate.amountOut || estimate.outputAmount || null;
   const rawMin = estimate.toAmountMin || estimate.minAmountOut || null;
   const decimals = tokenDecimals(toToken);
-  const amount = rawToAmount ? tokenUnitsToAmount(rawToAmount, decimals) : fallbackOutputAmount(action);
-  const minAmount = rawMin ? tokenUnitsToAmount(rawMin, decimals) : null;
+  const amount = humanOutput !== null
+    ? round(Number(humanOutput), decimals === 8 ? 8 : 6)
+    : rawToAmount ? tokenUnitsToAmount(rawToAmount, decimals) : fallbackOutputAmount(action);
+  const minAmount = humanMin !== null
+    ? round(Number(humanMin), decimals === 8 ? 8 : 6)
+    : rawMin ? tokenUnitsToAmount(rawMin, decimals) : null;
 
   return {
     token: toToken,
@@ -310,10 +316,17 @@ function feeAmount(value) {
 
   const decimals = Number(value.decimals ?? value.token?.decimals);
   const rawText = String(value.amount ?? value.fee ?? value.cost ?? value.value ?? "");
-  if (Number.isInteger(decimals) && decimals > 0 && /^\d+$/.test(rawText) && raw >= 10 ** Math.min(decimals, 6)) {
+  if (Number.isInteger(decimals) && decimals > 0 && shouldTreatAsBaseUnits({ rawText, raw, decimals, fee: value })) {
     return tokenUnitsToAmount(rawText, decimals);
   }
   return raw;
+}
+
+function shouldTreatAsBaseUnits({ rawText, raw, decimals, fee }) {
+  if (!/^\d+$/.test(rawText)) return false;
+  const symbol = tokenKey(feeTokenSymbol(fee));
+  if (["USDC", "EURC", "USDT"].includes(symbol) && raw > 100) return true;
+  return raw >= 10 ** Math.min(decimals, 6);
 }
 
 function normalizeAssetList(values) {

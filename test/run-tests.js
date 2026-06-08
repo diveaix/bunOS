@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { config } from "../src/config.js";
-import { planAgentAction, runAgentAction } from "../src/agentPlanner.js";
+import { planAgentAction, runAgentAction, runDueAgentWorkflowsFromWorker } from "../src/agentPlanner.js";
 import { openSecret } from "../src/cryptoBox.js";
 import { redactRpcUrl } from "../src/arcRpc.js";
 import { ledger, users } from "../src/fixtures.js";
@@ -14,9 +14,10 @@ import {
   createPaymentIntent,
   createSocialBounty
 } from "../src/orchestrator.js";
-import { enqueueJob, listJobs, runDueJobs, runJob } from "../src/jobs.js";
+import { enqueueJob, getJobQueueHealth, listJobs, runDueJobs, runJob } from "../src/jobs.js";
 import { listApprovals } from "../src/approvals.js";
 import { callMcpTool, mcpTools } from "../src/mcp.js";
+import { createAgentWorkflow, findDueAgentWorkflows, runAgentWorkflow } from "../src/agentWorkflow.js";
 import { completeMockXOAuth } from "../src/xOAuth.js";
 import {
   getXCommandReceipt,
@@ -77,6 +78,12 @@ import {
 } from "../src/mcpApiKeys.js";
 import { redactSensitive } from "../src/redaction.js";
 import {
+  acquireWorkerLease,
+  getWorkerLease,
+  releaseWorkerLease,
+  renewWorkerLease
+} from "../src/store.js";
+import {
   assertNoBackendSignerSpend,
   assertPublicPayloadSafe,
   createApprovalToken,
@@ -95,6 +102,8 @@ import {
   runAutomation,
   runDueAutomations
 } from "../src/automations.js";
+import { buildExecutionTruth, truthFromAgentPayload } from "../src/executionTruth.js";
+import { checkRouteCapability, routeCapabilityForUi } from "../src/routeRegistry.js";
 
 config.providerMode = "mock";
 config.transferProvider = "mock";
@@ -906,6 +915,40 @@ const tests = [
     }
   ],
   [
+    "requires fresh probe before trusting seeded live routes in real mode",
+    async () => {
+      const previousLiveAdapters = config.defi.liveAdapters;
+      const previousProbeEnabled = config.defi.routeProbeEnabled;
+      try {
+        config.defi.liveAdapters = true;
+        config.defi.routeProbeEnabled = true;
+
+        const decision = checkRouteCapability({
+          type: "swap",
+          fromRail: "arc-testnet",
+          toRail: "arc-testnet",
+          fromToken: "USDC",
+          toToken: "EURC"
+        });
+
+        assert.equal(decision.ok, false);
+        assert.equal(decision.status, "stale_probe_required");
+        assert.equal(decision.route.status, "live");
+        assert.equal(decision.route.effectiveStatus, "stale_probe_required");
+        assert.match(decision.reason, /fresh live quote/i);
+
+        const ui = routeCapabilityForUi();
+        const staleKnownLive = ui.live.find((route) => route.fromToken === "USDC" && route.toToken === "EURC");
+        assert.ok(staleKnownLive);
+        assert.equal(staleKnownLive.effectiveStatus, "stale_probe_required");
+        assert.equal(staleKnownLive.probeRequired, true);
+      } finally {
+        config.defi.liveAdapters = previousLiveAdapters;
+        config.defi.routeProbeEnabled = previousProbeEnabled;
+      }
+    }
+  ],
+  [
     "queues DeFi execution immediately after a route is created",
     async () => {
       const quoted = await quoteDefiRoute({
@@ -942,6 +985,308 @@ const tests = [
         handle: "@sara"
       });
       assert.equal(confirmed.skipped, true);
+    }
+  ],
+  [
+    "MCP execution refresh resumes waiting agent workflows",
+    async () => {
+      const action = {
+        id: "defi_mcp_resume",
+        handle: "@sara",
+        type: "swap",
+        status: "settled",
+        request: {
+          amount: 1,
+          fromToken: "USDC",
+          toToken: "EURC",
+          fromRail: "arc-testnet",
+          toRail: "arc-testnet"
+        },
+        execution: {
+          backendSignerAllowed: false,
+          txHash: `0x${"e".repeat(64)}`
+        },
+        txHash: `0x${"e".repeat(64)}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      ledger.defiActions.push(action);
+      const workflow = createAgentWorkflow({
+        handle: "@sara",
+        goal: "Finish settled swap and check balance",
+        steps: [
+          {
+            action: "quote_swap",
+            amount: 1,
+            fromToken: "USDC",
+            toToken: "EURC",
+            settlementRail: "arc-testnet"
+          },
+          { action: "tool_call", tool: "get_balance", arguments: {} }
+        ]
+      });
+      workflow.status = "waiting_execution";
+      workflow.steps[0].status = "waiting_execution";
+      workflow.steps[0].evidence = {
+        status: "submitted",
+        actionId: action.id
+      };
+
+      const monitor = await callMcpTool("refresh_execution_monitor", {
+        kind: "defi_action",
+        id: action.id,
+        handle: "@sara",
+        runWorker: false
+      });
+      assert.equal(monitor.ok, true);
+      assert.equal(monitor.monitor.lifecycle, "settled");
+      assert.equal(monitor.workflowContinuation.resumed, 1);
+      assert.equal(monitor.workflowContinuation.workflows[0].status, "completed");
+      assert.equal(monitor.workflowContinuation.workflows[0].workflow.lastRun.modelCalls, 0);
+      assert.equal(monitor.workflowContinuation.workflows[0].workflow.steps[0].evidence.txHash, `0x${"e".repeat(64)}`);
+    }
+  ],
+  [
+    "agent workflows track receipt retry backoff and exhaustion",
+    async () => {
+      const action = {
+        id: "defi_workflow_retry",
+        handle: "@sara",
+        type: "swap",
+        status: "submitted",
+        request: {
+          amount: 1,
+          fromToken: "USDC",
+          toToken: "EURC",
+          fromRail: "arc-testnet",
+          toRail: "arc-testnet"
+        },
+        execution: {
+          backendSignerAllowed: false
+        },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      ledger.defiActions.push(action);
+      const workflow = createAgentWorkflow({
+        handle: "@sara",
+        goal: "Wait for submitted swap then check balance",
+        steps: [
+          {
+            action: "quote_swap",
+            amount: 1,
+            fromToken: "USDC",
+            toToken: "EURC",
+            settlementRail: "arc-testnet"
+          },
+          { action: "tool_call", tool: "get_balance", arguments: {} }
+        ]
+      });
+      workflow.status = "waiting_execution";
+      workflow.steps[0].status = "waiting_execution";
+      workflow.steps[0].evidence = {
+        status: "submitted",
+        actionId: action.id
+      };
+
+      const adapters = {
+        planStep: async () => ({ plan: { tool: "get_balance" }, intent: { action: "get_balance" } }),
+        executeStep: async () => ({ ok: true, status: "completed" })
+      };
+      const first = await runAgentWorkflow({
+        workflowId: workflow.id,
+        handle: "@sara",
+        ...adapters,
+        forceRefresh: true
+      });
+      assert.equal(first.status, "waiting_execution");
+      assert.equal(first.workflow.retry.waitingRefreshAttempts, 1);
+      assert.ok(first.workflow.retry.nextRefreshAt);
+
+      const second = await runAgentWorkflow({
+        workflowId: workflow.id,
+        handle: "@sara",
+        ...adapters,
+        forceRefresh: false
+      });
+      assert.equal(second.workflow.lastRun.outcome, "backoff_waiting");
+      assert.equal(second.workflow.retry.waitingRefreshAttempts, 1);
+
+      workflow.retry.waitingRefreshAttempts = workflow.retry.maxAttempts;
+      workflow.retry.nextRefreshAt = new Date(Date.now() - 1_000).toISOString();
+      const exhausted = await runAgentWorkflow({
+        workflowId: workflow.id,
+        handle: "@sara",
+        ...adapters,
+        forceRefresh: false
+      });
+      assert.equal(exhausted.workflow.lastRun.outcome, "retry_exhausted");
+      assert.equal(exhausted.workflow.retry.exhausted, true);
+
+      const metrics = getAgentMetrics();
+      assert.ok(metrics.workflows.exhausted >= 1);
+    }
+  ],
+  [
+    "due workflow worker resumes only due waiting workflows",
+    async () => {
+      const dueAction = {
+        id: "defi_workflow_due",
+        handle: "@sara",
+        type: "swap",
+        status: "submitted",
+        request: {
+          amount: 1,
+          fromToken: "USDC",
+          toToken: "EURC",
+          fromRail: "arc-testnet",
+          toRail: "arc-testnet"
+        },
+        execution: {
+          backendSignerAllowed: false
+        },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      const laterAction = {
+        ...dueAction,
+        id: "defi_workflow_later"
+      };
+      ledger.defiActions.push(dueAction, laterAction);
+
+      const makeWorkflow = (actionId) => {
+        const workflow = createAgentWorkflow({
+          handle: "@sara",
+          goal: "Wait for swap then check balance",
+          steps: [
+            {
+              action: "quote_swap",
+              amount: 1,
+              fromToken: "USDC",
+              toToken: "EURC",
+              settlementRail: "arc-testnet"
+            },
+            { action: "tool_call", tool: "get_balance", arguments: {} }
+          ]
+        });
+        workflow.status = "waiting_execution";
+        workflow.steps[0].status = "waiting_execution";
+        workflow.steps[0].evidence = {
+          status: "submitted",
+          actionId
+        };
+        return workflow;
+      };
+
+      const dueWorkflow = makeWorkflow(dueAction.id);
+      dueWorkflow.retry.nextRefreshAt = new Date(Date.now() - 1_000).toISOString();
+      const laterWorkflow = makeWorkflow(laterAction.id);
+      laterWorkflow.retry.nextRefreshAt = new Date(Date.now() + 60_000).toISOString();
+
+      const due = findDueAgentWorkflows({ handle: "@sara", limit: 10 });
+      assert.ok(due.find((workflow) => workflow.id === dueWorkflow.id));
+      assert.ok(!due.find((workflow) => workflow.id === laterWorkflow.id));
+
+      let ran = await runDueAgentWorkflowsFromWorker({ limit: 10 });
+      assert.equal(ran.ran.length, 1);
+      assert.equal(ran.ran[0].workflow.id, dueWorkflow.id);
+      assert.equal(ran.ran[0].status, "waiting_execution");
+
+      dueAction.status = "settled";
+      dueAction.txHash = `0x${"d".repeat(64)}`;
+      dueWorkflow.retry.nextRefreshAt = new Date(Date.now() - 1_000).toISOString();
+      ran = await runDueAgentWorkflowsFromWorker({ limit: 10 });
+      assert.equal(ran.ran.length, 1);
+      assert.equal(ran.ran[0].status, "completed");
+      assert.equal(ran.ran[0].workflow.steps[0].evidence.txHash, `0x${"d".repeat(64)}`);
+    }
+  ],
+  [
+    "worker lease allows one owner and supports safe expiry takeover",
+    async () => {
+      const name = `test-worker-${Date.now()}`;
+      const now = Date.now();
+
+      const first = await acquireWorkerLease({
+        name,
+        ownerId: "worker-a",
+        ttlMs: 30_000,
+        now
+      });
+      assert.equal(first.acquired, true);
+      assert.equal(first.lease.ownerId, "worker-a");
+
+      const blocked = await acquireWorkerLease({
+        name,
+        ownerId: "worker-b",
+        ttlMs: 30_000,
+        now: now + 1_000
+      });
+      assert.equal(blocked.acquired, false);
+      assert.equal(blocked.lease.ownerId, "worker-a");
+
+      const wrongRenewal = await renewWorkerLease({
+        name,
+        ownerId: "worker-b",
+        ttlMs: 30_000,
+        now: now + 2_000
+      });
+      assert.equal(wrongRenewal.renewed, false);
+
+      const wrongRelease = await releaseWorkerLease({
+        name,
+        ownerId: "worker-b"
+      });
+      assert.equal(wrongRelease.released, false);
+
+      const takeover = await acquireWorkerLease({
+        name,
+        ownerId: "worker-b",
+        ttlMs: 30_000,
+        now: now + 31_000
+      });
+      assert.equal(takeover.acquired, true);
+      assert.equal((await getWorkerLease(name)).ownerId, "worker-b");
+
+      const released = await releaseWorkerLease({
+        name,
+        ownerId: "worker-b"
+      });
+      assert.equal(released.released, true);
+      assert.equal(await getWorkerLease(name), null);
+    }
+  ],
+  [
+    "worker health separates historical failures from current incidents",
+    async () => {
+      const now = Date.now();
+      const historical = {
+        id: `job_health_old_${now}`,
+        type: "test",
+        status: "failed",
+        runAfter: new Date(now - 48 * 60 * 60_000).toISOString(),
+        createdAt: new Date(now - 48 * 60 * 60_000).toISOString(),
+        updatedAt: new Date(now - 47 * 60 * 60_000).toISOString()
+      };
+      const recent = {
+        ...historical,
+        id: `job_health_recent_${now}`,
+        createdAt: new Date(now - 60_000).toISOString(),
+        updatedAt: new Date(now - 30_000).toISOString()
+      };
+      ledger.jobs.push(historical);
+
+      let health = getJobQueueHealth({ now, recentWindowMs: 60 * 60_000 });
+      assert.equal(health.ok, true);
+      assert.equal(health.recentFailed, 0);
+      assert.ok(health.historicalFailed >= 1);
+
+      ledger.jobs.push(recent);
+      health = getJobQueueHealth({ now, recentWindowMs: 60 * 60_000 });
+      assert.equal(health.ok, false);
+      assert.equal(health.recentFailed, 1);
+
+      ledger.jobs = ledger.jobs.filter((job) => ![historical.id, recent.id].includes(job.id));
     }
   ],
   [
@@ -1078,6 +1423,56 @@ const tests = [
       assert.equal(appKitBridgeSimulation.sourceTokenFeeAmount, 0.204683);
       assert.equal(appKitBridgeSimulation.requiredSourceAmount, 1.204683);
       assert.equal(appKitBridgeSimulation.estimatedFeeUsd, 0.204683);
+
+      const appKitBaseUnitFeeSimulation = buildTradeSimulation({
+        user: users.get("@sara"),
+        wallet: getWalletProfile("@sara"),
+        action: {
+          type: "bridge",
+          amount: 1,
+          amountUsd: 1,
+          fromToken: "USDC",
+          toToken: "USDC",
+          fromRail: "arc-testnet",
+          toRail: "base-sepolia"
+        },
+        quote: {
+          estimate: {
+            fees: [
+              {
+                type: "forwarder",
+                amount: "56500",
+                token: { symbol: "USDC", decimals: 6 }
+              }
+            ]
+          }
+        }
+      });
+      assert.equal(appKitBaseUnitFeeSimulation.ok, true);
+      assert.equal(appKitBaseUnitFeeSimulation.sourceTokenFeeAmount, 0.0565);
+      assert.equal(appKitBaseUnitFeeSimulation.requiredSourceAmount, 1.0565);
+
+      const appKitSwapOutputSimulation = buildTradeSimulation({
+        user: users.get("@sara"),
+        wallet: getWalletProfile("@sara"),
+        action: {
+          type: "swap",
+          amount: 1,
+          amountUsd: 1,
+          fromToken: "USDC",
+          toToken: "cirBTC",
+          fromRail: "arc-testnet",
+          toRail: "arc-testnet"
+        },
+        quote: {
+          estimate: {
+            estimatedOutput: { token: "cirBTC", amount: "0.00000913" },
+            stopLimit: { token: "cirBTC", amount: "0.000009" }
+          }
+        }
+      });
+      assert.equal(appKitSwapOutputSimulation.output.amount, 0.00000913);
+      assert.equal(appKitSwapOutputSimulation.output.minAmount, 0.000009);
 
       const expensiveTinyBridge = buildTradeSimulation({
         user: users.get("@sara"),
@@ -2055,6 +2450,39 @@ const tests = [
         text: "show route health on arc"
       });
       assert.equal(marketPlan.plan.tool, "get_market_intelligence");
+
+      const automationCapability = planAgentAction({
+        handle: "@sara",
+        text: "what automations can you run?"
+      });
+      assert.equal(automationCapability.plan.tool, "answer_agent_question");
+      assert.equal(automationCapability.plan.arguments.questionKind, "automation_capabilities");
+      assert.equal(automationCapability.plan.arguments.topic, "automation");
+
+      const swapCapability = planAgentAction({
+        handle: "@sara",
+        text: "what tokens can you swap?"
+      });
+      assert.equal(swapCapability.plan.tool, "answer_agent_question");
+      assert.equal(swapCapability.plan.arguments.questionKind, "swap_capabilities");
+
+      const followUpHowTo = planAgentAction({
+        handle: "@sara",
+        text: "how to use this?",
+        conversation: [
+          { role: "user", content: "what tokens can you swap?" },
+          { role: "agent", content: "Right now I can try these live swaps: USDC to EURC on Arc." }
+        ]
+      });
+      assert.equal(followUpHowTo.plan.tool, "answer_agent_question");
+      assert.equal(followUpHowTo.plan.arguments.questionKind, "how_to");
+      assert.equal(followUpHowTo.plan.arguments.topic, "swap");
+
+      const explicitAutomationList = planAgentAction({
+        handle: "@sara",
+        text: "show my automations"
+      });
+      assert.equal(explicitAutomationList.plan.tool, "list_automations");
     }
   ],
   [
@@ -2105,6 +2533,23 @@ const tests = [
       assert.equal(balance.ok, true);
       assert.equal(balance.planned.plan.tool, "get_balance");
       assert.equal(balance.result.wallet.handle, "@sara");
+
+      const automationHelp = await callMcpTool("run_agent_action", {
+        handle: "@sara",
+        text: "what automations can you run?"
+      });
+      assert.equal(automationHelp.ok, true);
+      assert.equal(automationHelp.planned.plan.tool, "answer_agent_question");
+      assert.match(automationHelp.result.answer, /only create one when you give me a clear schedule/i);
+      assert.equal(Array.isArray(automationHelp.result.automations), true);
+
+      const swapHelp = await callMcpTool("run_agent_action", {
+        handle: "@sara",
+        text: "what tokens can you swap?"
+      });
+      assert.equal(swapHelp.ok, true);
+      assert.equal(swapHelp.planned.plan.tool, "answer_agent_question");
+      assert.match(swapHelp.result.answer, /live swaps|do not see any live swap/i);
 
       const airdrop = await callMcpTool("run_agent_action", {
         handle: "@sara",
@@ -2199,6 +2644,15 @@ const tests = [
       assert.equal(bridgeStatus.plan.arguments.actionId, "__latest__");
       assert.equal(bridgeStatus.plan.arguments.type, "bridge");
 
+      const bridgeWhatHappened = planAgentAction({
+        handle: "@sara",
+        text: "what happened with my bridge?",
+        source: "test-agent-run"
+      });
+      assert.equal(bridgeWhatHappened.plan.tool, "get_defi_action_receipt");
+      assert.equal(bridgeWhatHappened.plan.arguments.actionId, "__latest__");
+      assert.equal(bridgeWhatHappened.plan.arguments.type, "bridge");
+
       const unclear = await callMcpTool("run_agent_action", {
         handle: "@sara",
         text: "do something smart with my bags"
@@ -2210,6 +2664,56 @@ const tests = [
       assert.equal(unclear.narrative.mode, "clarifying");
       assert.match(unclear.narrative.summary, /one more detail/i);
       assert.equal(unclear.agentState.handle, "@sara");
+    }
+  ],
+  [
+    "builds user-facing execution truth without backend noise",
+    async () => {
+      const truth = buildExecutionTruth({
+        kind: "defi_action",
+        actionType: "swap",
+        status: "quote_unavailable",
+        reason: "Provider details: AppKit: Server error (500); LI.FI fallback: no quotes",
+        txHash: "0x<redacted_private_key>",
+        nextAction: "choose_supported_route",
+        route: "1 USDC to cirBTC on Arc"
+      });
+      assert.equal(truth.phase, "failed");
+      assert.equal(truth.label, "Swap");
+      assert.equal(truth.txHash, null);
+      assert.match(truth.message, /could not complete swap/i);
+      assert.doesNotMatch(truth.reason || "", /AppKit|LI\.FI|Provider details/i);
+      assert.equal(truth.nextAction, "Try a live route.");
+
+      const submitted = truthFromAgentPayload({
+        ok: true,
+        status: "submitted",
+        planned: {
+          handle: "@sara",
+          intent: { action: "quote_swap", amount: 1, fromToken: "USDC", toToken: "EURC", settlementRail: "arc-testnet" },
+          plan: { tool: "quote_defi_route" }
+        },
+        result: {
+          action: {
+            id: "defi_truth_001",
+            type: "swap",
+            status: "submitted",
+            request: { amount: 1, fromToken: "USDC", toToken: "EURC", settlementRail: "arc-testnet" },
+            txHash: "0x2c62f00d00000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        execution: {
+          tool: "quote_defi_route",
+          status: "submitted",
+          txHash: "0x2c62f00d00000000000000000000000000000000000000000000000000000000",
+          ids: { actionId: "defi_truth_001" }
+        }
+      });
+      assert.equal(submitted.phase, "submitted");
+      assert.equal(submitted.label, "Swap");
+      assert.match(submitted.message, /submitted on-chain/i);
+      assert.equal(submitted.target, "1 USDC to EURC on Arc");
+      assert.match(submitted.txHash, /^0x/);
     }
   ],
   [
@@ -2274,6 +2778,18 @@ const tests = [
       assert.equal(redactSensitive({
         text: "private-ish 0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       }).text.includes("0x<redacted_private_key>"), true);
+      const mcpText = redactSensitive({
+        text: JSON.stringify({
+          txHash: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          nested: {
+            transactionHash: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          note: "private-ish 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        })
+      }).text;
+      assert.ok(mcpText.includes("0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"));
+      assert.ok(mcpText.includes("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"));
+      assert.ok(mcpText.includes("0x<redacted_private_key>"));
     }
   ],
   [

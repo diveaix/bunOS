@@ -41,6 +41,7 @@ export async function loadStore() {
   ledger.securityLocks = loadJsonRows("security_locks");
   ledger.rateLimits = loadJsonRows("rate_limits");
   ledger.agentObservability = loadJsonRows("agent_observability");
+  ledger.agentWorkflows = loadJsonRows("agent_workflows");
   ledger.copyTradeProposals = loadJsonRows("copy_trade_proposals");
   ledger.perpProposals = loadJsonRows("perp_proposals");
   ledger.airdrops = loadJsonRows("airdrops");
@@ -89,6 +90,7 @@ export async function persistStore() {
     replaceJsonRows("security_locks", ledger.securityLocks, "id");
     replaceJsonRows("rate_limits", ledger.rateLimits, "id");
     replaceJsonRows("agent_observability", ledger.agentObservability, "id");
+    replaceJsonRows("agent_workflows", ledger.agentWorkflows, "id");
     replaceJsonRows("copy_trade_proposals", ledger.copyTradeProposals, "id");
     replaceJsonRows("perp_proposals", ledger.perpProposals, "id");
     replaceJsonRows("airdrops", ledger.airdrops, "id");
@@ -127,6 +129,80 @@ export function rememberIdempotentResult(key, result) {
   return result;
 }
 
+export async function acquireWorkerLease({
+  name,
+  ownerId,
+  ttlMs = 60_000,
+  now = Date.now()
+} = {}) {
+  validateLeaseIdentity({ name, ownerId });
+  await openDb();
+  migrateDb();
+
+  const expiresAt = now + Math.max(5_000, Number(ttlMs) || 60_000);
+  const result = db.prepare(`
+    INSERT INTO worker_leases (name, owner_id, expires_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(name) DO UPDATE SET
+      owner_id = excluded.owner_id,
+      expires_at = excluded.expires_at,
+      updated_at = excluded.updated_at
+    WHERE worker_leases.expires_at <= ? OR worker_leases.owner_id = excluded.owner_id
+  `).run(name, ownerId, expiresAt, new Date(now).toISOString(), now);
+
+  return {
+    ok: true,
+    acquired: Number(result.changes || 0) > 0,
+    lease: readWorkerLease(name)
+  };
+}
+
+export async function renewWorkerLease({
+  name,
+  ownerId,
+  ttlMs = 60_000,
+  now = Date.now()
+} = {}) {
+  validateLeaseIdentity({ name, ownerId });
+  await openDb();
+  migrateDb();
+
+  const expiresAt = now + Math.max(5_000, Number(ttlMs) || 60_000);
+  const result = db.prepare(`
+    UPDATE worker_leases
+    SET expires_at = ?, updated_at = ?
+    WHERE name = ? AND owner_id = ? AND expires_at > ?
+  `).run(expiresAt, new Date(now).toISOString(), name, ownerId, now);
+
+  return {
+    ok: true,
+    renewed: Number(result.changes || 0) > 0,
+    lease: readWorkerLease(name)
+  };
+}
+
+export async function releaseWorkerLease({ name, ownerId } = {}) {
+  validateLeaseIdentity({ name, ownerId });
+  await openDb();
+  migrateDb();
+
+  const result = db.prepare(
+    "DELETE FROM worker_leases WHERE name = ? AND owner_id = ?"
+  ).run(name, ownerId);
+
+  return {
+    ok: true,
+    released: Number(result.changes || 0) > 0
+  };
+}
+
+export async function getWorkerLease(name) {
+  if (!name) return null;
+  await openDb();
+  migrateDb();
+  return readWorkerLease(name);
+}
+
 async function openDb() {
   if (db) {
     return db;
@@ -135,6 +211,8 @@ async function openDb() {
   await mkdir(dirname(dbFile), { recursive: true });
   const sqlite = await import("node:sqlite");
   db = new sqlite.DatabaseSync(dbFile);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA busy_timeout = 5000");
   return db;
 }
 
@@ -248,6 +326,12 @@ function migrateDb() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS agent_workflows (
+      id TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS copy_trade_proposals (
       id TEXT PRIMARY KEY,
       data TEXT NOT NULL,
@@ -265,7 +349,36 @@ function migrateDb() {
       data TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS worker_leases (
+      name TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
+}
+
+function readWorkerLease(name) {
+  const row = db.prepare(`
+    SELECT name, owner_id, expires_at, updated_at
+    FROM worker_leases
+    WHERE name = ?
+  `).get(name);
+  if (!row) return null;
+  return {
+    name: row.name,
+    ownerId: row.owner_id,
+    expiresAt: new Date(Number(row.expires_at)).toISOString(),
+    updatedAt: row.updated_at,
+    expired: Number(row.expires_at) <= Date.now()
+  };
+}
+
+function validateLeaseIdentity({ name, ownerId }) {
+  if (!name || !ownerId) {
+    throw new Error("Worker lease name and ownerId are required");
+  }
 }
 
 function loadJsonRows(table) {
