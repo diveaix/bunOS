@@ -1560,6 +1560,10 @@ function parseToolCommand(text, defaultSettlementRail) {
     return toolIntent("get_defi_action_receipt", { actionId: "__latest__", type });
   }
 
+  if (/\b(show|list|read|check|open)\s+(my\s+|the\s+)?(agent\s+|wallet\s+)?memory\b/.test(lower)) {
+    return toolIntent("get_agent_memory", { limit: extractLimit(raw) || 8 });
+  }
+
   if (/\b(memory|remember|last trade|recent trades?|trade history|what happened|what did you do|what are you doing|what happened with|status update|catch me up|recap)\b/.test(lower)
     && /\b(agent|wallet|trade|trades?|swap|bridge|perp|position|automation|actions?|history|last|recent|you)\b/.test(lower)) {
     return toolIntent("get_agent_memory", { limit: extractLimit(raw) || 8 });

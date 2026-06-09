@@ -1877,7 +1877,7 @@ function terminalAgentResponse(requestBody = {}, payload = {}) {
     ok: payload.execution.ok,
     tool: payload.execution.tool,
     action: payload.execution.action,
-    status: payload.execution.status,
+    status: publicTerminalStatus(payload.execution.status),
     reason: cleanTerminalReason(payload.execution.reason || payload.reason),
     txHash: payload.execution.txHash || payload.txHash || null,
     explorerUrl: payload.execution.explorerUrl || payload.explorerUrl || null,
@@ -1896,8 +1896,11 @@ function terminalAgentResponse(requestBody = {}, payload = {}) {
     terminal: payload.executionMonitor.terminal,
     truth: payload.executionMonitor.truth
   } : undefined;
-  const isPlainAnswer = payload.planned?.plan?.tool === "answer_agent_question" || Boolean(result?.answer);
-  const truth = isPlainAnswer ? undefined : truthFromAgentPayload({
+  const tool = payload.planned?.plan?.tool || payload.execution?.tool || "";
+  const shouldHideTruth = payload.planned?.plan?.tool === "answer_agent_question"
+    || Boolean(result?.answer)
+    || isReadOnlyTerminalTool(tool);
+  const truth = shouldHideTruth ? undefined : truthFromAgentPayload({
     ...payload,
     result,
     execution,
@@ -1906,17 +1909,13 @@ function terminalAgentResponse(requestBody = {}, payload = {}) {
 
   return {
     ok: payload.ok,
-    status: payload.status,
+    status: publicTerminalStatus(payload.status),
     reason: cleanTerminalReason(payload.reason),
     planned: payload.planned ? {
       ok: payload.planned.ok,
-      source: payload.planned.source,
       handle: payload.planned.handle,
-      parser: payload.planned.parser,
-      intent: payload.planned.intent,
       plan: payload.planned.plan ? {
         tool: payload.planned.plan.tool,
-        arguments: payload.planned.plan.arguments,
         canExecuteNow: payload.planned.plan.canExecuteNow,
         requiresConfirmation: payload.planned.plan.requiresConfirmation
       } : undefined
@@ -1933,6 +1932,21 @@ function terminalAgentResponse(requestBody = {}, payload = {}) {
     nextAction: publicTerminalNextAction(payload.nextAction),
     timing: payload.timing
   };
+}
+
+function isReadOnlyTerminalTool(tool = "") {
+  return [
+    "get_balance",
+    "sync_circle_balances",
+    "get_agent_memory",
+    "list_route_capabilities",
+    "list_arc_trading_primitives",
+    "analyze_portfolio",
+    "get_market_intelligence",
+    "get_market_feed_snapshot"
+  ].includes(tool)
+    || String(tool || "").includes("strategy")
+    || String(tool || "").includes("mandate");
 }
 
 function publicExecutionMonitorResponse(requestBody = {}, payload = {}) {
@@ -2013,7 +2027,7 @@ function sanitizeReceiptExecution(execution = {}) {
 function sanitizeAgentResult(result = {}) {
   const sanitized = {
     ok: result.ok,
-    status: result.status,
+    status: publicTerminalStatus(result.status),
     reason: cleanTerminalReason(result.reason || result.error),
     error: result.error ? cleanTerminalReason(result.error) : undefined,
     nextAction: publicTerminalNextAction(result.nextAction),
@@ -2034,6 +2048,19 @@ function sanitizeAgentResult(result = {}) {
   }
   if (result.wallet) {
     sanitized.wallet = sanitizeTerminalWallet(result.wallet);
+  }
+  if (result.portfolio) {
+    sanitized.portfolio = sanitizeTerminalPortfolio(result.portfolio);
+  }
+  if (result.recommendation) {
+    sanitized.recommendation = sanitizeTerminalRecommendation(result.recommendation);
+  }
+  if (result.marketGuard) {
+    sanitized.marketGuard = dropUndefined({
+      status: result.marketGuard.status,
+      recommendation: result.marketGuard.recommendation,
+      reason: cleanTerminalReason(result.marketGuard.reason)
+    });
   }
   if (Array.isArray(result.routes)) {
     sanitized.routes = result.routes.slice(0, 20).map(sanitizeRouteCapability);
@@ -2062,6 +2089,56 @@ function sanitizeAgentResult(result = {}) {
     sanitized.approval = result.approval;
   }
   return dropUndefined(sanitized);
+}
+
+function publicTerminalStatus(status) {
+  const value = String(status || "");
+  if (!value) return undefined;
+  return {
+    portfolio_analyzed: "checked",
+    answered: "answered",
+    completed: "completed",
+    settled: "completed",
+    submitted: "submitted",
+    requires_confirmation: "needs approval",
+    quote_unavailable: "not available",
+    execution_not_enabled: "not ready"
+  }[value] || value.replaceAll("_", " ");
+}
+
+function sanitizeTerminalPortfolio(portfolio = {}) {
+  return dropUndefined({
+    handle: portfolio.handle,
+    settlementRail: portfolio.settlementRail,
+    totalValueUsd: portfolio.totalValueUsd,
+    assetsByToken: portfolio.assetsByToken,
+    exposure: portfolio.exposure,
+    perps: portfolio.perps,
+    pending: portfolio.pending ? {
+      count: portfolio.pending.count,
+      items: Array.isArray(portfolio.pending.items)
+        ? portfolio.pending.items.slice(0, 10).map((item) => dropUndefined({
+          id: item.id,
+          kind: item.kind,
+          status: item.status,
+          amountUsd: item.amountUsd,
+          route: item.route,
+          reason: cleanTerminalReason(item.reason)
+        }))
+        : []
+    } : undefined,
+    strategy: portfolio.strategy,
+    risk: portfolio.risk
+  });
+}
+
+function sanitizeTerminalRecommendation(recommendation = {}) {
+  return dropUndefined({
+    action: recommendation.action,
+    nextAction: publicTerminalNextAction(recommendation.nextAction),
+    reason: cleanTerminalReason(recommendation.reason),
+    confidence: recommendation.confidence
+  });
 }
 
 function sanitizeTerminalWallet(wallet = {}) {
@@ -2168,9 +2245,7 @@ function sanitizeMemoryItem(item = {}) {
     "id",
     "kind",
     "type",
-    "tool",
     "intent",
-    "status",
     "at",
     "label",
     "targetId",
@@ -2200,12 +2275,33 @@ function sanitizeMemoryItem(item = {}) {
   for (const key of allowed) {
     if (item[key] !== undefined) output[key] = item[key];
   }
+  if (item.tool !== undefined) output.tool = publicTerminalToolLabel(item.tool);
+  if (item.status !== undefined) output.status = publicTerminalStatus(item.status);
   const reason = cleanTerminalReason(item.reason || item.error);
   if (reason) output.reason = reason;
-  if (item.truth) {
+  if (item.truth && !isInternalTruthMessage(item.truth.message)) {
     output.truth = sanitizeTruth(item.truth);
   }
   return dropUndefined(output);
+}
+
+function publicTerminalToolLabel(tool = "") {
+  const value = String(tool || "");
+  return {
+    quote_defi_route: "trade route",
+    get_defi_action_receipt: "trade receipt",
+    refresh_execution_monitor: "receipt check",
+    analyze_portfolio: "portfolio review",
+    get_agent_memory: "memory lookup",
+    get_balance: "balance check",
+    sync_circle_balances: "balance refresh",
+    propose_perp_trade: "perp proposal",
+    close_arc_perp_user_position: "perp close"
+  }[value] || value.replaceAll("_", " ");
+}
+
+function isInternalTruthMessage(message = "") {
+  return /^Action is [a-z_]+/i.test(String(message || ""));
 }
 
 function sanitizeAgentWorkingMemory(working = {}) {
