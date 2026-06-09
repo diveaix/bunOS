@@ -2605,7 +2605,8 @@ const tests = [
       assert.equal(closePerp.execution.ok, false);
       assert.equal(closePerp.signer.backendSignerAllowed, false);
       assert.match(closePerp.execution.reason, /user wallet|Circle user wallet|Set ARC_PERPS/i);
-      assert.match(closePerp.narrative.summary, /close-position|wallet signing|No backend signer/i);
+      assert.match(closePerp.narrative.summary, /wallet is not ready to sign|Nothing was changed/i);
+      assert.doesNotMatch(closePerp.narrative.summary, /backend signer|close-position path/i);
 
       ledger.perpProposals.push({
         id: "perp_memory_close_001",

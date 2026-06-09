@@ -2046,6 +2046,18 @@ function sanitizeAgentResult(result = {}) {
   if (result.executionSummary) {
     sanitized.executionSummary = sanitizeExecutionSummary(result.executionSummary);
   }
+  if (Array.isArray(result.closed)) {
+    sanitized.closed = result.closed.slice(0, 10).map((item) => dropUndefined({
+      positionId: item.positionId,
+      symbol: item.symbol,
+      side: item.side,
+      status: publicTerminalStatus(item.status),
+      txHash: item.txHash || null,
+      explorerUrl: item.explorerUrl || null
+    }));
+    sanitized.closedCount = Number(result.closedCount || result.closed.length);
+    sanitized.failedCount = Number(result.failedCount || 0);
+  }
   if (result.wallet) {
     sanitized.wallet = sanitizeTerminalWallet(result.wallet);
   }
@@ -2101,6 +2113,8 @@ function publicTerminalStatus(status) {
     settled: "completed",
     submitted: "submitted",
     requires_confirmation: "needs approval",
+    clarification_required: "needs more detail",
+    position_not_found: "not found",
     quote_unavailable: "not available",
     execution_not_enabled: "not ready"
   }[value] || value.replaceAll("_", " ");
@@ -2172,6 +2186,8 @@ function publicTerminalNextAction(nextAction) {
     ready_for_next_instruction: "Tell me what you want to do next.",
     choose_supported_route: "Try a different token pair or route.",
     adjust_trade_or_fund_wallet: "Add funds or lower the amount.",
+    show_plan_or_request_user_confirmation: "Tell me the missing detail, or confirm the prepared action.",
+    ask_for_clarification: "Tell me the missing detail.",
     reconcile_defi_action: "Wait for the final receipt.",
     monitor_receipt: "Wait for the final receipt."
   }[value] || value.replaceAll("_", " ");
@@ -2296,7 +2312,8 @@ function publicTerminalToolLabel(tool = "") {
     get_balance: "balance check",
     sync_circle_balances: "balance refresh",
     propose_perp_trade: "perp proposal",
-    close_arc_perp_user_position: "perp close"
+    close_arc_perp_user_position: "perp close",
+    close_all_arc_perp_user_positions: "perp close"
   }[value] || value.replaceAll("_", " ");
 }
 

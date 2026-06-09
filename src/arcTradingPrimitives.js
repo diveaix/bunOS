@@ -30,7 +30,7 @@ export function listArcTradingPrimitives() {
         blockers: defi.blockers
       }),
       primitive("perps", {
-        tools: ["propose_perp_trade", "quote_arc_perp_position", "open_arc_perp_user_position", "close_arc_perp_user_position"],
+        tools: ["propose_perp_trade", "quote_arc_perp_position", "open_arc_perp_user_position", "close_arc_perp_user_position", "close_all_arc_perp_user_positions"],
         status: perps.userWalletExecutionReady ? "live_user_wallet_execution_ready" : "user_wallet_signing_required",
         provider: "arc-perps-lite",
         blockers: perps.missing || []

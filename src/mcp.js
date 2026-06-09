@@ -7,6 +7,7 @@ import {
   runAgentAction
 } from "./agentPlanner.js";
 import {
+  closeAllArcPerpPositionsWithUserWallet,
   getArcPerpsPosition,
   getArcPerpsReadiness,
   getArcPerpsStatus,
@@ -806,6 +807,21 @@ export const mcpTools = [
     }
   },
   {
+    name: "close_all_arc_perp_user_positions",
+    description: "Close every open ArcPerps position owned by the user's Circle Arc wallet. Never uses ARC_SETTLEMENT_PRIVATE_KEY for user funds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        symbol: { type: "string" },
+        side: { type: "string", enum: ["long", "short"] },
+        maxPositions: { type: "number" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["handle"]
+    }
+  },
+  {
     name: "sync_arc_perps_oracle",
     description: "Sync ArcPerps oracle prices from live Hyperliquid market data using the protocol admin signer. This does not move user funds.",
     inputSchema: {
@@ -1430,6 +1446,10 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "close_arc_perp_user_position") {
     return await closeArcPerpPositionWithUserWallet(args);
+  }
+
+  if (tool === "close_all_arc_perp_user_positions") {
+    return await closeAllArcPerpPositionsWithUserWallet(args);
   }
 
   if (tool === "sync_arc_perps_oracle") {

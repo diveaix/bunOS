@@ -2,6 +2,7 @@ import { parseSocialCommand } from "./intent.js";
 import { createPaymentIntent, createSocialBounty } from "./orchestrator.js";
 import { confirmAction } from "./agentActions.js";
 import {
+  closeAllArcPerpPositionsWithUserWallet,
   closeArcPerpPositionWithUserWallet,
   getArcPerpsPosition,
   getArcPerpsReadiness,
@@ -153,6 +154,7 @@ const ALLOWED_TOOLS = new Set([
   "read_arc_perps_oracle_price",
   "get_arc_perps_position",
   "list_arc_perps_positions",
+  "close_all_arc_perp_user_positions",
   "close_arc_perp_user_position",
   "appkit_readiness",
   "list_appkit_capabilities",
@@ -969,6 +971,14 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
     return result;
   }
 
+  if (plan.tool === "close_all_arc_perp_user_positions") {
+    return await closeAllArcPerpPositionsWithUserWallet({
+      ...args,
+      handle: args.handle || handle,
+      idempotencyKey
+    });
+  }
+
   if (plan.tool === "appkit_readiness") {
     return await getAppKitReadiness();
   }
@@ -1745,7 +1755,7 @@ function parseToolCommand(text, defaultSettlementRail) {
   }
   const closePerp = parseClosePerp(raw);
   if (closePerp) {
-    return toolIntent("close_arc_perp_user_position", closePerp);
+    return toolIntent(closePerp.closeAll ? "close_all_arc_perp_user_positions" : "close_arc_perp_user_position", closePerp);
   }
   if (/\barc\b.*\bperps?\b.*\bpositions?\b/.test(lower)) {
     const positionId = raw.match(/\bposition\s+#?(\d+)\b/i)?.[1];
@@ -1841,7 +1851,7 @@ function riskForTool(tool) {
   if (["send_usdc", "create_social_bounty", "create_airdrop", "award_airdrop", "quote_defi_route", "appkit_bridge_usdc", "appkit_swap", "appkit_send_usdc", "confirm_action", "confirm_defi_action", "request_testnet_usdc"].includes(tool)) {
     return "high";
   }
-  if (["propose_perp_trade", "propose_copy_trade", "assess_liquidation_risk", "quote_arc_perp_position", "close_arc_perp_user_position", "create_strategy_policy", "plan_rebalance_strategy", "reduce_risk_strategy", "run_strategy_check", "create_mandate", "update_mandate", "delete_mandate", "create_automation", "run_automation", "run_due_automations", "pause_automation", "resume_automation", "delete_automation"].includes(tool)) {
+  if (["propose_perp_trade", "propose_copy_trade", "assess_liquidation_risk", "quote_arc_perp_position", "close_arc_perp_user_position", "close_all_arc_perp_user_positions", "create_strategy_policy", "plan_rebalance_strategy", "reduce_risk_strategy", "run_strategy_check", "create_mandate", "update_mandate", "delete_mandate", "create_automation", "run_automation", "run_due_automations", "pause_automation", "resume_automation", "delete_automation"].includes(tool)) {
     return "medium";
   }
   return "low";
@@ -1870,7 +1880,7 @@ function signerForTool(tool, args) {
       executionStatus: "policy_checked"
     });
   }
-  if (["appkit_send_usdc", "appkit_estimate_send", "appkit_unified_balance", "propose_perp_trade", "propose_copy_trade", "close_arc_perp_user_position"].includes(tool)) {
+  if (["appkit_send_usdc", "appkit_estimate_send", "appkit_unified_balance", "propose_perp_trade", "propose_copy_trade", "close_arc_perp_user_position", "close_all_arc_perp_user_positions"].includes(tool)) {
     return userWalletSigningRequired({
       operation: tool,
       settlementRail: args.settlementRail || args.fromRail || "arc-testnet",
@@ -2178,12 +2188,13 @@ function parseClosePerp(text) {
   }
   const match = text.match(CLOSE_PERP_PATTERN);
   const explicitPositionId = text.match(/\b(?:position|pos|trade)?\s*#?(\d+)\b/i)?.[1] || match?.[2];
+  const closeAll = /\b(all|every|active|open)\b/.test(lower) && !explicitPositionId;
   const symbol = match?.[3] && !["PERP", "POSITION", "TRADE"].includes(match[3].toUpperCase())
     ? match[3].toUpperCase()
     : extractSymbol(text);
   const side = match?.[4]?.toLowerCase() || (/\blong\b/i.test(text) ? "long" : /\bshort\b/i.test(text) ? "short" : null);
   return {
-    ...(explicitPositionId ? { positionId: Number(explicitPositionId) } : { positionRef: match?.[1] || "latest_open" }),
+    ...(closeAll ? { closeAll: true } : explicitPositionId ? { positionId: Number(explicitPositionId) } : { positionRef: match?.[1] || "latest_open" }),
     ...(symbol ? { symbol } : {}),
     ...(side ? { side } : {})
   };
@@ -2295,7 +2306,11 @@ function extractSymbol(text) {
     "THE",
     "LAST",
     "LATEST",
-    "CURRENT"
+    "CURRENT",
+    "ALL",
+    "EVERY",
+    "ACTIVE",
+    "OPEN"
   ]);
   const match = String(text || "").toUpperCase().match(/\b[A-Z]{2,12}\b/g)?.find((item) => !ignored.has(item));
   return match || null;

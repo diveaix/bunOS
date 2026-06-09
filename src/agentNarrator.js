@@ -150,12 +150,12 @@ function summaryText({ mode, status, details, why, tool, result, execution }) {
     return `I am not taking this ${actionLabel} for ${request}${routeText}. I checked the live route and policy, but the route is not tradable right now: ${cleanReason(why)} No funds moved.`;
   }
 
-  if (tool === "close_arc_perp_user_position" && mode !== "executed" && mode !== "monitoring") {
+  if ((tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") && mode !== "executed" && mode !== "monitoring") {
     if (status === "position_not_found") {
       return "I checked your open ArcPerps positions and did not find a matching position to close. Nothing was closed.";
     }
     if (status === "user_wallet_signing_required") {
-      return `I reached the close-position path, but I cannot submit the close without the user's Circle wallet signing path. No backend signer touched the position.`;
+      return "I found the close request, but your wallet is not ready to sign it yet. Nothing was changed.";
     }
     return `I could not close the perp position: ${cleanReason(why)} No position was changed.`;
   }
@@ -189,8 +189,8 @@ function happenedText({ mode, status, details, why, tool, result, execution }) {
   if (mode === "monitoring") return "The action is queued or submitted and still needs receipt follow-through.";
   if (mode === "needs_approval") return "The agent created a prepared action that must be approved before execution.";
   if (tool === "quote_defi_route" && status === "execution_not_enabled") return "A quote/action was created, but execution stopped at the provider/user-wallet boundary.";
-  if (tool === "close_arc_perp_user_position" && status === "user_wallet_signing_required") return "The close request was blocked before submission because user-wallet signing is not available.";
-  if (tool === "close_arc_perp_user_position" && status === "position_not_found") return "No matching open position was found.";
+  if ((tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") && status === "user_wallet_signing_required") return "The close request was blocked before submission because the user wallet is not ready to sign.";
+  if ((tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") && status === "position_not_found") return "No matching open position was found.";
   if (tool === "list_route_capabilities") return "The agent checked the live route registry.";
   if (result.wallet) return "Wallet state was read and returned.";
   if (tool === "pause_automations") return `The agent paused ${Number(result.paused || 0)} active automation(s).`;
@@ -269,7 +269,7 @@ function humanActionLabel(tool, result = {}) {
   if (tool === "quote_defi_route") return result.action?.type === "bridge" ? "bridge" : "swap";
   if (tool === "send_usdc") return "payment";
   if (tool === "create_airdrop" || tool === "award_airdrop") return "distribution";
-  if (tool === "close_arc_perp_user_position") return "perp close";
+  if (tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") return "perp close";
   if (tool === "propose_arc_perp_trade" || tool === "propose_perp_trade") return "perp trade";
   if (tool === "confirm_action") return "approval";
   if (tool === "get_balance") return "balance check";

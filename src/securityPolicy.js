@@ -67,6 +67,7 @@ const TRADE_TOOLS = new Set([
   "propose_perp_trade",
   "open_arc_perp_user_position",
   "close_arc_perp_user_position",
+  "close_all_arc_perp_user_positions",
   "appkit_send_usdc",
   "appkit_bridge_usdc",
   "appkit_swap",

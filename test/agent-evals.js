@@ -429,6 +429,22 @@ const contextCases = [
     }
   },
   {
+    name: "close all active perps maps to bulk close tool",
+    async run() {
+      resetLedger();
+      configureOfflineHarness();
+      const planned = await planAgentActionWithModel({
+        handle: "@sara",
+        text: "close all the active perp trades",
+        source: "eval",
+        useModel: false
+      });
+      assert.match(planned.parser, /^deterministic_tool_command/);
+      assert.equal(planned.plan.tool, "close_all_arc_perp_user_positions");
+      assert.equal(planned.plan.arguments.handle, "@sara");
+    }
+  },
+  {
     name: "ambiguous automation pause uses the active automation",
     async run() {
       resetLedger();

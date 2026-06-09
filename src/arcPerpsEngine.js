@@ -547,6 +547,100 @@ export async function closeArcPerpPositionWithUserWallet({
   };
 }
 
+export async function closeAllArcPerpPositionsWithUserWallet({
+  handle = "@sara",
+  symbol,
+  side,
+  maxPositions = 10,
+  idempotencyKey
+} = {}) {
+  const readiness = getArcPerpsReadiness();
+  if (!readiness.userWalletExecutionReady) {
+    return userExecutionBlocked("close_all_arc_perp_positions", readiness);
+  }
+
+  const profile = getWalletProfile(handle);
+  const wallet = walletForRail(profile, "arc-testnet");
+  const normalizedSymbol = symbol ? String(symbol).toUpperCase() : null;
+  const normalizedSide = side ? String(side).toLowerCase() : null;
+  const positionsResult = await listArcPerpsPositions({
+    ownerAddress: wallet.address,
+    limit: 50
+  });
+
+  const openPositions = (positionsResult.positions || [])
+    .filter((position) => position.open)
+    .filter((position) => !normalizedSymbol || String(position.symbol || "").toUpperCase() === normalizedSymbol)
+    .filter((position) => !normalizedSide || String(position.side || "").toLowerCase() === normalizedSide)
+    .slice(0, Math.max(1, Math.min(Number(maxPositions || 10), 25)));
+
+  if (!openPositions.length) {
+    const filters = [normalizedSymbol, normalizedSide].filter(Boolean).join(" ");
+    return {
+      ok: false,
+      status: "position_not_found",
+      reason: `I did not find any open ${filters ? `${filters} ` : ""}ArcPerps positions for ${profile.handle}. Nothing was closed.`,
+      nextAction: "list_arc_perps_positions",
+      positionsChecked: (positionsResult.positions || []).length,
+      closed: []
+    };
+  }
+
+  const closed = [];
+  const failed = [];
+  for (const position of openPositions) {
+    try {
+      const close = await closeArcPerpPositionWithUserWallet({
+        handle: profile.handle,
+        positionId: position.id,
+        idempotencyKey: `${idempotencyKey || `arc-perps:${Date.now()}`}:close-all`
+      });
+      closed.push({
+        positionId: position.id,
+        symbol: position.symbol,
+        side: position.side,
+        status: close.status,
+        txHash: close.txHash || null,
+        explorerUrl: close.explorerUrl || null
+      });
+    } catch (error) {
+      failed.push({
+        positionId: position.id,
+        symbol: position.symbol,
+        side: position.side,
+        reason: circleErrorMessage(error)
+      });
+    }
+  }
+
+  const firstTx = closed.find((item) => item.txHash);
+  const ok = closed.length > 0;
+  return {
+    ok,
+    status: ok ? "submitted" : "failed",
+    mode: "circle_user_wallet_contract_execution",
+    backendSignerAllowed: false,
+    handle: profile.handle,
+    wallet: {
+      id: wallet.id,
+      address: wallet.address,
+      rail: wallet.rail
+    },
+    closedCount: closed.length,
+    failedCount: failed.length,
+    requestedCount: openPositions.length,
+    closed,
+    failed,
+    txHash: firstTx?.txHash || null,
+    explorerUrl: firstTx?.explorerUrl || null,
+    reason: ok
+      ? `Submitted close requests for ${closed.length} open ArcPerps position${closed.length === 1 ? "" : "s"}.`
+      : `I found open positions, but none of the close requests could be submitted.`,
+    nextAction: ok ? "monitor_receipt" : "inspect_failed_close",
+    signer: circleUserArcPerpsSigner(profile, "close_all_arc_perp_positions")
+  };
+}
+
 export async function syncArcPerpsOracleFromHyperliquid({ symbols = config.arcPerps.oracleSyncSymbols } = {}) {
   const readiness = getArcPerpsReadiness();
   if (!readiness.oracleSyncEnabled) {
