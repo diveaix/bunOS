@@ -1,0 +1,15 @@
+.data/
+.vercel/
+.vercel-frontend/
+.vercel-legacy-redirect/
+.env
+circle-recovery/
+node_modules/
+frontend/node_modules/
+build/
+dist/
+*.log
+desktop.png
+mobile.png
+
+.vercel

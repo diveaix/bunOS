@@ -1,0 +1,108 @@
+[
+  {
+    "name": "pending swap accepts an amount follow-up",
+    "pending": {
+      "text": "swap some USDC to EURC",
+      "action": "quote_swap",
+      "draft": {
+        "fromToken": "USDC",
+        "toToken": "EURC",
+        "settlementRail": "arc-testnet"
+      },
+      "missing": ["amount"],
+      "question": "How much USDC should I swap?"
+    },
+    "input": "use 5 dollars",
+    "expect": {
+      "tool": "quote_defi_route",
+      "arguments": {
+        "type": "swap",
+        "amount": 5,
+        "fromToken": "USDC",
+        "toToken": "EURC",
+        "fromRail": "arc-testnet"
+      }
+    }
+  },
+  {
+    "name": "pending payment accepts a recipient follow-up",
+    "pending": {
+      "text": "send 3 USDC",
+      "action": "send_payment",
+      "draft": {
+        "amount": 3,
+        "asset": "USDC"
+      },
+      "missing": ["recipientHandle"],
+      "question": "Who should receive it?"
+    },
+    "input": "to @alice",
+    "expect": {
+      "tool": "send_usdc",
+      "arguments": {
+        "amount": 3,
+        "recipientHandle": "@alice"
+      }
+    }
+  },
+  {
+    "name": "pending perp accepts the remaining trade fields",
+    "pending": {
+      "text": "open a BTC perp",
+      "action": "propose_perp_trade",
+      "draft": {
+        "symbol": "BTC"
+      },
+      "missing": ["side", "collateralUsd", "leverage"],
+      "question": "Long or short, with how much collateral and leverage?"
+    },
+    "input": "long with 4 dollars at 2x",
+    "expect": {
+      "tool": "propose_perp_trade",
+      "arguments": {
+        "symbol": "BTC",
+        "side": "long",
+        "collateralUsd": 4,
+        "leverage": 2
+      }
+    }
+  },
+  {
+    "name": "task cancellation clears a pending trade",
+    "pending": {
+      "text": "swap USDC to EURC",
+      "action": "quote_swap",
+      "draft": {
+        "fromToken": "USDC",
+        "toToken": "EURC",
+        "settlementRail": "arc-testnet"
+      },
+      "missing": ["amount"],
+      "question": "How much?"
+    },
+    "input": "never mind",
+    "expect": {
+      "tool": "cancel_agent_task"
+    }
+  },
+  {
+    "name": "clear new objective supersedes pending context",
+    "pending": {
+      "text": "send some USDC",
+      "action": "send_payment",
+      "draft": {
+        "asset": "USDC"
+      },
+      "missing": ["amount", "recipientHandle"],
+      "question": "How much, and to whom?"
+    },
+    "input": "what tokens can you swap?",
+    "expect": {
+      "tool": "answer_agent_question",
+      "arguments": {
+        "questionKind": "swap_capabilities",
+        "topic": "swap"
+      }
+    }
+  }
+]
