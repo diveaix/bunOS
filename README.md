@@ -1,6 +1,6 @@
-# ArcPay Wallet
+# bunOS
 
-ArcPay is an X-native USDC wallet and payment backend. A user connects X, ArcPay provisions Circle developer-controlled wallets, and payments settle on Arc Testnet with a Base Sepolia bridge path for demos.
+bunOS is an X-native USDC wallet and payment backend. A user connects X, ArcPay provisions Circle developer-controlled wallets, and payments settle on Arc Testnet with a Base Sepolia bridge path for demos.
 
 ## Pillars
 
