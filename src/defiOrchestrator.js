@@ -6,7 +6,6 @@ import { evaluateDefiPolicy } from "./defiPolicy.js";
 import { getLifiQuote } from "./lifiAdapter.js";
 import { quoteCircleAppKitRoute } from "./appKitCircleAdapter.js";
 import { searchPolymarketMarkets } from "./polymarketAdapter.js";
-import { listHyperliquidMarkets } from "./hyperliquidAdapter.js";
 import { listDefiProtocols } from "./defiProtocols.js";
 import { getDefiExecutionReadiness } from "./defiExecution.js";
 import { getWalletProfile } from "./walletAccounts.js";
@@ -20,33 +19,12 @@ import {
   applyRouteIntelligenceToSimulation
 } from "./marketIntelligence.js";
 import { evaluateMandatesForAction } from "./mandates.js";
-import {
-  listRouteCapabilities,
-  probeDefaultRoutes,
-  probeRouteCapability,
-  resolveRouteCapability,
-  routeCapabilityForUi
-} from "./routeRegistry.js";
-import { publicUrl } from "./publicUrls.js";
 
 export function listDefiTools() {
   return {
     ...listDefiProtocols(),
-    execution: getDefiExecutionReadiness(),
-    routeCapabilities: routeCapabilityForUi()
+    execution: getDefiExecutionReadiness()
   };
-}
-
-export function listDefiRouteCapabilities(args = {}) {
-  return listRouteCapabilities(args);
-}
-
-export async function probeDefiRouteCapability(args = {}) {
-  return await probeRouteCapability(args);
-}
-
-export async function probeDefiRouteCapabilities(args = {}) {
-  return await probeDefaultRoutes(args);
 }
 
 export async function quoteDefiRoute(input) {
@@ -97,39 +75,6 @@ export async function quoteDefiRoute(input) {
     return { ok: false, action: record, policy, simulation: record.simulation, marketIntelligence: record.marketIntelligence, reason: policy.reason, nextAction: "adjust_trade_or_fund_wallet" };
   }
 
-  const routeCapability = await resolveRouteCapability(action, {
-    handle: user.handle,
-    amount: action.amountUsd || action.amount
-  });
-  record.routeCapability = routeCapability.route || {
-    status: routeCapability.status,
-    descriptor: routeCapability.descriptor
-  };
-  if (!routeCapability.ok) {
-    record.status = "quote_unavailable";
-    record.reason = routeCapability.reason;
-    record.suggestions = routeCapability.suggestions;
-    record.signer = userWalletSigningRequired({
-      operation: record.type,
-      settlementRail: action.fromRail,
-      reason: "No live route is registered for this user action."
-    });
-    record.completedAt = new Date().toISOString();
-    attachMarketIntelligence({ user, record });
-    recordEvent("defi_action_route_capability_unavailable", record);
-    return {
-      ok: false,
-      action: record,
-      policy,
-      simulation: record.simulation,
-      routeCapability,
-      marketIntelligence: record.marketIntelligence,
-      reason: routeCapability.reason,
-      suggestions: routeCapability.suggestions,
-      nextAction: routeCapability.nextAction || "choose_supported_route"
-    };
-  }
-
   const fromAddress = input.fromAddress || walletForRail(wallet, action.fromRail)?.address || wallet.walletAddress;
   const toAddress = input.toAddress || walletForRail(wallet, action.toRail)?.address || fromAddress;
   let quote;
@@ -169,7 +114,6 @@ export async function quoteDefiRoute(input) {
   record.policy = policy;
   record.simulation = simulation;
   record.quote = quote;
-  record.routeCapability = routeCapability.route || record.routeCapability;
   record.mandateCheck = evaluateMandatesForAction({
     handle: user.handle,
     action,
@@ -350,34 +294,6 @@ export async function searchPredictionMarkets({ handle = "@sara", query, limit }
   return { ok: true, action: record, ...result };
 }
 
-export async function listPerpMarkets({ handle = "@sara", limit } = {}) {
-  const user = resolveXHandle(handle);
-  const action = normalizeAction({
-    handle: user.handle,
-    type: "hyperliquid_markets",
-    protocol: "hyperliquid",
-    amountUsd: 0
-  });
-  const policy = evaluateDefiPolicy({ user, action });
-  const record = createDefiAction({ user, action, policy });
-
-  if (!policy.approved) {
-    record.status = "rejected";
-    record.reason = policy.reason;
-    record.completedAt = new Date().toISOString();
-    recordEvent("defi_action_rejected", record);
-    return { ok: false, action: record, policy };
-  }
-
-  const result = await listHyperliquidMarkets({ limit });
-  record.status = "completed";
-  record.result = result;
-  record.signer = readOnlySigner({ operation: "hyperliquid_markets" });
-  record.completedAt = new Date().toISOString();
-  recordEvent("defi_action_completed", record);
-  return { ok: true, action: record, ...result };
-}
-
 export function listDefiActions({ handle, status, limit = 50 } = {}) {
   const normalized = handle ? normalizeHandle(handle) : null;
   const actions = ledger.defiActions
@@ -420,7 +336,7 @@ export function getDefiActionReceipt({ actionId, host, protocol = "http" } = {})
       marketIntelligence: receiptAction.marketIntelligence || null,
       txHash,
       explorerUrl: txHash && rail?.explorerBaseUrl ? `${rail.explorerBaseUrl}${txHash}` : null,
-      publicUrl: publicUrl(`/defi/actions/${action.id}`, { host, protocol }),
+      publicUrl: host ? `${protocol}://${host}/defi/actions/${action.id}` : null,
       timeline: buildDefiTimeline(receiptAction, events),
       nextAction: nextActionForDefiAction(receiptAction)
     }

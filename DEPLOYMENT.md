@@ -1,84 +1,73 @@
 # Deployment
 
-This project deploys as two services:
+## Local
 
-- Railway: Node backend, API, MCP JSON-RPC/SSE, X OAuth callbacks, Circle/AppKit execution.
-- Vercel: static frontend from `public/`, with rewrites to the Railway backend.
+Install dependencies and start the backend:
 
-## Backend: Railway
-
-Railway needs Node 22 because the backend uses `node:sqlite`.
-
-1. Log in:
-
-```powershell
-npx @railway/cli login
+```bash
+npm install
+npm start
 ```
 
-2. Create/link a Railway project, then set the runtime variables from `.env`.
+Build the frontend:
 
-Minimum production-style variables:
-
-```env
-PROVIDER_MODE=real
-TRANSFER_PROVIDER=circle
-CIRCLE_WALLETS_ENABLED=1
-DEFI_LIVE_ADAPTERS=1
-DEFI_EXECUTION_ENABLED=1
-APPKIT_EXECUTION_ENABLED=1
-APPKIT_UNIFIED_BALANCE_ENABLED=1
-DEFAULT_SETTLEMENT_RAIL=arc-testnet
-SUPPORTED_SETTLEMENT_RAILS=arc-testnet,base-sepolia
-SQLITE_FILE=/data/arcpay.sqlite
+```bash
+npm run frontend:build
 ```
 
-Also set the secret values for Circle, Gemini, X OAuth, ArcPerps, LI.FI, and webhooks from your local `.env`.
+Compile launchpad contracts:
 
-For durable hackathon state, attach a Railway volume at `/data`. Without it, SQLite state can disappear on redeploy.
-
-3. Deploy:
-
-```powershell
-npx @railway/cli up
+```bash
+npm run compile:contracts
 ```
 
-4. Generate a public Railway domain, then verify:
+## Environment
 
-```powershell
-Invoke-WebRequest https://YOUR-BACKEND.up.railway.app/api/health
-```
+Use `.env.example` as the source of deploy-time configuration.
 
-## Frontend: Vercel
+Required for a production-like deployment:
 
-1. Log in:
+- `APP_BASE_URL`
+- `TOKEN_ENCRYPTION_KEY`
+- `ARC_TESTNET_RPC_URL`
+- `X_AUTH_MODE`
+- `X_CLIENT_ID`
+- `X_CLIENT_SECRET`
+- `X_REDIRECT_URI`
+- `X_WEBHOOK_SECRET`
+- `CIRCLE_WALLETS_ENABLED`
+- `CIRCLE_API_KEY`
+- `CIRCLE_ENTITY_SECRET`
+- `CIRCLE_WALLET_SET_ID`
+- `CIRCLE_WEBHOOK_PUBLIC_KEY_BASE64` or `CIRCLE_WEBHOOK_SECRET`
 
-```powershell
-vercel login
-```
+Optional integrations:
 
-2. Build the frontend deploy folder with the Railway backend URL:
+- `LIFI_API_KEY`
+- `APPKIT_KIT_KEY`
+- `GEMINI_API_KEY`
+- `XAI_API_KEY`
 
-```powershell
-npm run deploy:frontend:prepare -- https://YOUR-BACKEND.up.railway.app
-```
+## Vercel
 
-3. Deploy the generated static frontend:
+The repository includes `vercel.json` and `api/index.js` so the Node server can be served through Vercel functions for API and MCP routes.
 
-```powershell
-vercel deploy .vercel-frontend --prod
-```
+Before deploying:
 
-The generated Vercel config rewrites `/api/*`, `/auth/*`, `/mcp`, `/sse`, `/messages`, `/x/*`, and `/defi/*` to Railway.
+1. Configure environment variables in Vercel.
+2. Run `npm run frontend:build`.
+3. Confirm `public/` contains the current frontend build.
+4. Run `npm test` locally.
 
-## X OAuth URLs
+## Railway
 
-For the split deploy, use the Vercel frontend URL as the X redirect URL:
+The repository includes `railway.json`, `.railwayignore`, and `nixpacks.toml`.
 
-```env
-APP_BASE_URL=https://YOUR-FRONTEND.vercel.app
-PUBLIC_APP_BASE_URL=https://bunos.xyz
-X_AUTH_MODE=real
-X_REDIRECT_URI=https://YOUR-FRONTEND.vercel.app/auth/x/callback
-```
+For Railway deployments, configure the same environment variables and make sure any production persistence requirement is backed by a durable database instead of local temporary storage.
 
-Because Vercel rewrites `/auth/*` to Railway, the browser remains on the frontend domain while the backend handles OAuth.
+## Operational Notes
+
+- Keep backend admin keys separate from user-wallet execution.
+- Use scoped API keys for MCP clients and agent access.
+- Keep action receipts public enough for verification but redacted enough to avoid secret leakage.
+- Use durable queues and storage before running multiple production workers.

@@ -13,7 +13,7 @@ export function createMandate({ handle = "@sara", text, kind, rules = {}, status
     return {
       ok: false,
       status: "clarification_required",
-      reason: "I could not turn that into a standing trading rule. Try: max trade $10, never buy WETH, max leverage 2x, or never bridge if fee is over 3%.",
+      reason: "I could not turn that into a standing trading rule. Try: max trade $10, never buy WETH, or never bridge if fee is over 3%.",
       nextAction: "provide_mandate_rule",
       signer: readOnlySigner({ operation: "create_mandate" })
     };
@@ -234,16 +234,6 @@ export function parseMandateText(text) {
     });
   }
 
-  const maxLev = raw.match(/\b(?:max(?:imum)?|limit)\s+leverage\s+(?:to\s+)?(\d+(?:\.\d+)?)x?\b/i)
-    || raw.match(/\b(?:never|do not|don't)\s+(?:use\s+)?(?:more than|over|above)\s+(\d+(?:\.\d+)?)x\s+leverage/i);
-  if (maxLev) {
-    return normalizeMandate({
-      kind: "max_leverage",
-      sourceText: raw,
-      rules: { maxLeverage: Number(maxLev[1]) }
-    });
-  }
-
   const slippage = raw.match(/\b(?:max(?:imum)?|limit)\s+slippage\s+(?:to\s+)?(\d+(?:\.\d+)?)\s*%/i)
     || raw.match(/\b(?:never|do not|don't)\s+(?:swap|trade)[^.]*slippage\s+(?:over|above|greater than|more than)\s+(\d+(?:\.\d+)?)\s*%/i);
   if (slippage) {
@@ -301,18 +291,6 @@ export function parseMandateText(text) {
     });
   }
 
-  const liq = raw.match(/\bclose\s+perps?\s+if\s+(?:liquidation\s+)?buffer\s+drops\s+below\s+(\d+(?:\.\d+)?)\s*%/i);
-  if (liq) {
-    return normalizeMandate({
-      kind: "liquidation_buffer",
-      sourceText: raw,
-      rules: {
-        minLiquidationBufferPct: Number(liq[1]),
-        action: "close_perps"
-      }
-    });
-  }
-
   const stopLoss = raw.match(/\bstop[-\s]?loss\s+(?:at|below)?\s*(\d+(?:\.\d+)?)\s*%/i);
   const takeProfit = raw.match(/\btake[-\s]?profit\s+(?:at|above)?\s*(\d+(?:\.\d+)?)\s*%/i);
   if (stopLoss || takeProfit) {
@@ -360,8 +338,7 @@ function evaluateMandate(mandate, context) {
   const tokens = [context.fromToken, context.toToken, context.symbol].filter(Boolean);
   const appliesToAction = !rules.actionType
     || rules.actionType === "trade"
-    || rules.actionType === context.type
-    || (rules.actionType === "perp" && context.type === "perp");
+    || rules.actionType === context.type;
 
   if (mandate.kind === "max_trade_size" && context.amountUsd > Number(rules.maxTradeUsd || 0)) {
     return violation(appliesToAction, `mandate ${mandate.id} caps per-trade size at US$${rules.maxTradeUsd}, but this action is US$${context.amountUsd}.`);
@@ -373,9 +350,6 @@ function evaluateMandate(mandate, context) {
       return violation(appliesToAction, `mandate ${mandate.id} caps daily spend at US$${max}; today is already about US$${spent}, and this action would reach US$${round(spent + context.amountUsd)}.`);
     }
     return pass(appliesToAction);
-  }
-  if (mandate.kind === "max_leverage" && Number(context.leverage || 0) > Number(rules.maxLeverage || 0)) {
-    return violation(context.type === "perp", `mandate ${mandate.id} caps leverage at ${rules.maxLeverage}x, but this request is ${context.leverage}x.`);
   }
   if (mandate.kind === "allowed_assets") {
     const disallowed = tokens.find((token) => !assetMatchesList(token, rules.allowedAssets || []));
@@ -397,13 +371,6 @@ function evaluateMandate(mandate, context) {
   if (mandate.kind === "max_slippage" && Number(context.slippage || 0) > Number(rules.maxSlippage || 0)) {
     return violation(appliesToAction, `mandate ${mandate.id} caps slippage at ${(rules.maxSlippage * 100).toFixed(2)}%, but this request uses ${(context.slippage * 100).toFixed(2)}%.`);
   }
-  if (mandate.kind === "liquidation_buffer" && context.type === "perp") {
-    const buffer = Number(context.liquidationBufferPct || 0);
-    if (buffer > 0 && buffer < Number(rules.minLiquidationBufferPct || 0)) {
-      return violation(true, `mandate ${mandate.id} requires at least ${rules.minLiquidationBufferPct}% liquidation buffer; this proposal is ${buffer}%.`);
-    }
-    return pass(true);
-  }
   if (["target_allocation", "rebalance_threshold", "dca", "stop_loss_take_profit"].includes(mandate.kind)) {
     return {
       applies: false,
@@ -414,20 +381,18 @@ function evaluateMandate(mandate, context) {
   return pass(false);
 }
 
-function normalizeActionContext({ action = {}, simulation = null, quote = null, risk = null, type } = {}) {
-  const amountUsd = Number(action.amountUsd || action.amount || action.collateralUsd || risk?.collateralUsd || 0);
+function normalizeActionContext({ action = {}, simulation = null, quote = null, type } = {}) {
+  const amountUsd = Number(action.amountUsd || action.amount || 0);
   const feeRatio = Number(simulation?.feeRatio ?? quote?.feeRatio ?? action.feeRatio ?? 0);
   const slippage = Number(action.slippage ?? simulation?.slippage ?? 0);
   return {
-    type: type || action.type || (risk ? "perp" : "trade"),
+    type: type || action.type || "trade",
     amountUsd,
     fromToken: normalizeToken(action.fromToken || simulation?.route?.fromToken || null),
     toToken: normalizeToken(action.toToken || simulation?.route?.toToken || null),
     fromRail: action.fromRail || simulation?.route?.fromRail || null,
     toRail: action.toRail || simulation?.route?.toRail || null,
-    symbol: normalizeToken(action.symbol || risk?.symbol || null),
-    leverage: Number(action.leverage || risk?.leverage || 0),
-    liquidationBufferPct: Number(risk?.liquidationBufferPct || action.liquidationBufferPct || 0),
+    symbol: normalizeToken(action.symbol || null),
     feeRatio,
     slippage
   };

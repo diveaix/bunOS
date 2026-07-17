@@ -1,4 +1,3 @@
-import { getArcPerpsReadiness } from "./arcPerpsEngine.js";
 import { getDefiExecutionReadiness } from "./defiExecution.js";
 import { getCircleReadiness } from "./circleProvider.js";
 import { config } from "./config.js";
@@ -6,7 +5,6 @@ import { ledger } from "./fixtures.js";
 
 export function listArcTradingPrimitives() {
   const defi = getDefiExecutionReadiness();
-  const perps = getArcPerpsReadiness();
   const circle = getCircleReadiness();
 
   return {
@@ -28,12 +26,6 @@ export function listArcTradingPrimitives() {
         status: defi.ready ? "live_user_wallet_execution_ready" : "quote_or_execution_gated",
         provider: defi.appKit.executionReady ? "circle-app-kit-cctp" : "circle_appkit_quote",
         blockers: defi.blockers
-      }),
-      primitive("perps", {
-        tools: ["propose_perp_trade", "quote_arc_perp_position", "open_arc_perp_user_position", "close_arc_perp_user_position", "close_all_arc_perp_user_positions"],
-        status: perps.userWalletExecutionReady ? "live_user_wallet_execution_ready" : "user_wallet_signing_required",
-        provider: "arc-perps-lite",
-        blockers: perps.missing || []
       }),
       primitive("airdrop", {
         tools: ["create_airdrop", "award_airdrop", "list_airdrops", "get_airdrop_receipt"],
@@ -62,7 +54,6 @@ export function listArcTradingPrimitives() {
     ],
     counts: {
       defiActions: ledger.defiActions.length,
-      perpProposals: ledger.perpProposals.length,
       airdrops: ledger.airdrops.length,
       bounties: ledger.payments.filter((payment) => payment.kind === "social_bounty").length,
       automations: ledger.automations.length

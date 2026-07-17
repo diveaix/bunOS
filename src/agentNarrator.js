@@ -1,8 +1,6 @@
 const FAILURE_STATUSES = new Set([
   "failed",
   "rejected",
-  "position_not_found",
-  "position_lookup_failed",
   "wallet_not_found",
   "user_wallet_signing_required",
   "execution_not_enabled",
@@ -70,14 +68,10 @@ export function buildAgentNarrative({
 function responseMode({ ok, status, tool, result, plan }) {
   if (status === "clarification_required" || !plan.tool) return "clarifying";
   if (status === "requires_confirmation" || result.approval) return "needs_approval";
-  if (!ok) {
-    if (status === "quote_unavailable" || status === "position_not_found" || status === "rejected") return "refused";
-    return "failed";
-  }
+  if (!ok) return status === "quote_unavailable" || status === "rejected" ? "refused" : "failed";
   if (tool === "get_balance" || tool === "sync_circle_balances" || tool === "get_market_intelligence" || tool === "get_market_feed_snapshot" || tool === "analyze_portfolio" || tool.includes("strategy") || tool.includes("mandate")) {
     return "waiting";
   }
-  if (tool === "answer_agent_question") return "waiting";
   if (status === "settled" || status === "completed" || Boolean(result.txHash)) return "executed";
   if (MONITORING_STATUSES.has(status)) return "monitoring";
   return "waiting";
@@ -88,7 +82,7 @@ function actionDetails({ intent, result, execution, tool }) {
   const payment = result.payment || {};
   const proposal = result.proposal || {};
   const request = action.request || intent || {};
-  const amount = request.amount ?? request.amountUsd ?? intent.amount ?? payment.amount ?? proposal.collateralUsd ?? null;
+  const amount = request.amount ?? request.amountUsd ?? intent.amount ?? payment.amount ?? proposal.capitalUsd ?? null;
   const fromToken = request.fromToken || intent.fromToken || intent.asset || payment.asset || "USDC";
   const toToken = request.toToken || intent.toToken || null;
   const fromRail = request.fromRail || intent.fromRail || intent.settlementRail || payment.settlementRail || null;
@@ -103,7 +97,6 @@ function actionDetails({ intent, result, execution, tool }) {
     asset: pair,
     route,
     recipient: intent.recipientHandle || payment.recipientHandle || null,
-    positionId: execution.ids?.positionId || result.positionId || result.position?.id || null,
     tool
   };
 }
@@ -126,8 +119,6 @@ function buildReceipt({ result = {}, execution = {} }) {
     actionId: ids.actionId || result.action?.id || result.receipt?.action?.id || null,
     paymentId: ids.paymentId || result.payment?.id || null,
     approvalId: ids.approvalId || result.approval?.id || result.action?.approvalId || result.payment?.approvalId || result.proposal?.approvalId || null,
-    proposalId: ids.proposalId || result.proposal?.id || null,
-    positionId: ids.positionId || result.positionId || result.position?.id || null,
     txHash: execution.txHash || result.txHash || result.action?.txHash || result.payment?.transfer?.txHash || null
   };
 }
@@ -150,22 +141,8 @@ function summaryText({ mode, status, details, why, tool, result, execution }) {
     return `I am not taking this ${actionLabel} for ${request}${routeText}. I checked the live route and policy, but the route is not tradable right now: ${cleanReason(why)} No funds moved.`;
   }
 
-  if ((tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") && mode !== "executed" && mode !== "monitoring") {
-    if (status === "position_not_found") {
-      return "I checked your open ArcPerps positions and did not find a matching position to close. Nothing was closed.";
-    }
-    if (status === "user_wallet_signing_required") {
-      return "I found the close request, but your wallet is not ready to sign it yet. Nothing was changed.";
-    }
-    return `I could not close the perp position: ${cleanReason(why)} No position was changed.`;
-  }
-
   if (mode === "needs_approval") {
     return `I prepared the ${actionLabel}, but it needs your approval before anything moves.`;
-  }
-
-  if (tool === "list_route_capabilities" || Array.isArray(result.routes)) {
-    return readOnlySummary({ tool, result, details });
   }
 
   if (mode === "executed") {
@@ -189,22 +166,11 @@ function happenedText({ mode, status, details, why, tool, result, execution }) {
   if (mode === "monitoring") return "The action is queued or submitted and still needs receipt follow-through.";
   if (mode === "needs_approval") return "The agent created a prepared action that must be approved before execution.";
   if (tool === "quote_defi_route" && status === "execution_not_enabled") return "A quote/action was created, but execution stopped at the provider/user-wallet boundary.";
-  if ((tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") && status === "user_wallet_signing_required") return "The close request was blocked before submission because the user wallet is not ready to sign.";
-  if ((tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") && status === "position_not_found") return "No matching open position was found.";
-  if (tool === "list_route_capabilities") return "The agent checked the live route registry.";
   if (result.wallet) return "Wallet state was read and returned.";
-  if (tool === "pause_automations") return `The agent paused ${Number(result.paused || 0)} active automation(s).`;
-  if (tool === "pause_automation") return "The automation was paused.";
-  if (tool === "resume_automation") return "The automation was resumed.";
-  if (tool === "delete_automation") return "The automation was deleted.";
-  if (tool === "create_automation") return "A new automation was created.";
   return why || `The ${humanActionLabel(tool, result)} finished with status ${status}.`;
 }
 
 function readOnlySummary({ tool, result, details }) {
-  if (tool === "answer_agent_question" || result.answer) {
-    return result.answer || "I answered that without moving funds.";
-  }
   if (tool === "get_balance" || tool === "sync_circle_balances") {
     const total = result.wallet?.balance ?? result.wallet?.totalBalanceUsd;
     return total !== undefined
@@ -220,13 +186,6 @@ function readOnlySummary({ tool, result, details }) {
     const freshness = result.freshness?.status || "unknown";
     return `I refreshed market feeds. Regime is ${regime}; data freshness is ${freshness}.`;
   }
-  if (tool === "list_route_capabilities" || Array.isArray(result.routes)) {
-    const live = (result.routes || []).filter((route) => route.status === "live");
-    if (live.length) {
-      return `I checked live routes. Available now: ${live.slice(0, 4).map((route) => route.type === "bridge" ? `${route.fromToken} ${route.fromRail}->${route.toRail}` : `${route.fromToken}->${route.toToken} on ${route.fromRail}`).join(", ")}.`;
-    }
-    return "I checked the route registry. No live routes match that filter right now.";
-  }
   if (tool === "analyze_portfolio" || result.portfolio) {
     const total = Number(result.portfolio?.totalValueUsd || 0);
     const recommendation = result.recommendation?.reason || "Portfolio reviewed.";
@@ -239,26 +198,6 @@ function readOnlySummary({ tool, result, details }) {
     if (result.mandate) return `I saved or updated mandate ${result.mandate.id}. It will be enforced before future trades.`;
     return `I checked standing trading mandates. ${result.activeCount || 0} active rule(s) are currently enforced.`;
   }
-  if (tool === "pause_automations") {
-    const paused = Number(result.paused || 0);
-    return paused > 0
-      ? `I stopped ${paused} active automation${paused === 1 ? "" : "s"}. They are paused now, so they will not run again until you resume them.`
-      : "I checked your automations. Nothing was running, so there was nothing to stop.";
-  }
-  if (tool === "pause_automation" && result.automation) {
-    return `I paused automation ${result.automation.id}. It will not run again until you resume it.`;
-  }
-  if (tool === "resume_automation" && result.automation) {
-    return `I resumed automation ${result.automation.id}.`;
-  }
-  if (tool === "delete_automation" && result.automation) {
-    return `I deleted automation ${result.automation.id}.`;
-  }
-  if (tool === "create_automation" && result.automation) {
-    const every = result.automation.intervalMinutes ? ` every ${result.automation.intervalMinutes} minute${result.automation.intervalMinutes === 1 ? "" : "s"}` : "";
-    const runs = result.automation.maxRuns ? ` for ${result.automation.maxRuns} run${result.automation.maxRuns === 1 ? "" : "s"}` : "";
-    return `I created automation ${result.automation.id}${every}${runs}.`;
-  }
   if (tool === "send_usdc" && result.payment) {
     return `I created the payment to ${details.recipient || "the recipient"} and it is waiting on the configured transfer path.`;
   }
@@ -269,22 +208,14 @@ function humanActionLabel(tool, result = {}) {
   if (tool === "quote_defi_route") return result.action?.type === "bridge" ? "bridge" : "swap";
   if (tool === "send_usdc") return "payment";
   if (tool === "create_airdrop" || tool === "award_airdrop") return "distribution";
-  if (tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") return "perp close";
-  if (tool === "propose_arc_perp_trade" || tool === "propose_perp_trade") return "perp trade";
   if (tool === "confirm_action") return "approval";
   if (tool === "get_balance") return "balance check";
   if (tool === "get_market_intelligence") return "market check";
   if (tool === "get_market_feed_snapshot") return "market feed refresh";
-  if (tool === "list_route_capabilities") return "route registry check";
   if (tool === "create_mandate") return "mandate creation";
   if (tool === "list_mandates") return "mandate review";
   if (tool === "update_mandate") return "mandate update";
   if (tool === "delete_mandate") return "mandate deletion";
-  if (tool === "pause_automations") return "automation pause";
-  if (tool === "pause_automation") return "automation pause";
-  if (tool === "resume_automation") return "automation resume";
-  if (tool === "delete_automation") return "automation deletion";
-  if (tool === "create_automation") return "automation creation";
   return "action";
 }
 

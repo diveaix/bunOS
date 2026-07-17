@@ -3,10 +3,10 @@ let eventCounter = 1;
 let defiActionCounter = 1;
 let approvalCounter = 1;
 let copyTradeCounter = 1;
-let perpProposalCounter = 1;
 let xCommandCounter = 1;
 let automationCounter = 1;
 let airdropCounter = 1;
+let tokenLaunchCounter = 1;
 
 export function nextPaymentId() {
   return `pay_${String(paymentCounter++).padStart(3, "0")}`;
@@ -28,10 +28,6 @@ export function nextCopyTradeProposalId() {
   return `copy_${String(copyTradeCounter++).padStart(4, "0")}`;
 }
 
-export function nextPerpProposalId() {
-  return `perp_${String(perpProposalCounter++).padStart(4, "0")}`;
-}
-
 export function nextXCommandId() {
   return `xcmd_${String(xCommandCounter++).padStart(4, "0")}`;
 }
@@ -44,26 +40,30 @@ export function nextAirdropId() {
   return `air_${String(airdropCounter++).padStart(4, "0")}`;
 }
 
+export function nextTokenLaunchId() {
+  return `launch_${String(tokenLaunchCounter++).padStart(4, "0")}`;
+}
+
 export function syncIdCounters({
   payments = [],
   events = [],
   defiActions = [],
   approvals = [],
   copyTradeProposals = [],
-  perpProposals = [],
   xCommands = [],
   automations = [],
-  airdrops = []
+  airdrops = [],
+  tokenLaunches = []
 } = {}) {
   paymentCounter = Math.max(paymentCounter, maxNumericSuffix(payments.map((payment) => payment.id), "pay_") + 1);
   eventCounter = Math.max(eventCounter, maxNumericSuffix(events.map((event) => event.id), "evt_") + 1);
   defiActionCounter = Math.max(defiActionCounter, maxNumericSuffix(defiActions.map((action) => action.id), "defi_") + 1);
   approvalCounter = Math.max(approvalCounter, maxNumericSuffix(approvals.map((approval) => approval.id), "appr_") + 1);
   copyTradeCounter = Math.max(copyTradeCounter, maxNumericSuffix(copyTradeProposals.map((proposal) => proposal.id), "copy_") + 1);
-  perpProposalCounter = Math.max(perpProposalCounter, maxNumericSuffix(perpProposals.map((proposal) => proposal.id), "perp_") + 1);
   xCommandCounter = Math.max(xCommandCounter, maxNumericSuffix(xCommands.map((command) => command.id), "xcmd_") + 1);
   automationCounter = Math.max(automationCounter, maxNumericSuffix(automations.map((automation) => automation.id), "auto_") + 1);
   airdropCounter = Math.max(airdropCounter, maxNumericSuffix(airdrops.map((airdrop) => airdrop.id), "air_") + 1);
+  tokenLaunchCounter = Math.max(tokenLaunchCounter, maxNumericSuffix(tokenLaunches.map((launch) => launch.id), "launch_") + 1);
 }
 
 function maxNumericSuffix(values, prefix) {

@@ -26,9 +26,7 @@ await record("tools_list", async () => {
       "quote_swap",
       "list_defi_actions",
       "get_defi_action_receipt",
-      "reconcile_defi_action",
-      "propose_perp_trade",
-      "arc_perps_readiness"
+      "reconcile_defi_action"
     ].every((name) => names.includes(name)),
     names
   };
@@ -50,8 +48,7 @@ await record("wallet_capabilities", async () => {
     backendSignerAllowed: result.backendSignerAllowed,
     sendUsdc: result.capabilities.sendUsdc,
     bridgeUsdc: result.capabilities.bridgeUsdc,
-    swap: result.capabilities.swap,
-    perps: result.capabilities.perps
+    swap: result.capabilities.swap
   };
 });
 
@@ -174,35 +171,6 @@ await record("reconcile_defi_action", async () => {
     jobId: result.job.id,
     skipped: result.result.skipped,
     status: result.result.status
-  };
-});
-
-await record("propose_perp_trade", async () => {
-  const result = await callMcpTool("propose_perp_trade", {
-    handle,
-    symbol: "BTC",
-    side: "long",
-    collateralUsd: 10,
-    leverage: 2,
-    settlementRail: "arc-testnet"
-  });
-  return {
-    ok: result.ok,
-    proposalId: result.proposal.id,
-    status: result.proposal.status,
-    approvalId: result.approval.id,
-    signer: result.proposal.signer
-  };
-});
-
-await record("arc_perps_readiness", async () => {
-  const result = await callMcpTool("arc_perps_readiness", {});
-  return {
-    ok: result.ok,
-    rail: result.rail,
-    backendSignerAllowed: result.backendSignerAllowed,
-    executionEnabled: result.executionEnabled,
-    vaultAddress: result.vaultAddress || null
   };
 });
 

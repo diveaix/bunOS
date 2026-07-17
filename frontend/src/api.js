@@ -72,14 +72,12 @@ export function formatTokenAmount(value) {
 
 export function formatDate(value) {
   if (!value) return "Just now";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown date";
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(date);
+  }).format(new Date(value));
 }
 
 export function compactAddress(address) {

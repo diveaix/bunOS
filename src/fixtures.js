@@ -117,14 +117,12 @@ export const ledger = {
   automations: [],
   defiActions: [],
   approvals: [],
-  routeCapabilities: [],
   securityLocks: [],
   rateLimits: [],
   agentObservability: [],
-  agentWorkflows: [],
   copyTradeProposals: [],
-  perpProposals: [],
-  airdrops: []
+  airdrops: [],
+  tokenLaunches: []
 };
 
 export const sessions = new Map();

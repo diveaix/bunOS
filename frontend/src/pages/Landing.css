@@ -1612,6 +1612,33 @@ code {
   align-self: center;
 }
 
+/* Shine sweep */
+.hero-terminal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  z-index: 20;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 30%,
+    rgba(255, 255, 255, 0.15) 50%,
+    rgba(255, 255, 255, 0.04) 70%,
+    transparent 100%
+  );
+  animation: htShine 5s ease-in-out infinite;
+}
+
+@keyframes htShine {
+  0%   { transform: translateX(0); }
+  60%  { transform: translateX(500%); }
+  100% { transform: translateX(500%); }
+}
+
 /* Tab bar */
 .ht-tabs {
   position: relative;
@@ -1836,8 +1863,8 @@ code {
 .ht-result {
   padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid #0f2a20;
-  background: #0c1f18;
+  border: 1px solid #2a2a2e;
+  background: #1c1c1f;
   animation: htResultIn 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -1859,14 +1886,14 @@ code {
   font: 700 10px/1 var(--sans);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #34d399;
+  color: rgba(255, 255, 255, 0.85);
   margin-bottom: 10px;
 }
 
 .ht-result-badge svg {
   width: 12px;
   height: 12px;
-  stroke: #34d399;
+  stroke: rgba(255, 255, 255, 0.85);
   stroke-width: 2.5;
   fill: none;
   stroke-linecap: round;

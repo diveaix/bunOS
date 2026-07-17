@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 import solc from "solc";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const contracts = ["ArcPerpsOracle.sol", "ArcPerpsVault.sol"];
+const contracts = [
+  "ArcLaunchToken.sol",
+  "ArcLaunchFactory.sol",
+  "ArcLaunchController.sol",
+  "ArcLiquidityLocker.sol",
+  "ArcAgentPolicyVault.sol"
+];
 const sources = {};
 
 for (const file of contracts) {

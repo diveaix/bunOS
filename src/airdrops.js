@@ -8,7 +8,6 @@ import { selectSettlementRail } from "./settlement.js";
 import { circleUserSigner } from "./signerPolicy.js";
 import { readIdempotentResult, rememberIdempotentResult } from "./store.js";
 import { normalizeAmount } from "./walletAccounts.js";
-import { publicUrl } from "./publicUrls.js";
 
 export async function createAirdrop({
   senderHandle,
@@ -219,7 +218,7 @@ export function getAirdropReceipt({ airdropId, host, protocol = "http" } = {}) {
       payments: airdrop.distributions
         .map((distribution) => ledger.payments.find((payment) => payment.id === distribution.paymentId))
         .filter(Boolean),
-      publicUrl: publicUrl(`/airdrops/${airdrop.id}`, { host, protocol }),
+      publicUrl: host ? `${protocol}://${host}/airdrops/${airdrop.id}` : null,
       timeline: events
         .map((event) => ({ type: event.type, at: event.at, label: event.type }))
         .filter((item) => item.at)

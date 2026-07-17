@@ -4,6 +4,15 @@ import { nextEventId } from "./ids.js";
 const READ_TOOLS = new Set([
   "list_agent_tools",
   "plan_agent_action",
+  "get_launchpad_architecture",
+  "plan_token_launch",
+  "get_token_launch",
+  "list_token_launches",
+  "get_launch_receipt",
+  "monitor_launch",
+  "get_launch_fees",
+  "get_agent_treasury",
+  "list_launch_feed",
   "get_balance",
   "analyze_portfolio",
   "get_wallet_capabilities",
@@ -13,27 +22,16 @@ const READ_TOOLS = new Set([
   "list_airdrops",
   "get_airdrop_receipt",
   "list_copy_trade_proposals",
-  "list_perp_intelligence",
-  "assess_liquidation_risk",
-  "list_perp_proposals",
-  "arc_perps_readiness",
-  "arc_perps_status",
-  "quote_arc_perp_position",
-  "read_arc_perps_oracle_price",
-  "get_arc_perps_position",
-  "list_arc_perps_positions",
   "appkit_readiness",
   "list_appkit_capabilities",
   "appkit_estimate_send",
   "appkit_estimate_bridge",
   "appkit_estimate_swap",
   "appkit_unified_balance",
-  "list_route_capabilities",
   "resolve_x_handle",
   "list_defi_tools",
   "list_defi_actions",
   "get_defi_action_receipt",
-  "list_perp_markets",
   "list_strategy_policies",
   "plan_rebalance_strategy",
   "reduce_risk_strategy",
@@ -54,6 +52,13 @@ const APPROVAL_TOOLS = new Set(["confirm_action"]);
 
 const TRADE_TOOLS = new Set([
   "run_agent_action",
+  "create_token_launch",
+  "deploy_launch_token",
+  "seed_launch_liquidity",
+  "open_launch_trading",
+  "accrue_launch_fees",
+  "claim_launch_fees",
+  "spend_agent_compute",
   "quote_defi_route",
   "bridge_usdc",
   "demo_bridge_arc_to_base",
@@ -61,13 +66,7 @@ const TRADE_TOOLS = new Set([
   "confirm_defi_action",
   "reconcile_defi_action",
   "refresh_execution_monitor",
-  "probe_route_capability",
-  "probe_route_capabilities",
   "propose_copy_trade",
-  "propose_perp_trade",
-  "open_arc_perp_user_position",
-  "close_arc_perp_user_position",
-  "close_all_arc_perp_user_positions",
   "appkit_send_usdc",
   "appkit_bridge_usdc",
   "appkit_swap",
@@ -78,12 +77,15 @@ const TRADE_TOOLS = new Set([
   "delete_mandate"
 ]);
 
+const LAUNCH_POLICY_TOOLS = new Set([
+  "update_launch_agent_policy"
+]);
+
 const AUTOMATION_TOOLS = new Set([
   "create_automation",
   "list_automations",
   "run_automation",
   "run_due_automations",
-  "pause_automations",
   "pause_automation",
   "resume_automation",
   "delete_automation"
@@ -99,6 +101,7 @@ export function requiredScopesForTool(tool) {
   if (READ_TOOLS.has(tool)) return ["mcp:read"];
   if (PAYMENT_TOOLS.has(tool)) return ["mcp:payments"];
   if (APPROVAL_TOOLS.has(tool)) return ["mcp:approvals"];
+  if (LAUNCH_POLICY_TOOLS.has(tool)) return ["mcp:approvals"];
   if (TRADE_TOOLS.has(tool)) return ["mcp:trade"];
   if (AUTOMATION_TOOLS.has(tool)) return ["mcp:automations"];
   if (WALLET_ADMIN_TOOLS.has(tool)) return ["mcp:wallets"];

@@ -5,7 +5,6 @@ import { enqueueJob, runJob } from "./jobs.js";
 import { runAgentAction } from "./agentPlanner.js";
 import { syncWalletBalances } from "./walletAccounts.js";
 import { runStrategyCheck } from "./strategyAgent.js";
-import { truthFromAgentPayload } from "./executionTruth.js";
 
 const SUPPORTED_KINDS = new Set([
   "sync_circle_balances",
@@ -135,21 +134,9 @@ export function repairAutomationPayloads({ handle, includePaused = true } = {}) 
     if (normalized && automation.handle !== normalized) continue;
     if (!includePaused && automation.status === "paused") continue;
     if (automation.kind !== "run_agent_action") continue;
-
     const before = String(automation.payload?.text || "");
-    if (looksLikeAutomationCreation(before) && /^\s*(?:create|make|start|schedule|automate)\b/i.test(before)) {
-      if (automation.status !== "paused") {
-        automation.status = "paused";
-        automation.nextRunAt = null;
-        automation.lastError = "Automation payload still looked like it would create another automation.";
-        automation.updatedAt = now;
-        report.paused += 1;
-        recordAutomationEvent("automation_recursive_payload_paused", automation);
-      }
-      continue;
-    }
-
     const cleaned = stripScheduleText(before);
+    const recursive = looksLikeAutomationCreation(cleaned);
     if (cleaned && cleaned !== before) {
       automation.payload = {
         ...(automation.payload || {}),
@@ -165,8 +152,7 @@ export function repairAutomationPayloads({ handle, includePaused = true } = {}) 
         newText: cleaned.slice(0, 240)
       });
     }
-
-    if (looksLikeAutomationCreation(cleaned || before) && automation.status !== "paused") {
+    if (recursive && automation.status !== "paused") {
       automation.status = "paused";
       automation.nextRunAt = null;
       automation.lastError = "Automation payload still looked like it would create another automation.";
@@ -264,35 +250,14 @@ function normalizeInterval(input) {
 
 function parseInterval(text) {
   const raw = String(text || "").toLowerCase();
-  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/);
+  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/);
   if (!match) return { intervalMs: 60 * 60_000, intervalMinutes: 60 };
-  const amount = parseNumberWord(match[1]);
+  const amount = numberFromText(match[1]);
   const unit = match[2];
   if (unit === "d" || unit.startsWith("day")) return { intervalMs: amount * 24 * 60 * 60_000, intervalMinutes: amount * 24 * 60 };
   if (unit === "h" || unit.startsWith("hour") || unit.startsWith("hr")) return { intervalMs: amount * 60 * 60_000, intervalMinutes: amount * 60 };
   if (unit === "m" || unit.startsWith("minute") || unit.startsWith("min")) return { intervalMs: amount * 60_000, intervalMinutes: amount };
   return { intervalMs: amount * 1000, intervalMinutes: amount / 60 };
-}
-
-function parseNumberWord(value) {
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) return numeric;
-  return {
-    one: 1,
-    two: 2,
-    three: 3,
-    four: 4,
-    five: 5,
-    six: 6,
-    seven: 7,
-    eight: 8,
-    nine: 9,
-    ten: 10,
-    fifteen: 15,
-    twenty: 20,
-    thirty: 30,
-    sixty: 60
-  }[String(value || "").toLowerCase()] || 0;
 }
 
 function minutesToMs(value) {
@@ -311,22 +276,49 @@ function normalizeMaxRuns(value) {
 }
 
 function parseMaxRuns(text) {
-  const match = String(text || "").match(/\b(?:for|until|stop\s+after)\s+(\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\s*(?:times?|runs?|executions?)\b/i);
-  return match ? parseNumberWord(match[1]) : null;
+  const match = String(text || "").match(/\b(?:for|until|stop\s+after)\s+(\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:times?|runs?|executions?)\b/i);
+  return match ? numberFromText(match[1]) : null;
 }
 
 function stripScheduleText(text) {
-  const numberWord = "(?:\\d+(?:\\.\\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)";
   return String(text || "")
-    .replace(/^\s*(?:run|create|make|start|schedule|automate)\s+(?:an?\s+)?(?:automation|scheduled task|recurring task)\s*[:.-]?\s*/ig, "")
-    .replace(/^\s*(?:an?\s+)?(?:automation|scheduled task|recurring task)\s*[:.-]?\s*/ig, "")
     .replace(/^\s*run\s+agent\s*:\s*/ig, "")
-    .replace(/^\s*(?:an?\s+)?(?:automation|scheduled task|recurring task)\s*[:.-]?\s*/ig, "")
-    .replace(new RegExp(`\\bevery\\s+${numberWord}\\s*(?:second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\\b`, "ig"), "")
-    .replace(new RegExp(`\\b(?:for|until|stop\\s+after)\\s+${numberWord}\\s*(?:times?|runs?|executions?)\\b`, "ig"), "")
+    .replace(/^\s*(?:run|create|make|start|set\s+up|schedule|automate)\s+(?:me\s+)?(?:an?\s+)?automation\.?\s*/ig, "")
+    .replace(/\b(auto(?:mate)?|schedule|repeat|run)\b/ig, "")
+    .replace(/\bevery\s+(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty)\s*(?:second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/ig, "")
+    .replace(/\b(?:for|until|stop\s+after)\s+(?:\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:times?|runs?|executions?)\b/ig, "")
+    .replace(/^\s*(?:an?\s+)?automation\.?\s*/ig, "")
     .replace(/\s{2,}/g, " ")
-    .replace(/^\s*[,.;:-]\s*/, "")
+    .replace(/^\s*[.:-]\s*/g, "")
     .trim();
+}
+
+function looksLikeAutomationCreation(text) {
+  const lower = String(text || "").toLowerCase().trim();
+  if (!lower) return true;
+  return /^(?:run|create|make|start|set up|schedule|automate)\s+(?:me\s+)?(?:an?\s+)?automation\b/.test(lower)
+    || /^an?\s+automation\b/.test(lower);
+}
+
+function numberFromText(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return numeric;
+  const words = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    fifteen: 15,
+    twenty: 20,
+    thirty: 30
+  };
+  return words[String(value || "").toLowerCase()] || 0;
 }
 
 async function executeAutomation(automation) {
@@ -351,10 +343,7 @@ async function executeAutomation(automation) {
   } catch (error) {
     automation.failureCount = Number(automation.failureCount || 0) + 1;
     automation.lastError = error.message;
-    if (error.pauseAutomation) {
-      automation.status = "paused";
-      automation.nextRunAt = null;
-    } else if (automation.maxRuns && automation.runCount >= automation.maxRuns) {
+    if (automation.maxRuns && automation.runCount >= automation.maxRuns) {
       automation.status = "completed";
       automation.nextRunAt = null;
     } else {
@@ -387,46 +376,23 @@ async function executeAutomationPayload(automation) {
     });
   }
   if (automation.kind === "run_agent_action") {
-    const text = automation.payload.text;
-    if (looksLikeAutomationCreation(text)) {
-      throw recursiveAutomationError("This automation tried to create another automation. I paused it to prevent a runaway loop.");
-    }
-    const result = await runAgentAction({
+    return await runAgentAction({
       handle: automation.payload.handle || automation.handle,
-      text,
+      text: automation.payload.text,
       defaultSettlementRail: automation.payload.defaultSettlementRail || "arc-testnet",
       source: "automation",
       fast: automation.payload.fast !== false,
       useModel: automation.payload.useModel === true,
       idempotencyKey: `automation:${automation.id}:${automation.runCount}`
     });
-    if (result?.planned?.plan?.tool === "create_automation") {
-      throw recursiveAutomationError("This automation resolved to create another automation. I paused it to prevent a runaway loop.");
-    }
-    return result;
   }
   throw new Error(`Unsupported automation kind: ${automation.kind}`);
 }
 
-function looksLikeAutomationCreation(text) {
-  return /\b(?:create|make|start|run|schedule|automate)\b[\s\S]{0,40}\b(?:automation|automations|schedule|scheduled task|recurring task)\b/i.test(String(text || ""));
-}
-
-function recursiveAutomationError(message) {
-  const error = new Error(message);
-  error.pauseAutomation = true;
-  return error;
-}
-
 function summarizeResult(result) {
-  const truth = truthFromAgentPayload(result || {});
   return {
     ok: result?.ok !== false,
     status: result?.status || result?.action?.status || result?.payment?.status || result?.job?.status || null,
-    txHash: result?.txHash || result?.execution?.txHash || result?.action?.txHash || result?.payment?.transfer?.txHash || null,
-    explorerUrl: result?.explorerUrl || result?.execution?.explorerUrl || result?.action?.explorerUrl || result?.payment?.transfer?.explorerUrl || null,
-    receiptUrl: result?.receiptUrl || result?.execution?.receiptUrl || result?.receipt?.publicUrl || null,
-    truth,
     nextAction: result?.nextAction || null,
     at: new Date().toISOString()
   };

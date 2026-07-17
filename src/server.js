@@ -8,25 +8,8 @@ import { handleMcpJsonRpc, toMcpError } from "./mcpJsonRpc.js";
 import { redactSensitive } from "./redaction.js";
 import { getArcReadiness } from "./arcRpc.js";
 import { confirmAction } from "./agentActions.js";
-import {
-  listAgentTools,
-  planAgentActionWithModel,
-  runDueAgentWorkflowsFromWorker,
-  resumeAgentWorkflowsFromMonitor,
-  runAgentAction
-} from "./agentPlanner.js";
+import { listAgentTools, planAgentActionWithModel, runAgentAction } from "./agentPlanner.js";
 import { buildAgentMemoryReport } from "./agentMemory.js";
-import {
-  getArcPerpsPosition,
-  getArcPerpsReadiness,
-  getArcPerpsStatus,
-  listArcPerpsPositions,
-  openArcPerpPositionWithUserWallet,
-  quoteArcPerpPosition,
-  readArcPerpsOraclePrice,
-  closeArcPerpPositionWithUserWallet,
-  syncArcPerpsOracleFromHyperliquid
-} from "./arcPerpsEngine.js";
 import { listApprovals } from "./approvals.js";
 import {
   awardBounty,
@@ -38,7 +21,6 @@ import {
 } from "./orchestrator.js";
 import { getCircleReadiness } from "./circleProvider.js";
 import { config } from "./config.js";
-import { publicUrl } from "./publicUrls.js";
 import { getAgentModelReadiness } from "./modelPlanner.js";
 import {
   createAutomation,
@@ -58,7 +40,6 @@ import {
 } from "./airdrops.js";
 import { listArcTradingPrimitives } from "./arcTradingPrimitives.js";
 import { ledger } from "./fixtures.js";
-import { nextEventId } from "./ids.js";
 import {
   getOperations,
   getPaymentReceipt,
@@ -72,16 +53,9 @@ import {
   retryFailedTransfers,
   retryPaymentTransfer
 } from "./reconciliation.js";
-import { enqueueJob, getJobQueueHealth, listJobs, runDueJobs, runJob } from "./jobs.js";
+import { enqueueJob, listJobs, runDueJobs, runJob } from "./jobs.js";
 import { listSettlementRails } from "./settlement.js";
-import {
-  acquireWorkerLease,
-  getWorkerLease,
-  loadStore,
-  persistStore,
-  releaseWorkerLease,
-  renewWorkerLease
-} from "./store.js";
+import { loadStore, persistStore } from "./store.js";
 import {
   reconcileCircleNotification,
   verifyCircleWebhook
@@ -122,6 +96,25 @@ import {
   rankSocialTraders
 } from "./socialTradingAgent.js";
 import {
+  accrueLaunchFees,
+  claimLaunchFees,
+  createTokenLaunch,
+  deployLaunchToken,
+  getAgentTreasury,
+  getLaunchFees,
+  getLaunchReceipt,
+  getLaunchpadArchitecture,
+  getTokenLaunch,
+  listLaunchFeed,
+  listTokenLaunches,
+  monitorLaunch,
+  openLaunchTrading,
+  planTokenLaunch,
+  seedLaunchLiquidity,
+  spendAgentCompute,
+  updateLaunchAgentPolicy
+} from "./launchpadArchitecture.js";
+import {
   applyMcpApiKeyContext,
   assertMcpToolResultSafe,
   authenticateMcpApiKey,
@@ -129,6 +122,7 @@ import {
   listMcpApiKeys,
   revokeMcpApiKey
 } from "./mcpApiKeys.js";
+import { assertMcpToolAuthorized } from "./securityPolicy.js";
 import {
   acquireReplayLock,
   assertPublicPayloadSafe,
@@ -136,20 +130,10 @@ import {
   verifyApprovalToken
 } from "./securityGuards.js";
 import {
-  assessLiquidationRisk,
-  listPerpIntelligence,
-  listPerpProposals,
-  proposePerpTrade
-} from "./perpsAgent.js";
-import {
   confirmDefiAction,
   getDefiActionReceipt,
   listDefiActions,
-  listDefiRouteCapabilities,
   listDefiTools,
-  listPerpMarkets,
-  probeDefiRouteCapabilities,
-  probeDefiRouteCapability,
   quoteDefiRoute,
   searchPredictionMarkets
 } from "./defiOrchestrator.js";
@@ -157,7 +141,6 @@ import {
   buildExecutionMonitorSnapshot,
   refreshExecutionMonitor
 } from "./executionMonitor.js";
-import { truthFromAgentPayload } from "./executionTruth.js";
 import { analyzePortfolio } from "./portfolioBrain.js";
 import { getMarketFeedSnapshot, refreshMarketFeedSnapshot } from "./marketFeeds.js";
 import {
@@ -175,10 +158,6 @@ import {
 const root = fileURLToPath(new URL("..", import.meta.url));
 const port = Number(process.env.PORT || 4317);
 const sseClients = new Map();
-const backgroundWorkerOwnerId = [
-  process.env.RAILWAY_REPLICA_ID || process.env.HOSTNAME || "local",
-  randomUUID()
-].join(":");
 
 export const server = http.createServer(async (req, res) => {
   try {
@@ -211,22 +190,11 @@ export const server = http.createServer(async (req, res) => {
           total: ledger.automations.length,
           active: ledger.automations.filter((automation) => automation.status === "active").length,
           workerEnabled: config.automations.workerEnabled,
-          workerIntervalMs: config.automations.tickMs,
-          leaseEnabled: config.automations.leaseEnabled,
-          lease: config.automations.leaseEnabled
-            ? await getWorkerLease(config.automations.leaseName)
-            : null
+          workerIntervalMs: config.automations.tickMs
         },
         defi: {
           actions: ledger.defiActions.length,
-          liveAdapters: config.defi.liveAdapters,
-          routeCapabilities: {
-            total: ledger.routeCapabilities.length,
-            live: ledger.routeCapabilities.filter((route) => route.status === "live").length,
-            probeEnabled: config.defi.routeProbeEnabled,
-            probeWorkerEnabled: config.defi.routeProbeWorkerEnabled,
-            probeIntervalMs: config.defi.routeProbeIntervalMs
-          }
+          liveAdapters: config.defi.liveAdapters
         },
         ai: getAgentModelReadiness()
       });
@@ -428,7 +396,7 @@ export const server = http.createServer(async (req, res) => {
     const paymentRefreshMatch = url.pathname.match(/^\/api\/payments\/([^/]+)\/refresh$/);
     if (req.method === "POST" && paymentRefreshMatch) {
       const body = await readJson(req);
-      const refreshed = await refreshAndContinueExecutionMonitor({
+      const refreshed = await refreshExecutionMonitor({
         kind: "payment",
         id: paymentRefreshMatch[1],
         runWorker: true
@@ -451,7 +419,7 @@ export const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && monitorMatch) {
       const body = await readJson(req);
-      const refreshed = await refreshAndContinueExecutionMonitor({
+      const refreshed = await refreshExecutionMonitor({
         kind: monitorMatch[1],
         id: decodeURIComponent(monitorMatch[2]),
         host: req.headers.host,
@@ -558,10 +526,7 @@ export const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       return jsonPersisted(res, await postXCommandReply({
         commandId: xCommandReplyMatch[1],
-        publicUrl: body.publicUrl || publicUrl(`/x/commands/${encodeURIComponent(xCommandReplyMatch[1])}`, {
-          host: req.headers.host,
-          protocol: req.headers["x-forwarded-proto"] || "http"
-        }),
+        publicUrl: body.publicUrl || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers.host}/x/commands/${encodeURIComponent(xCommandReplyMatch[1])}`,
         force: Boolean(body.force)
       }));
     }
@@ -659,49 +624,6 @@ export const server = http.createServer(async (req, res) => {
       }));
     }
 
-    if (req.method === "GET" && url.pathname === "/api/perps/intelligence") {
-      return jsonPersisted(res, await listPerpIntelligence({
-        handle: url.searchParams.get("handle") || "@sara",
-        limit: url.searchParams.get("limit") || 5
-      }));
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/perps/proposals") {
-      return json(res, listPerpProposals({
-        handle: url.searchParams.get("handle"),
-        status: url.searchParams.get("status"),
-        limit: url.searchParams.get("limit") || 50
-      }));
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/arc-perps/readiness") {
-      return json(res, getArcPerpsReadiness());
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/arc-perps/status") {
-      return json(res, await getArcPerpsStatus({
-        ownerAddress: url.searchParams.get("ownerAddress") || undefined
-      }));
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/arc-perps/oracle") {
-      return json(res, await readArcPerpsOraclePrice({
-        symbol: url.searchParams.get("symbol") || "BTC"
-      }));
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/arc-perps/positions") {
-      return json(res, await listArcPerpsPositions({
-        ownerAddress: url.searchParams.get("ownerAddress") || undefined,
-        limit: Number(url.searchParams.get("limit") || 25)
-      }));
-    }
-
-    const arcPerpsPositionMatch = url.pathname.match(/^\/api\/arc-perps\/positions\/([^/]+)$/);
-    if (req.method === "GET" && arcPerpsPositionMatch) {
-      return json(res, await getArcPerpsPosition({ positionId: arcPerpsPositionMatch[1] }));
-    }
-
     if (req.method === "GET" && url.pathname === "/api/defi/tools") {
       return json(res, listDefiTools());
     }
@@ -735,13 +657,6 @@ export const server = http.createServer(async (req, res) => {
       }));
     }
 
-    if (req.method === "GET" && url.pathname === "/api/defi/hyperliquid/markets") {
-      return jsonPersisted(res, await listPerpMarkets({
-        handle: url.searchParams.get("handle") || "@sara",
-        limit: url.searchParams.get("limit") || 20
-      }));
-    }
-
     if (req.method === "GET" && url.pathname === "/api/mcp/tools") {
       return json(res, { tools: mcpTools });
     }
@@ -755,19 +670,187 @@ export const server = http.createServer(async (req, res) => {
       return json(res, listAgentTools());
     }
 
+    if (req.method === "GET" && url.pathname === "/api/launchpad/architecture") {
+      return json(res, getLaunchpadArchitecture());
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/launchpad/plan") {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("plan_token_launch", context);
+      const scopedBody = context.handle ? { ...body, creatorHandle: context.handle, handle: context.handle } : body;
+      return json(res, planTokenLaunch(scopedBody));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/launchpad/launches") {
+      return json(res, listTokenLaunches({
+        creatorHandle: url.searchParams.get("creatorHandle") || url.searchParams.get("handle") || undefined,
+        status: url.searchParams.get("status") || undefined,
+        limit: url.searchParams.get("limit") || 50
+      }));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/launchpad/feed") {
+      return json(res, listLaunchFeed({
+        creatorHandle: url.searchParams.get("creatorHandle") || url.searchParams.get("handle") || undefined,
+        status: url.searchParams.get("status") || "live",
+        limit: url.searchParams.get("limit") || 25
+      }));
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/launchpad/treasury") {
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("get_agent_treasury", context);
+      return json(res, getAgentTreasury({
+        handle: context.handle || url.searchParams.get("handle") || "@sara",
+        limit: url.searchParams.get("limit") || 25
+      }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/launchpad/treasury/spend") {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("spend_agent_compute", context);
+      return jsonPersisted(res, spendAgentCompute({
+        ...body,
+        handle: context.handle || body.handle,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+      }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/launchpad/launches") {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("create_token_launch", context);
+      const scopedBody = context.handle ? { ...body, creatorHandle: context.handle, handle: context.handle } : body;
+      return jsonPersisted(res, createTokenLaunch({
+        ...scopedBody,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+      }));
+    }
+
+    const launchApiMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)$/);
+    if (req.method === "GET" && launchApiMatch) {
+      return json(res, getTokenLaunch({ launchId: launchApiMatch[1] }));
+    }
+
+    const launchDeployMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/deploy-token$/);
+    if (req.method === "POST" && launchDeployMatch) {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("deploy_launch_token", context);
+      return jsonPersisted(res, deployLaunchToken({
+        ...body,
+        launchId: launchDeployMatch[1],
+        handle: context.handle || body.handle,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+      }));
+    }
+
+    const launchSeedMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/seed-liquidity$/);
+    if (req.method === "POST" && launchSeedMatch) {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("seed_launch_liquidity", context);
+      return jsonPersisted(res, seedLaunchLiquidity({
+        ...body,
+        launchId: launchSeedMatch[1],
+        handle: context.handle || body.handle,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+      }));
+    }
+
+    const launchLiveMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/go-live$/);
+    if (req.method === "POST" && launchLiveMatch) {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("open_launch_trading", context);
+      return jsonPersisted(res, openLaunchTrading({
+        ...body,
+        launchId: launchLiveMatch[1],
+        handle: context.handle || body.handle,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+      }));
+    }
+
+    const launchPolicyMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/agent-policy$/);
+    if (req.method === "POST" && launchPolicyMatch) {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("update_launch_agent_policy", context);
+      return jsonPersisted(res, updateLaunchAgentPolicy({
+        ...body,
+        launchId: launchPolicyMatch[1],
+        handle: context.handle || body.handle
+      }));
+    }
+
+    const launchReceiptMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/receipt$/);
+    if (req.method === "GET" && launchReceiptMatch) {
+      return json(res, getLaunchReceipt({
+        launchId: launchReceiptMatch[1],
+        host: req.headers.host,
+        protocol: req.headers["x-forwarded-proto"] || "http"
+      }));
+    }
+
+    const launchMonitorMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/monitor$/);
+    if (req.method === "GET" && launchMonitorMatch) {
+      return jsonPersisted(res, monitorLaunch({ launchId: launchMonitorMatch[1] }));
+    }
+
+    const launchFeesMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/fees$/);
+    if (req.method === "GET" && launchFeesMatch) {
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("get_launch_fees", context);
+      return json(res, getLaunchFees({ launchId: launchFeesMatch[1] }));
+    }
+
+    const launchFeesAccrueMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/fees\/accrue$/);
+    if (req.method === "POST" && launchFeesAccrueMatch) {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("accrue_launch_fees", context);
+      return jsonPersisted(res, accrueLaunchFees({
+        ...body,
+        launchId: launchFeesAccrueMatch[1],
+        handle: context.handle || body.handle,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+      }));
+    }
+
+    const launchFeesClaimMatch = url.pathname.match(/^\/api\/launchpad\/launches\/([^/]+)\/fees\/claim$/);
+    if (req.method === "POST" && launchFeesClaimMatch) {
+      const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("claim_launch_fees", context);
+      return jsonPersisted(res, claimLaunchFees({
+        ...body,
+        launchId: launchFeesClaimMatch[1],
+        handle: context.handle || body.handle,
+        idempotencyKey: body.idempotencyKey || req.headers["idempotency-key"]
+      }));
+    }
+
     if (req.method === "POST" && url.pathname === "/api/agent/plan") {
       const body = await readJson(req);
-      return json(res, await planAgentActionWithModel(body));
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("plan_agent_action", context);
+      const scopedBody = context.handle ? { ...body, handle: context.handle } : body;
+      return json(res, await planAgentActionWithModel(scopedBody));
     }
 
     if (req.method === "POST" && url.pathname === "/api/agent/run") {
       const body = await readJson(req);
+      const context = getMcpAuthContext(req);
+      assertMcpToolAuthorized("run_agent_action", context);
+      const scopedBody = context.handle ? { ...body, handle: context.handle } : body;
       const key = body.idempotencyKey || req.headers["idempotency-key"];
       if (key) {
         const replay = acquireReplayLock({
           scope: "api_agent_run",
           key,
-          handle: body.handle || "@sara"
+          handle: scopedBody.handle || "@sara"
         });
         if (!replay.ok) {
           return json(res, {
@@ -780,10 +863,10 @@ export const server = http.createServer(async (req, res) => {
         }
       }
       const result = await runAgentAction({
-        ...body,
+        ...scopedBody,
         idempotencyKey: key
       });
-      return jsonPersisted(res, terminalAgentResponse(body, result));
+      return jsonPersisted(res, terminalAgentResponse(scopedBody, result));
     }
 
     if (req.method === "GET" && url.pathname === "/api/agent/memory") {
@@ -979,77 +1062,9 @@ export const server = http.createServer(async (req, res) => {
       return jsonPersisted(res, await quoteDefiRoute(body));
     }
 
-    if (req.method === "GET" && url.pathname === "/api/defi/routes") {
-      return json(res, listDefiRouteCapabilities({
-        type: url.searchParams.get("type"),
-        fromRail: url.searchParams.get("fromRail"),
-        toRail: url.searchParams.get("toRail"),
-        status: url.searchParams.get("status"),
-        includeHidden: url.searchParams.get("includeHidden") === "1",
-        limit: url.searchParams.get("limit") || 100
-      }));
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/defi/routes/probe") {
-      const body = await readJson(req);
-      const result = body?.type
-        ? await probeDefiRouteCapability(body)
-        : await probeDefiRouteCapabilities(body);
-      return jsonPersisted(res, result);
-    }
-
     if (req.method === "POST" && url.pathname === "/api/social/proposals") {
       const body = await readJson(req);
       return jsonPersisted(res, proposeCopyTrade(body));
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/perps/risk") {
-      const body = await readJson(req);
-      return jsonPersisted(res, assessLiquidationRisk(body));
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/perps/proposals") {
-      const body = await readJson(req);
-      return jsonPersisted(res, proposePerpTrade(body));
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/quote") {
-      const body = await readJson(req);
-      return json(res, await quoteArcPerpPosition(body));
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/open") {
-      const body = await readJson(req);
-      return jsonPersisted(res, await openArcPerpPositionWithUserWallet(body));
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/oracle/price") {
-      return json(res, signerBackedExecutionDisabled("set_arc_perps_oracle_price"), 409);
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/markets") {
-      return json(res, signerBackedExecutionDisabled("set_arc_perps_market"), 409);
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/approve") {
-      return json(res, signerBackedExecutionDisabled("approve_arc_perps_usdc"), 409);
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/margin/deposit") {
-      return json(res, signerBackedExecutionDisabled("deposit_arc_perps_margin"), 409);
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/margin/withdraw") {
-      return json(res, signerBackedExecutionDisabled("withdraw_arc_perps_margin"), 409);
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/liquidity/provide") {
-      return json(res, signerBackedExecutionDisabled("provide_arc_perps_liquidity"), 409);
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/arc-perps/close") {
-      const body = await readJson(req);
-      return jsonPersisted(res, await closeArcPerpPositionWithUserWallet(body));
     }
 
     const confirmDefiMatch = url.pathname.match(/^\/api\/defi\/actions\/([^/]+)\/confirm$/);
@@ -1068,18 +1083,7 @@ export const server = http.createServer(async (req, res) => {
         payload: { actionId: reconcileDefiMatch[1] },
         idempotencyKey: `reconcile_defi_action:${reconcileDefiMatch[1]}:manual:${Date.now()}`
       });
-      const ran = await runJob({ jobId: job.id });
-      const refreshed = await refreshAndContinueExecutionMonitor({
-        kind: "defi_action",
-        id: reconcileDefiMatch[1],
-        host: req.headers.host,
-        protocol: req.headers["x-forwarded-proto"] || "http",
-        runWorker: false
-      });
-      return jsonPersisted(res, {
-        ...ran,
-        monitor: publicExecutionMonitorResponse({}, refreshed)
-      });
+      return jsonPersisted(res, await runJob({ jobId: job.id }));
     }
 
     const defiReceiptMatch = url.pathname.match(/^\/api\/defi\/actions\/([^/]+)\/receipt$/);
@@ -1094,7 +1098,7 @@ export const server = http.createServer(async (req, res) => {
     const defiRefreshMatch = url.pathname.match(/^\/api\/defi\/actions\/([^/]+)\/refresh$/);
     if (req.method === "POST" && defiRefreshMatch) {
       const body = await readJson(req);
-      const refreshed = await refreshAndContinueExecutionMonitor({
+      const refreshed = await refreshExecutionMonitor({
         kind: "defi_action",
         id: defiRefreshMatch[1],
         host: req.headers.host,
@@ -1134,19 +1138,7 @@ export const server = http.createServer(async (req, res) => {
         notificationType: body.notificationType || body.type || "circle_webhook",
         raw: body
       });
-      const reconciled = reconcileCircleNotification({ ledger, notification: body });
-      const continuation = reconciled.payment?.id
-        ? await resumeAgentWorkflowsFromMonitor({
-          kind: "payment",
-          id: reconciled.payment.id,
-          handle: reconciled.payment.senderHandle,
-          source: "circle_webhook"
-        })
-        : null;
-      return jsonPersisted(res, {
-        ...reconciled,
-        workflowContinuation: continuation
-      });
+      return jsonPersisted(res, reconcileCircleNotification({ ledger, notification: body }));
     }
 
     if (req.method === "POST" && url.pathname === "/api/x/command") {
@@ -1194,8 +1186,7 @@ export const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const jobs = await runDueJobs({ limit: body.limit || 20 });
       const automations = await runDueAutomations({ limit: body.automationLimit || body.limit || 20 });
-      const workflows = await runDueAgentWorkflowsFromWorker({ limit: body.workflowLimit || body.limit || 10 });
-      return jsonPersisted(res, { ok: true, jobs, automations, workflows });
+      return jsonPersisted(res, { ok: true, jobs, automations });
     }
 
     const runJobMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/run$/);
@@ -1266,8 +1257,6 @@ if (startupAutomationRepair.repaired || startupAutomationRepair.paused) {
 }
 
 let backgroundWorkerRunning = false;
-let lastRouteProbeAt = 0;
-let lastOracleSyncAttemptAt = 0;
 
 if (!process.env.VERCEL) {
   server.listen(port, () => {
@@ -1300,105 +1289,24 @@ function startBackgroundWorker() {
 async function runBackgroundWorkerTick() {
   if (backgroundWorkerRunning) return;
   backgroundWorkerRunning = true;
-  let leaseAcquired = false;
-  let leaseHeartbeat = null;
 
   try {
-    const lease = config.automations.leaseEnabled
-      ? await acquireWorkerLease({
-          name: config.automations.leaseName,
-          ownerId: backgroundWorkerOwnerId,
-          ttlMs: config.automations.leaseTtlMs
-        })
-      : { acquired: true };
-    if (!lease.acquired) return;
-    leaseAcquired = true;
-
-    if (config.automations.leaseEnabled) {
-      const renewEveryMs = Math.max(5_000, Math.floor(config.automations.leaseTtlMs / 3));
-      leaseHeartbeat = setInterval(() => {
-        renewWorkerLease({
-          name: config.automations.leaseName,
-          ownerId: backgroundWorkerOwnerId,
-          ttlMs: config.automations.leaseTtlMs
-        }).catch((error) => {
-          console.error("Background worker lease renewal failed", error);
-        });
-      }, renewEveryMs);
-      leaseHeartbeat.unref?.();
-    }
-
-    const [jobs, automations, workflows, oracleSync, routeProbe] = await Promise.all([
+    const [jobs, automations] = await Promise.all([
       runDueJobs({ limit: config.automations.limit }),
-      runDueAutomations({ limit: config.automations.limit }),
-      safeWorkflowRetry(),
-      safeOracleSync(),
-      safeRouteProbe()
+      runDueAutomations({ limit: config.automations.limit })
     ]);
 
-    const oracleUpdates = oracleSync.ok ? oracleSync.updates.filter((item) => !item.skipped).length : 0;
-    const routeProbeUpdates = routeProbe.ok ? Number(routeProbe.probed || 0) : 0;
-    const workflowRuns = workflows.ok ? workflows.ran.length : 0;
-    if (jobs.ran.length || automations.ran.length || workflowRuns || oracleUpdates || routeProbeUpdates) {
+    if (jobs.ran.length || automations.ran.length) {
       await persistStore();
-      console.log(`Background worker ran ${jobs.ran.length} jobs, ${automations.ran.length} automations, ${workflowRuns} workflows, ${oracleUpdates} oracle updates, and ${routeProbeUpdates} route probes`);
+      console.log(`Background worker ran ${jobs.ran.length} jobs and ${automations.ran.length} automations`);
     }
   } finally {
-    if (leaseHeartbeat) clearInterval(leaseHeartbeat);
-    if (config.automations.leaseEnabled && leaseAcquired) {
-      await releaseWorkerLease({
-        name: config.automations.leaseName,
-        ownerId: backgroundWorkerOwnerId
-      }).catch((error) => {
-        console.error("Background worker lease release failed", error);
-      });
-    }
     backgroundWorkerRunning = false;
   }
 }
 
-async function safeWorkflowRetry() {
-  if (!config.automations.workflowWorkerEnabled) return { ok: true, due: 0, ran: [], failed: [], skipped: true };
-  try {
-    return await runDueAgentWorkflowsFromWorker({ limit: config.automations.workflowLimit });
-  } catch (error) {
-    console.error("Background workflow retry failed", error);
-    return { ok: false, due: 0, ran: [], failed: [{ error: error.message }] };
-  }
-}
-
-async function safeRouteProbe() {
-  if (!config.defi.routeProbeWorkerEnabled) return { ok: true, probed: 0, skipped: true };
-  if (Date.now() - lastRouteProbeAt < config.defi.routeProbeIntervalMs) {
-    return { ok: true, probed: 0, skipped: true };
-  }
-  lastRouteProbeAt = Date.now();
-  try {
-    return await probeDefiRouteCapabilities({ limit: 20 });
-  } catch (error) {
-    console.error("Background route probe failed", error);
-    return { ok: false, probed: 0, error: error.message };
-  }
-}
-
-async function safeOracleSync() {
-  if (!config.arcPerps.oracleSyncEnabled) {
-    return { ok: true, updates: [], skipped: true, reason: "oracle_sync_disabled" };
-  }
-  if (Date.now() - lastOracleSyncAttemptAt < config.arcPerps.oracleSyncIntervalMs) {
-    return { ok: true, updates: [], skipped: true, reason: "oracle_sync_interval" };
-  }
-  lastOracleSyncAttemptAt = Date.now();
-  try {
-    return await syncArcPerpsOracleFromHyperliquid();
-  } catch (error) {
-    console.error("Background oracle sync failed", error);
-    return { ok: false, updates: [], error: error.message };
-  }
-}
-
 async function serveStatic(pathname, res) {
-  const spaRoutes = new Set(["/", "/terminal", "/mcp-guide", "/api-keys", "/dashboard", "/wallet"]);
+  const spaRoutes = new Set(["/", "/launchpad", "/terminal", "/agents", "/mcp-guide", "/api-keys", "/dashboard", "/wallet"]);
   const safePath = spaRoutes.has(pathname) ? "/index.html" : pathname;
   const filePath = join(root, "public", safePath);
   let content;
@@ -1731,13 +1639,11 @@ function receiptCell(label, value) {
 }
 
 async function getHackathonStatus() {
-  const arcPerps = await safeAsync(() => getArcPerpsStatus());
-  const positions = await safeAsync(() => listArcPerpsPositions({ limit: 8 }));
   const arc = await safeAsync(() => getArcReadiness());
   const circle = getCircleReadiness();
   const pendingApprovals = ledger.approvals.filter((approval) => approval.status === "pending");
-  const jobHealth = getJobQueueHealth();
-  const openPositions = positions.ok ? positions.positions.filter((position) => position.open) : [];
+  const queuedJobs = ledger.jobs.filter((job) => job.status === "queued");
+  const failedJobs = ledger.jobs.filter((job) => job.status === "failed");
 
   const checks = [
     {
@@ -1759,12 +1665,6 @@ async function getHackathonStatus() {
       detail: arc.ok ? `chain ${arc.chainId || "ready"}` : arc.error || "not ready"
     },
     {
-      id: "arc-perps",
-      label: "ArcPerps contracts",
-      ok: Boolean(arcPerps.ok),
-      detail: arcPerps.ok ? compactAddress(arcPerps.vaultAddress) : (arcPerps.missing || []).join(", ")
-    },
-    {
       id: "execution",
       label: "User-owned execution",
       ok: config.transferProvider === "circle" && circle.ready,
@@ -1775,10 +1675,8 @@ async function getHackathonStatus() {
     {
       id: "jobs",
       label: "Worker queue",
-      ok: jobHealth.ok,
-      detail: jobHealth.ok
-        ? `${jobHealth.queued} queued, no recent failures`
-        : `${jobHealth.overdue} overdue, ${jobHealth.recentFailed} recent failures`
+      ok: failedJobs.length === 0,
+      detail: `${queuedJobs.length} queued, ${failedJobs.length} failed`
     }
   ];
 
@@ -1795,20 +1693,10 @@ async function getHackathonStatus() {
       wallets: listWalletProfiles().length,
       payments: ledger.payments.length,
       approvalsPending: pendingApprovals.length,
-      jobsQueued: jobHealth.queued,
-      jobsRunning: jobHealth.running,
-      jobsOverdue: jobHealth.overdue,
-      jobsRecentFailed: jobHealth.recentFailed,
-      jobsHistoricalFailed: jobHealth.historicalFailed,
+      jobsQueued: queuedJobs.length,
+      jobsFailed: failedJobs.length,
       defiActions: ledger.defiActions.length,
-      perpProposals: ledger.perpProposals.length,
-      xCommands: ledger.xCommands.length,
-      openPositions: openPositions.length
-    },
-    arcPerps: {
-      status: arcPerps,
-      positions: positions.ok ? positions.positions : [],
-      positionsError: positions.ok ? null : positions.error
+      xCommands: ledger.xCommands.length
     },
     latest: {
       events: ledger.events.slice().reverse().slice(0, 8),
@@ -1818,28 +1706,6 @@ async function getHackathonStatus() {
       xWebhooks: ledger.xWebhooks.slice().reverse().slice(0, 5)
     }
   };
-}
-
-function signerBackedExecutionDisabled(tool) {
-  return {
-    ok: false,
-    tool,
-    status: "user_wallet_signing_required",
-    backendSignerAllowed: false,
-    message: "This endpoint would use ARC_SETTLEMENT_PRIVATE_KEY, so it is disabled. Wire it to a user-owned Circle/AppKit signing path before enabling live execution."
-  };
-}
-
-function recordArcPerpsTx(type, result, metadata = {}) {
-  ledger.events.push({
-    id: nextEventId(),
-    at: new Date().toISOString(),
-    type,
-    txHash: result.txHash || null,
-    explorerUrl: result.explorerUrl || null,
-    status: result.receipt?.status || "submitted",
-    ...metadata
-  });
 }
 
 async function safeAsync(run) {
@@ -1877,76 +1743,52 @@ function terminalAgentResponse(requestBody = {}, payload = {}) {
     ok: payload.execution.ok,
     tool: payload.execution.tool,
     action: payload.execution.action,
-    status: publicTerminalStatus(payload.execution.status),
+    status: payload.execution.status,
     reason: cleanTerminalReason(payload.execution.reason || payload.reason),
     txHash: payload.execution.txHash || payload.txHash || null,
     explorerUrl: payload.execution.explorerUrl || payload.explorerUrl || null,
     receiptUrl: payload.execution.receiptUrl || payload.receiptUrl || null,
-    nextAction: publicTerminalNextAction(payload.execution.nextAction || payload.nextAction),
+    nextAction: payload.execution.nextAction || payload.nextAction || null,
     ids: payload.execution.ids || undefined
   } : undefined;
-  const executionMonitor = payload.executionMonitor ? {
-    kind: payload.executionMonitor.kind,
-    id: payload.executionMonitor.id,
-    lifecycle: payload.executionMonitor.lifecycle,
-    status: payload.executionMonitor.status,
-    txHash: payload.executionMonitor.txHash || null,
-    explorerUrl: payload.executionMonitor.explorerUrl || null,
-    receiptUrl: payload.executionMonitor.receiptUrl || null,
-    terminal: payload.executionMonitor.terminal,
-    truth: payload.executionMonitor.truth
-  } : undefined;
-  const tool = payload.planned?.plan?.tool || payload.execution?.tool || "";
-  const shouldHideTruth = payload.planned?.plan?.tool === "answer_agent_question"
-    || Boolean(result?.answer)
-    || isReadOnlyTerminalTool(tool);
-  const truth = shouldHideTruth ? undefined : truthFromAgentPayload({
-    ...payload,
-    result,
-    execution,
-    executionMonitor
-  });
 
   return {
     ok: payload.ok,
-    status: publicTerminalStatus(payload.status),
+    status: payload.status,
     reason: cleanTerminalReason(payload.reason),
     planned: payload.planned ? {
       ok: payload.planned.ok,
+      source: payload.planned.source,
       handle: payload.planned.handle,
+      parser: payload.planned.parser,
+      intent: payload.planned.intent,
       plan: payload.planned.plan ? {
         tool: payload.planned.plan.tool,
+        arguments: payload.planned.plan.arguments,
         canExecuteNow: payload.planned.plan.canExecuteNow,
         requiresConfirmation: payload.planned.plan.requiresConfirmation
       } : undefined
     } : undefined,
     result,
     execution,
-    executionMonitor,
-    truth,
+    executionMonitor: payload.executionMonitor ? {
+      kind: payload.executionMonitor.kind,
+      id: payload.executionMonitor.id,
+      lifecycle: payload.executionMonitor.lifecycle,
+      status: payload.executionMonitor.status,
+      txHash: payload.executionMonitor.txHash || null,
+      explorerUrl: payload.executionMonitor.explorerUrl || null,
+      receiptUrl: payload.executionMonitor.receiptUrl || null,
+      terminal: payload.executionMonitor.terminal
+    } : undefined,
     signer: payload.signer,
     txHash: payload.txHash || execution?.txHash || null,
     explorerUrl: payload.explorerUrl || execution?.explorerUrl || null,
     receiptUrl: payload.receiptUrl || execution?.receiptUrl || null,
     summary: cleanTerminalReason(payload.summary || payload.reason),
-    nextAction: publicTerminalNextAction(payload.nextAction),
+    nextAction: payload.nextAction,
     timing: payload.timing
   };
-}
-
-function isReadOnlyTerminalTool(tool = "") {
-  return [
-    "get_balance",
-    "sync_circle_balances",
-    "get_agent_memory",
-    "list_route_capabilities",
-    "list_arc_trading_primitives",
-    "analyze_portfolio",
-    "get_market_intelligence",
-    "get_market_feed_snapshot"
-  ].includes(tool)
-    || String(tool || "").includes("strategy")
-    || String(tool || "").includes("mandate");
 }
 
 function publicExecutionMonitorResponse(requestBody = {}, payload = {}) {
@@ -1960,34 +1802,6 @@ function publicExecutionMonitorResponse(requestBody = {}, payload = {}) {
     receipt: payload.receipt ? sanitizeExecutionMonitorReceipt(payload.receipt) : undefined,
     worker: undefined
   });
-}
-
-async function refreshAndContinueExecutionMonitor({
-  kind,
-  id,
-  handle,
-  host,
-  protocol = "http",
-  runWorker = false
-} = {}) {
-  const refreshed = await refreshExecutionMonitor({
-    kind,
-    id,
-    host,
-    protocol,
-    runWorker
-  });
-  const continuation = await resumeAgentWorkflowsFromMonitor({
-    kind,
-    id,
-    handle: handle || refreshed.monitor?.handle,
-    source: "execution_monitor",
-    fast: true
-  });
-  return {
-    ...refreshed,
-    workflowContinuation: continuation
-  };
 }
 
 function sanitizeExecutionMonitorSnapshot(monitor = {}) {
@@ -2027,12 +1841,11 @@ function sanitizeReceiptExecution(execution = {}) {
 function sanitizeAgentResult(result = {}) {
   const sanitized = {
     ok: result.ok,
-    status: publicTerminalStatus(result.status),
+    status: result.status,
     reason: cleanTerminalReason(result.reason || result.error),
     error: result.error ? cleanTerminalReason(result.error) : undefined,
-    nextAction: publicTerminalNextAction(result.nextAction),
-    fast: result.fast,
-    paused: Number.isFinite(Number(result.paused)) ? Number(result.paused) : undefined
+    nextAction: result.nextAction,
+    fast: result.fast
   };
   if (result.action) {
     sanitized.action = sanitizeDefiAction(result.action);
@@ -2046,44 +1859,8 @@ function sanitizeAgentResult(result = {}) {
   if (result.executionSummary) {
     sanitized.executionSummary = sanitizeExecutionSummary(result.executionSummary);
   }
-  if (Array.isArray(result.closed)) {
-    sanitized.closed = result.closed.slice(0, 10).map((item) => dropUndefined({
-      positionId: item.positionId,
-      symbol: item.symbol,
-      side: item.side,
-      status: publicTerminalStatus(item.status),
-      txHash: item.txHash || null,
-      explorerUrl: item.explorerUrl || null
-    }));
-    sanitized.closedCount = Number(result.closedCount || result.closed.length);
-    sanitized.failedCount = Number(result.failedCount || 0);
-  }
-  if (result.wallet) {
-    sanitized.wallet = sanitizeTerminalWallet(result.wallet);
-  }
-  if (result.portfolio) {
-    sanitized.portfolio = sanitizeTerminalPortfolio(result.portfolio);
-  }
-  if (result.recommendation) {
-    sanitized.recommendation = sanitizeTerminalRecommendation(result.recommendation);
-  }
-  if (result.marketGuard) {
-    sanitized.marketGuard = dropUndefined({
-      status: result.marketGuard.status,
-      recommendation: result.marketGuard.recommendation,
-      reason: cleanTerminalReason(result.marketGuard.reason)
-    });
-  }
-  if (Array.isArray(result.routes)) {
-    sanitized.routes = result.routes.slice(0, 20).map(sanitizeRouteCapability);
-  }
   if (result.automation) {
     sanitized.automation = sanitizeAutomation(result.automation);
-  }
-  if (result.answer) {
-    sanitized.answer = cleanTerminalReason(result.answer);
-    sanitized.topic = result.topic;
-    sanitized.capabilities = Array.isArray(result.capabilities) ? result.capabilities.slice(0, 10) : undefined;
   }
   if (result.memory || result.recent?.trades) {
     sanitized.memoryReport = sanitizeAgentMemoryReport(result);
@@ -2101,96 +1878,6 @@ function sanitizeAgentResult(result = {}) {
     sanitized.approval = result.approval;
   }
   return dropUndefined(sanitized);
-}
-
-function publicTerminalStatus(status) {
-  const value = String(status || "");
-  if (!value) return undefined;
-  return {
-    portfolio_analyzed: "checked",
-    answered: "answered",
-    completed: "completed",
-    settled: "completed",
-    submitted: "submitted",
-    requires_confirmation: "needs approval",
-    clarification_required: "needs more detail",
-    position_not_found: "not found",
-    quote_unavailable: "not available",
-    execution_not_enabled: "not ready"
-  }[value] || value.replaceAll("_", " ");
-}
-
-function sanitizeTerminalPortfolio(portfolio = {}) {
-  return dropUndefined({
-    handle: portfolio.handle,
-    settlementRail: portfolio.settlementRail,
-    totalValueUsd: portfolio.totalValueUsd,
-    assetsByToken: portfolio.assetsByToken,
-    exposure: portfolio.exposure,
-    perps: portfolio.perps,
-    pending: portfolio.pending ? {
-      count: portfolio.pending.count,
-      items: Array.isArray(portfolio.pending.items)
-        ? portfolio.pending.items.slice(0, 10).map((item) => dropUndefined({
-          id: item.id,
-          kind: item.kind,
-          status: item.status,
-          amountUsd: item.amountUsd,
-          route: item.route,
-          reason: cleanTerminalReason(item.reason)
-        }))
-        : []
-    } : undefined,
-    strategy: portfolio.strategy,
-    risk: portfolio.risk
-  });
-}
-
-function sanitizeTerminalRecommendation(recommendation = {}) {
-  return dropUndefined({
-    action: recommendation.action,
-    nextAction: publicTerminalNextAction(recommendation.nextAction),
-    reason: cleanTerminalReason(recommendation.reason),
-    confidence: recommendation.confidence
-  });
-}
-
-function sanitizeTerminalWallet(wallet = {}) {
-  return dropUndefined({
-    handle: wallet.handle,
-    onboarded: wallet.onboarded,
-    balance: wallet.balance,
-    totalBalanceUsd: wallet.totalBalanceUsd,
-    balances: wallet.balances,
-    tokenBalances: wallet.tokenBalances,
-    wallets: Array.isArray(wallet.wallets)
-      ? wallet.wallets.map((item) => dropUndefined({
-        rail: item.rail,
-        address: item.address,
-        id: item.id,
-        state: item.state
-      }))
-      : undefined
-  });
-}
-
-function publicTerminalNextAction(nextAction) {
-  const value = String(nextAction || "");
-  if (!value || value === "none") return value || undefined;
-  return {
-    send_natural_language_request: "Tell me what you want to do next.",
-    ask_for_swap_amount: "Tell me the amount you want to swap.",
-    ask_for_bridge_amount: "Tell me the amount you want to bridge.",
-    check_route_registry_later: "Ask me to check live routes again later.",
-    give_automation_schedule: "Give me the action, interval, and when to stop.",
-    ready_for_next_instruction: "Tell me what you want to do next.",
-    choose_supported_route: "Try a different token pair or route.",
-    adjust_trade_or_fund_wallet: "Add funds or lower the amount.",
-    show_plan_or_request_user_confirmation: "Tell me the missing detail, or confirm the prepared action.",
-    ask_for_clarification: "Tell me the missing detail.",
-    reconcile_defi_action: "Wait for the final receipt.",
-    monitor_receipt: "Wait for the final receipt."
-  }[value] || value.replaceAll("_", " ");
 }
 
 function sanitizeExecutionSummary(summary = {}) {
@@ -2229,8 +1916,7 @@ function sanitizeAgentMemoryReport(report = {}) {
         : [],
       recentFailures: Array.isArray(report.memory.recentFailures)
         ? report.memory.recentFailures.slice(0, 8).map(sanitizeMemoryItem)
-        : [],
-      working: report.memory.working ? sanitizeAgentWorkingMemory(report.memory.working) : undefined
+        : []
     } : undefined,
     recent: report.recent ? {
       trades: Array.isArray(report.recent.trades) ? report.recent.trades.slice(0, 8).map(sanitizeMemoryItem) : [],
@@ -2248,7 +1934,6 @@ function sanitizeAgentMemoryReport(report = {}) {
         nextRunAt: automation.nextRunAt,
         lastResult: automation.lastResult ? sanitizeMemoryItem(automation.lastResult) : null
       })) : [],
-      openPerps: Array.isArray(report.recent.openPerps) ? report.recent.openPerps.slice(0, 8).map(sanitizeMemoryItem) : [],
       pendingActions: Array.isArray(report.recent.pendingActions) ? report.recent.pendingActions.slice(0, 8).map(sanitizeMemoryItem) : [],
       failures: Array.isArray(report.recent.failures) ? report.recent.failures.slice(0, 8).map(sanitizeMemoryItem) : []
     } : undefined,
@@ -2261,7 +1946,9 @@ function sanitizeMemoryItem(item = {}) {
     "id",
     "kind",
     "type",
+    "tool",
     "intent",
+    "status",
     "at",
     "label",
     "targetId",
@@ -2291,85 +1978,9 @@ function sanitizeMemoryItem(item = {}) {
   for (const key of allowed) {
     if (item[key] !== undefined) output[key] = item[key];
   }
-  if (item.tool !== undefined) output.tool = publicTerminalToolLabel(item.tool);
-  if (item.status !== undefined) output.status = publicTerminalStatus(item.status);
   const reason = cleanTerminalReason(item.reason || item.error);
   if (reason) output.reason = reason;
-  if (item.truth && !isInternalTruthMessage(item.truth.message)) {
-    output.truth = sanitizeTruth(item.truth);
-  }
   return dropUndefined(output);
-}
-
-function publicTerminalToolLabel(tool = "") {
-  const value = String(tool || "");
-  return {
-    quote_defi_route: "trade route",
-    get_defi_action_receipt: "trade receipt",
-    refresh_execution_monitor: "receipt check",
-    analyze_portfolio: "portfolio review",
-    get_agent_memory: "memory lookup",
-    get_balance: "balance check",
-    sync_circle_balances: "balance refresh",
-    propose_perp_trade: "perp proposal",
-    close_arc_perp_user_position: "perp close",
-    close_all_arc_perp_user_positions: "perp close"
-  }[value] || value.replaceAll("_", " ");
-}
-
-function isInternalTruthMessage(message = "") {
-  return /^Action is [a-z_]+/i.test(String(message || ""));
-}
-
-function sanitizeAgentWorkingMemory(working = {}) {
-  return dropUndefined({
-    status: working.status,
-    topic: working.topic,
-    objective: cleanTerminalReason(working.objective),
-    pendingClarification: working.pendingClarification ? {
-      question: cleanTerminalReason(working.pendingClarification.question),
-      missing: Array.isArray(working.pendingClarification.missing)
-        ? working.pendingClarification.missing.slice(0, 8)
-        : [],
-      draft: sanitizeMemoryItem(working.pendingClarification.draft || {})
-    } : null,
-    lastOutcome: working.lastOutcome ? sanitizeMemoryItem(working.lastOutcome) : null,
-    recentTurns: Array.isArray(working.recentTurns)
-      ? working.recentTurns.slice(0, 8).map(sanitizeMemoryItem)
-      : []
-  });
-}
-
-function sanitizeTruth(truth = {}) {
-  return dropUndefined({
-    kind: truth.kind,
-    label: truth.label,
-    phase: truth.phase,
-    status: truth.status,
-    message: cleanTerminalReason(truth.message),
-    txHash: truth.txHash || null,
-    explorerUrl: truth.explorerUrl || null,
-    receiptUrl: truth.receiptUrl || null,
-    reason: cleanTerminalReason(truth.reason),
-    nextAction: truth.nextAction || null,
-    target: truth.target || null
-  });
-}
-
-function sanitizeRouteCapability(route = {}) {
-  return dropUndefined({
-    id: route.id,
-    key: route.key,
-    type: route.type,
-    status: route.status,
-    fromRail: route.fromRail,
-    toRail: route.toRail,
-    fromToken: route.fromToken,
-    toToken: route.toToken,
-    provider: route.provider,
-    lastQuotedAt: route.lastQuotedAt || null,
-    estimatedFeeRatio: route.estimatedFeeRatio ?? route.feeRatio ?? null
-  });
 }
 
 function sanitizeAutomation(automation = {}) {
@@ -2538,7 +2149,7 @@ function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "authorization, content-type, mcp-session-id"
+    "access-control-allow-headers": "authorization, content-type, idempotency-key, mcp-session-id"
   };
 }
 

@@ -1,19 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useSession } from "../hooks/useSession";
-import { fetchJson, post, compactAddress, compactHash, formatTokenAmount, isLiveWallet } from "../api";
+import { fetchJson, post, compactAddress, compactHash, formatTokenAmount, requestJson, isLiveWallet } from "../api";
 import BrandLogo from "../components/BrandLogo";
 import "./Terminal.css";
 
 const SUGGESTIONS = [
   "send $10 to @alice",
   "bridge $1 USDC from arc to base",
-  "swap $1 USDC to EURC on arc",
-  "show live swap routes",
+  "swap $1 EURC to USDC on arc",
+  "swap $1 USDC to cirBTC on arc",
   "drop $1 to @alice @bob",
   "drop $0.50 to first 10 replies",
-  "long BTC 2x with $1",
-  "close my last perp",
   "analyze my portfolio",
   "what should I do with my wallet",
   "never bridge if fee is over 3%",
@@ -142,6 +140,14 @@ export default function Terminal() {
         return;
       }
 
+      if (isAutomationUtilityIntent(value)) {
+        const data = await runAutomationCommand(value, handleRef.current);
+        const messageId = addMessage("agent", null, formatAutomationResult(data));
+        trackAutomation(data);
+        followAutomation(data, messageId);
+        return;
+      }
+
       const res = await fetch("/api/agent/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -151,7 +157,6 @@ export default function Terminal() {
           defaultSettlementRail: localStorage.getItem("bunos:rail") || "arc-testnet",
           source: "terminal",
           fast: true,
-          conversation: conversationContext(messages),
         }),
       });
 
@@ -298,85 +303,79 @@ export default function Terminal() {
   const hasMessages = messages.length > 0;
 
   return (
-    <div className="terminal-shell">
-      <aside className="terminal-rail" aria-label="bunOS terminal navigation">
-        <Link to="/" className="rail-logo" aria-label="bunOS home"><BrandLogo size={28} /></Link>
-        <span className="rail-icon active" title="Agent">_&gt;</span>
-        <Link to="/wallet" className="rail-icon" title="Wallet">W</Link>
-        <Link to="/mcp" className="rail-icon" title="MCP">M</Link>
-      </aside>
+    <div className="terminal-app">
+      <header className="terminal-header">
+        <Link to="/" className="header-brand">
+          <BrandLogo size={32} />
+          <span className="header-title">bunOS</span>
+        </Link>
+        <span className="header-tag">Terminal</span>
+        <div className="header-spacer" />
+        <span className="wallet-pill">{walletLabel}</span>
+        <Link to="/wallet" className="header-link">&larr; Wallet</Link>
+        <button type="button" className="logout-button" onClick={handleLogout}>Logout</button>
+      </header>
 
-      <main className="terminal-app">
-        <header className="terminal-header">
-          <div>
-            <span className="context-kicker">bunOS workspace</span>
-            <h1>Agent terminal</h1>
+      <div className="terminal-chat" id="chat" ref={chatRef} onClick={(e) => {
+        const btn = e.target.closest("[data-approval-id]");
+        if (btn) handleApprovalClick(btn.dataset.approvalId);
+      }}>
+        {!hasMessages && (
+          <div className="welcome">
+            <div className="welcome-icon"><BrandLogo size={48} /></div>
+            <h2>bunOS Agent Terminal</h2>
+            <p>Talk to the bunOS agent in natural language. Send USDC, bridge tokens, swap assets, and manage your wallet through chat.</p>
+            <div className="suggestions">
+              {SUGGESTIONS.map((cmd) => (
+                <button className="suggestion-chip" key={cmd} onClick={() => handleSubmit(cmd)}>
+                  {cmd}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="header-spacer" />
-          <span className="wallet-pill">{walletLabel}</span>
-          <Link to="/wallet" className="header-link">&larr; Wallet</Link>
-          <button type="button" className="logout-button" onClick={handleLogout}>Logout</button>
-        </header>
+        )}
 
-        <div className="terminal-chat" id="chat" ref={chatRef} onClick={(e) => {
-          const btn = e.target.closest("[data-approval-id]");
-          if (btn) handleApprovalClick(btn.dataset.approvalId);
-        }}>
-          {!hasMessages && (
-            <div className="welcome">
-              <div className="welcome-mark"><BrandLogo size={42} /></div>
-              <h2>Ask bunOS to move, trade, or explain your Arc wallet.</h2>
-              <p>Use natural language. I will check the live tools, tell you what I found, and only show the parts you actually need.</p>
-              <div className="suggestions">
-                {SUGGESTIONS.slice(0, 10).map((cmd) => (
-                  <button className="suggestion-chip" key={cmd} onClick={() => handleSubmit(cmd)}>
-                    {cmd}
-                  </button>
-                ))}
-              </div>
+        {messages.map((msg) => (
+          <div className={`msg ${msg.role}`} key={msg.id}>
+            <div className="msg-avatar">{msg.role === "user" ? "Y" : "A"}</div>
+            <div className="msg-body">
+              <div className="msg-role">{msg.role === "user" ? "You" : "bunOS Agent"}</div>
+              {msg.html ? (
+                <div className="msg-content" dangerouslySetInnerHTML={{ __html: msg.html }} />
+              ) : (
+                <div className="msg-content">{msg.content}</div>
+              )}
             </div>
-          )}
+          </div>
+        ))}
 
-          {messages.map((msg) => (
-            <article className={`msg ${msg.role}`} key={msg.id}>
-              {msg.role === "agent" && <div className="tool-trace">Used bunOS tools &gt;</div>}
-              <div className="msg-body">
-                {msg.html ? (
-                  <div className="msg-content" dangerouslySetInnerHTML={{ __html: msg.html }} />
-                ) : (
-                  <div className="msg-content">{msg.content}</div>
-                )}
-              </div>
-            </article>
-          ))}
-
-          {busy && (
-            <div className="msg agent working">
-              <div className="tool-trace">Checking wallet and live routes &gt;</div>
-              <div className="thinking-orbit" aria-label="bunOS is thinking"><span /><span /><span /><span /></div>
+        {busy && (
+          <div className="msg agent">
+            <div className="msg-avatar">A</div>
+            <div className="msg-body">
+              <div className="msg-role">bunOS Agent</div>
+              <div className="typing"><span /><span /><span /></div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+      </div>
 
-        <div className="input-area">
-          <form className="input-wrap" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-            <button type="button" className="plus-btn" onClick={() => inputRef.current?.focus()} aria-label="Focus input">+</button>
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="Write a message..."
-              autoComplete="off"
-              autoFocus
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-            />
-            <span className="model-pill">Arc agent</span>
-            <button type="submit" className="send-btn" disabled={busy} aria-label="Send message">
-              <svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4z" /><path d="m22 2-11 11" /></svg>
-            </button>
-          </form>
-        </div>
-      </main>
+      <div className="input-area">
+        <form className="input-wrap" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Type a command..."
+            autoComplete="off"
+            autoFocus
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+          <button type="submit" className="send-btn" disabled={busy}>
+            <svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4z" /><path d="m22 2-11 11" /></svg>
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -397,30 +396,7 @@ function statusBadge(text, type) {
 }
 
 function renderResultCard(rows) {
-  const hiddenLabels = new Set([
-    "tool",
-    "action",
-    "job",
-    "target",
-    "route check",
-    "required",
-    "available",
-    "est. fee",
-    "output",
-    "blocks",
-    "checked",
-  ]);
-  const publicRows = rows
-    .filter(([k, v]) => !hiddenLabels.has(String(k || "").toLowerCase()) && String(v ?? "").trim() !== "")
-    .map(([k, v]) => {
-      const label = String(k || "");
-      const value = label.toLowerCase() === "next" && !String(v).includes("<")
-        ? esc(humanNextAction(v))
-        : v;
-      return `<dt>${esc(label)}</dt><dd>${value}</dd>`;
-    });
-  if (!publicRows.length) return "";
-  const inner = publicRows.join("");
+  const inner = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
   return `<div class="msg-result"><dl class="result-grid">${inner}</dl></div>`;
 }
 
@@ -465,16 +441,11 @@ function renderMarketFeedSnapshot(feed) {
   const priceText = prices.length
     ? prices.slice(0, 6).map((price) => `${esc(price.symbol)} ${price.priceUsd === null ? "unavailable" : `US$${esc(price.priceUsd)}`} - ${esc(price.freshness || "unknown")}`).join("<br>")
     : "no price feed rows";
-  const perps = Array.isArray(feed.perps?.markets) ? feed.perps.markets : [];
-  const perpsText = perps.length
-    ? perps.slice(0, 4).map((market) => `${esc(market.symbol)} mark ${esc(market.markPrice ?? "n/a")} funding ${esc(market.funding ?? "n/a")} OI ${esc(market.openInterest ?? "n/a")}`).join("<br>")
-    : feed.perps?.reason || "perps feed unavailable";
   const warnings = Array.isArray(feed.warnings) ? feed.warnings : [];
   return `Market feeds.${renderResultCard([
     ["Regime", `<code>${esc(feed.regime?.status || "unknown")}</code>`],
     ["Freshness", `${statusBadge(feed.freshness?.status || "unknown", feed.freshness?.status === "fresh" ? "ok" : "warn")} ${esc(feed.freshness?.reason || "")}`],
     ["Prices", priceText],
-    ["Perps", perpsText],
     ["Liquidity", `${statusBadge(feed.liquidity?.status || "unknown", feed.liquidity?.status === "healthy" ? "ok" : "warn")} ${esc(feed.liquidity?.reason || "")}`],
     ["Warnings", warnings.length ? warnings.slice(0, 5).map(esc).join("<br>") : "none"],
   ])}`;
@@ -509,7 +480,6 @@ function renderStrategyPlan(result = {}) {
 function renderPortfolioAnalysis(result = {}) {
   const portfolio = result.portfolio || {};
   const exposure = portfolio.exposure || {};
-  const perps = portfolio.perps || {};
   const pending = portfolio.pending || {};
   const strategy = portfolio.strategy || {};
   const rec = result.recommendation || {};
@@ -525,7 +495,6 @@ function renderPortfolioAnalysis(result = {}) {
     ["Total", `US$${esc(portfolio.totalValueUsd ?? 0)}`],
     ["Exposure", `stables ${esc(Math.round(Number(exposure.stableWeight || 0) * 100))}% / volatile ${esc(Math.round(Number(exposure.volatileWeight || 0) * 100))}%`],
     ["Assets", assetText],
-    ["Perps", `${esc(perps.activeCount || 0)} active / US$${esc(perps.activeNotionalUsd || 0)} notional`],
     ["Pending", pendingText],
     ["Strategy", strategy.status ? `${statusBadge(strategy.status, strategy.status === "drifted" ? "warn" : "ok")} ${esc(strategy.strategyName || strategy.reason || "")}` : "none"],
     ["Recommendation", esc(rec.reason || "Hold and monitor.")],
@@ -574,17 +543,6 @@ function extractExecutionMonitorTarget(data) {
   const actionId = extractDefiActionId(data);
   if (actionId) return { kind: "defi_action", id: actionId };
 
-  const proposalId = data?.execution?.ids?.proposalId
-    || data?.result?.executionSummary?.proposalId
-    || data?.result?.proposal?.id
-    || data?.result?.worker?.result?.proposal?.id
-    || data?.result?.worker?.job?.payload?.proposalId
-    || (data?.approval?.kind === "perp_trade" ? data.approval.targetId : null)
-    || data?.approval?.result?.executionSummary?.proposalId
-    || data?.approval?.result?.proposal?.id
-    || data?.proposal?.id;
-  if (proposalId) return { kind: "perp_proposal", id: proposalId };
-
   return null;
 }
 
@@ -612,28 +570,19 @@ function shouldPollExecution(data, target) {
     const status = String(monitor.lifecycle || data?.result?.payment?.status || data?.payment?.status || "").toLowerCase();
     return ["queued", "submitted", "pending"].includes(status);
   }
-  if (target.kind === "perp_proposal") {
-    const summary = data?.result?.executionSummary || data?.approval?.result?.executionSummary || {};
-    const status = String(monitor.lifecycle || summary.status || data?.result?.proposal?.status || data?.approval?.result?.proposal?.status || data?.proposal?.status || "").toLowerCase();
-    return !summary.txHash && ["approved", "queued", "submitted", "confirmed", "succeeded", "running"].includes(status);
-  }
   return false;
 }
 
 function formatExecutionMonitorFollowup(refreshed, originalData = {}) {
   const monitor = refreshed.monitor || {};
-  const continuation = renderWorkflowContinuation(refreshed.workflowContinuation);
-  let body = "";
   if (monitor.kind === "defi_action" && refreshed.receipt) {
-    body = formatDefiReceiptFollowup({ receipt: refreshed.receipt }, originalData);
-  } else {
-    body = formatSimpleMonitor(monitor);
+    return formatDefiReceiptFollowup({ receipt: refreshed.receipt }, originalData);
   }
-  return continuation ? `${body}${continuation}` : body;
+  return formatSimpleMonitor(monitor);
 }
 
 function executionMonitorTitle(monitor = {}) {
-  const kind = monitor.kind === "payment" ? "Payment" : monitor.kind === "perp_proposal" ? "Perp execution" : "Execution";
+  const kind = monitor.kind === "payment" ? "Payment" : "Execution";
   if (monitor.lifecycle === "settled") return `${kind} settled.`;
   if (monitor.lifecycle === "failed") return `${kind} failed.`;
   if (monitor.lifecycle === "needs_user_signature") return `${kind} needs user wallet approval.`;
@@ -642,7 +591,6 @@ function executionMonitorTitle(monitor = {}) {
 }
 
 function formatSimpleMonitor(monitor = {}) {
-  if (monitor.truth) return renderTruth(monitor.truth);
   const status = String(monitor.lifecycle || monitor.status || "").toLowerCase();
   if (status === "settled") {
     return `Done. The transaction finished on-chain.${renderSimpleReceiptRows({
@@ -757,132 +705,6 @@ function renderSimpleNext(text) {
   return text ? renderResultCard([["Next", esc(text)]]) : "";
 }
 
-function renderContextConflict(data = {}) {
-  const integrity = data.planned?.contextMeta?.contextIntegrity || data.contextIntegrity || {};
-  const items = Array.isArray(integrity.items) ? integrity.items : [];
-  const readableItems = items.slice(0, 3).map((item) => contextConflictLine(item)).filter(Boolean);
-  const reason = friendlyReason(
-    data.execution?.reason || data.reason || readableItems[0] || "I found conflicting context before execution."
-  );
-  const lines = readableItems.length
-    ? readableItems.map((line) => `<div class="conflict-line">${esc(line)}</div>`).join("")
-    : `<div class="conflict-line">I found conflicting live information.</div>`;
-
-  return `I paused before moving funds. ${esc(reason)} Nothing moved.
-${`<div class="msg-result conflict-card">
-  <div class="label">Why I paused</div>
-  <div class="conflict-copy">The latest wallet or route data disagreed with earlier context, so I stopped instead of guessing.</div>
-  ${lines}
-  <div class="workflow-next">Ask me to check the route again, show live routes, or choose another pair.</div>
-</div>`}`;
-}
-
-function contextConflictLine(item = {}) {
-  const type = String(item.type || item.key || "").replaceAll("_", " ");
-  const claims = Array.isArray(item.claims) ? item.claims : [];
-  const values = claims
-    .map((claim) => claim.value ?? claim.status ?? claim.lifecycle)
-    .filter((value) => value !== undefined && value !== null)
-    .map((value) => String(value));
-  if (!type && !values.length) return "";
-  if (!values.length) return `Conflicting ${type || "context"} data.`;
-  return `Conflicting ${type || "context"} data: ${values.slice(0, 3).join(" vs ")}.`;
-}
-
-function renderWorkflowContinuation(continuation) {
-  if (!continuation || continuation.resumed === false) return "";
-  const workflow = continuation.workflow || continuation.result?.workflow;
-  if (workflow) return renderWorkflowTimeline(workflow, { compact: true });
-  return "";
-}
-
-function renderWorkflowTimeline(workflow = {}, data = {}) {
-  const steps = Array.isArray(workflow.steps) ? workflow.steps : [];
-  const status = String(workflow.status || data.status || "running").toLowerCase();
-  const title = workflowTitle(status);
-  const visibleSteps = steps.length ? steps.slice(0, 6) : [{
-    status,
-    tool: data.planned?.plan?.tool,
-    intent: data.planned?.intent || data.result?.intent || {},
-  }];
-  const stepHtml = visibleSteps.map((step, index) => {
-    const state = workflowStepState(step, status);
-    const evidence = step.evidence || step.result?.evidence || step.result || {};
-    const txHash = evidence.txHash || evidence.transactionHash || step.txHash;
-    const explorerUrl = evidence.explorerUrl || step.explorerUrl;
-    const note = workflowStepNote(step, txHash, explorerUrl);
-    return `<li class="${state}">
-      <span class="workflow-dot"></span>
-      <span>
-        <strong>${esc(workflowStepLabel(step, index))}</strong>
-        ${note ? `<small>${note}</small>` : ""}
-      </span>
-    </li>`;
-  }).join("");
-  const next = workflowNextCopy(workflow, status, data);
-  return `${esc(title)}
-<div class="msg-result workflow-card">
-  <div class="label">Agent workflow</div>
-  <ol class="workflow-timeline">${stepHtml}</ol>
-  ${next ? `<div class="workflow-next">${esc(next)}</div>` : ""}
-</div>`;
-}
-
-function workflowTitle(status) {
-  if (["completed", "settled", "succeeded"].includes(status)) return "Workflow finished.";
-  if (["failed", "rejected", "stopped"].includes(status)) return "Workflow stopped.";
-  if (["waiting", "paused", "needs_user_signature", "requires_confirmation"].includes(status)) {
-    return "I started the workflow and I am waiting on the next safe step.";
-  }
-  return "I am working through this request.";
-}
-
-function workflowStepState(step = {}, workflowStatus = "") {
-  const status = String(step.status || step.lifecycle || "").toLowerCase();
-  if (["completed", "settled", "succeeded", "done"].includes(status)) return "done";
-  if (["failed", "rejected", "blocked"].includes(status)) return "failed";
-  if (["running", "waiting", "queued", "submitted", "requires_confirmation", "needs_user_signature"].includes(status)) return "active";
-  if (["completed", "settled", "succeeded"].includes(workflowStatus)) return "done";
-  return "active";
-}
-
-function workflowStepLabel(step = {}, index = 0) {
-  const intent = step.intent || step.input?.intent || step.params || {};
-  const tool = String(step.tool || step.name || intent.action || "").toLowerCase();
-  const amount = intent.amountUsd || intent.amount || intent.collateral || "the requested amount";
-  const fromToken = intent.fromToken || intent.asset || "USDC";
-  const toToken = intent.toToken || intent.market || "";
-  if (/swap/.test(tool)) return `Swap ${amount} ${fromToken}${toToken ? ` to ${toToken}` : ""}`;
-  if (/bridge/.test(tool)) return `Bridge ${amount} ${fromToken}`;
-  if (/send|payment|transfer/.test(tool)) return `Send ${amount} ${fromToken}${intent.recipientHandle ? ` to ${intent.recipientHandle}` : ""}`;
-  if (/perp|position|trade/.test(tool)) return `${intent.side || "Open"} ${toToken || intent.symbol || "perp"} position`;
-  if (/balance/.test(tool)) return "Check wallet balance";
-  if (/portfolio/.test(tool)) return "Review portfolio";
-  if (/quote/.test(tool)) return "Check live route";
-  const label = humanNextAction(tool);
-  return label && label !== "unknown" ? label : `Step ${index + 1}`;
-}
-
-function workflowStepNote(step = {}, txHash, explorerUrl) {
-  if (txHash) return `Transaction ${renderTxLink(txHash, explorerUrl)}`;
-  const status = String(step.status || step.lifecycle || "").toLowerCase();
-  if (status === "requires_confirmation" || status === "needs_user_signature") return "Waiting for your approval.";
-  if (status === "queued") return "Queued for execution.";
-  if (status === "submitted") return "Submitted, waiting for final receipt.";
-  if (status === "failed" || status === "rejected") return esc(friendlyReason(step.reason || step.error || "This step did not finish."));
-  return "";
-}
-
-function workflowNextCopy(workflow = {}, status = "", data = {}) {
-  const next = workflow.nextAction || data.nextAction || data.execution?.nextAction || "";
-  if (["completed", "settled", "succeeded"].includes(status)) return "All requested steps are finished.";
-  if (["failed", "rejected", "stopped"].includes(status)) return friendlyReason(workflow.reason || data.reason || "Review the stopped step before retrying.");
-  if (/approval|signature|confirm/.test(String(next).toLowerCase())) return "Approve the current step when you are ready.";
-  if (/receipt|monitor|reconcile|execution/.test(String(next).toLowerCase())) return "I will continue when the receipt is available.";
-  if (/budget|resume/.test(String(next).toLowerCase())) return "Say continue when you want me to run the next step.";
-  return next ? humanNextAction(next) : "I will keep the context ready for the next step.";
-}
-
 function friendlyReason(reason, context = {}) {
   const text = String(reason || "").toLowerCase();
   if (/no live .*route|no available quotes|quote_unavailable|provider could not return|server error|fallback/.test(text)) {
@@ -910,19 +732,13 @@ function stripBackendReason(reason) {
 
 function nextUserAction({ action, fromToken, toToken }) {
   if (action === "swap") {
-    return `Try a currently live pair, like USDC to EURC on Arc, or ask "show live routes".`;
+    return `Try a more liquid pair, like USDC to EURC, or try again later.`;
   }
   return `Try a slightly larger amount, check your balance, or try again later.`;
 }
 
 function humanNextAction(nextAction) {
   const value = String(nextAction || "");
-  if (value === "send_natural_language_request") return "Tell me what you want to do next.";
-  if (value === "ask_for_swap_amount") return "Tell me the amount you want to swap.";
-  if (value === "ask_for_bridge_amount") return "Tell me the amount you want to bridge.";
-  if (value === "check_route_registry_later") return "Ask me to check live routes again later.";
-  if (value === "give_automation_schedule") return "Give me the action, interval, and when to stop.";
-  if (value === "ready_for_next_instruction") return "Tell me what you want to do next.";
   if (value === "choose_supported_route") return "Try a different token pair or route.";
   if (value === "adjust_trade_or_fund_wallet") return "Add funds or lower the amount.";
   if (value === "reconcile_defi_action" || value === "monitor_receipt") return "Wait for the final receipt.";
@@ -995,18 +811,14 @@ function formatExecutionResult(data) {
 }
 
 function executionTitle(execution) {
-  if (execution.tool === "close_arc_perp_user_position" || execution.tool === "close_all_arc_perp_user_positions") {
-    if (execution.ok === false) return "Perp close was not submitted.";
-    return execution.txHash ? "Perp close submitted on Arc." : "Perp close accepted.";
-  }
   if (execution.ok === false) return "I could not complete that action.";
   if (execution.txHash) return "Action submitted on-chain.";
-  return "Done. I finished checking that.";
+  return "Agent action completed.";
 }
 
 function executionStatusType(execution) {
   const status = String(execution.status || "").toLowerCase();
-  if (execution.ok === false || ["failed", "rejected", "position_not_found", "wallet_not_found", "position_lookup_failed"].includes(status)) return "fail";
+  if (execution.ok === false || ["failed", "rejected", "wallet_not_found"].includes(status)) return "fail";
   if (["submitted", "requires_confirmation", "execution_not_enabled"].includes(status)) return "warn";
   return "ok";
 }
@@ -1017,35 +829,13 @@ function formatResult(data) {
   const intent = plan?.intent || {};
   const tool = plan?.plan?.tool || "unknown";
   const execution = data.execution || null;
-  if (data.status === "context_conflict" || execution?.status === "context_conflict") {
-    return renderContextConflict(data);
-  }
-  if (result.workflow || data.workflow) {
-    return renderWorkflowTimeline(result.workflow || data.workflow, data);
-  }
-  if (data.truth && shouldRenderTruth(data, tool)) return renderTruth(data.truth);
-  if (tool === "answer_agent_question" || result.answer) {
-    return renderAgentAnswer(result, data);
-  }
-  if (tool === "list_route_capabilities" || Array.isArray(result.routes)) {
-    return renderRouteCapabilities(result);
-  }
-  if (tool === "get_balance" || tool === "sync_circle_balances") {
-    return renderWalletBalance(result, tool);
-  }
-  if (tool === "analyze_portfolio" || result.portfolio?.exposure) {
-    return renderPortfolioAnalysis(result);
-  }
-  if (result.strategyPlan || result.strategy || tool.includes("strategy")) {
-    return renderStrategyPlan(result);
-  }
-  if (tool?.includes("mandate") || result.mandate || Array.isArray(result.mandates)) {
-    return renderMandates(result);
-  }
   const simple = renderSimplePrimaryResult(data, { result, intent, tool, execution });
   if (simple) return simple;
-  if (tool === "propose_perp_trade" || result.proposal) {
-    return renderPerpProposalResult({ result, intent, data });
+  if (tool === "answer_agent_question" || result.questionKind) {
+    return renderQuestionAnswer(result);
+  }
+  if (result.proposal) {
+    return renderProposalResult({ result, data });
   }
   if (tool?.includes("automation") || result.automation || Array.isArray(result.automations)) {
     return formatAutomationResult(result.automation || result.automations ? result : data);
@@ -1065,6 +855,10 @@ function formatResult(data) {
     summary = renderMarketFeedSnapshot(result);
   } else if (tool === "get_market_intelligence" || result.routeStats || result.regime) {
     summary = renderMarketIntelligence(result);
+  } else if (tool === "analyze_portfolio" || result.portfolio?.exposure) {
+    summary = renderPortfolioAnalysis(result);
+  } else if (tool?.includes("mandate") || result.mandate || Array.isArray(result.mandates)) {
+    summary = renderMandates(result);
   } else if (tool === "create_airdrop") {
     summary = renderAirdrop(result.airdrop, data);
   } else if (tool === "award_airdrop") {
@@ -1133,24 +927,48 @@ function formatResult(data) {
       ["Next", esc(data.nextAction || "—")],
     ]);
     summary += renderApprovalButton(action.approvalId, "Approve swap");
-  } else if (intent.action === "propose_perp_trade") {
-    const proposal = result.proposal || {};
-    summary = `Perp proposal prepared for <code>${esc(intent.side)} ${esc(intent.symbol)}</code>.`;
+  } else if (result.strategyPlan || result.strategy || tool.includes("strategy")) {
+    summary = renderStrategyPlan(result);
+  } else if (tool === "get_balance" || tool === "sync_circle_balances") {
+    const wallet = result.wallet || {};
+    const formatLine = (railId) => {
+      const tokens = Array.isArray(wallet.tokenBalances?.[railId]) ? wallet.tokenBalances[railId] : [{ symbol: "USDC", amount: wallet.balances?.[railId] || 0 }];
+      return tokens.filter((t) => Number(t.amount || 0) > 0).map((t) => `${formatTokenAmount(t.amount)} ${t.symbol}`).join(" + ") || "0 USDC";
+    };
+    summary = `${tool === "sync_circle_balances" ? "Balances synced." : "Wallet balance."}`;
     summary += renderResultCard([
-      ["Status", statusBadge(proposal.status || "requires_confirmation", "warn")],
-      ["Collateral", `${proposal.collateralUsd || intent.collateralUsd} USDC`],
-      ["Leverage", `${proposal.leverage || intent.leverage}x`],
-      ["Notional", `${proposal.notionalUsd || "n/a"} USDC`],
-      ["Next", esc(data.nextAction || "approval_required")],
+      ["Handle", esc(wallet.handle || "n/a")],
+      ["Total", `${esc(wallet.balance ?? "0")} USDC`],
+      ["Arc", esc(formatLine("arc-testnet"))],
+      ["Base", esc(formatLine("base-sepolia"))],
     ]);
-    summary += renderApprovalButton(proposal.approvalId, "Approve perp proposal");
-  } else if (tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") {
-    summary = formatExecutionResult(data);
   } else {
-    summary = renderHumanFallback(data, { result, tool, execution });
+    summary = esc(data.summary || result.summary || "I checked that. Tell me what you want to do next.");
   }
 
   return summary;
+}
+
+function renderQuestionAnswer(result = {}) {
+  let html = `<span class="tool-used">Used bunOS tools &gt;</span><br>${esc(result.summary || "I checked that for you.")}`;
+  if (result.routes?.recentlyAvailable?.length || result.routes?.degraded?.length) {
+    const rows = [];
+    if (result.routes.recentlyAvailable?.length) {
+      rows.push(["Available", esc(result.routes.recentlyAvailable.join(", "))]);
+    }
+    if (result.routes.degraded?.length) {
+      rows.push(["Not reliable now", esc(result.routes.degraded.join(", "))]);
+    }
+    html += renderResultCard(rows);
+  }
+  if (Array.isArray(result.automations) && result.automations.length) {
+    const rows = result.automations.slice(0, 6).map((automation) => [
+      `<code>${esc(automation.id)}</code>`,
+      `${statusBadge(automation.status || "unknown", automation.status === "active" ? "ok" : "warn")} ${esc(automation.name || automation.kind || "automation")}`,
+    ]);
+    html += renderResultCard(rows);
+  }
+  return html;
 }
 
 function renderAgentMemory(report = {}) {
@@ -1163,7 +981,7 @@ function renderAgentMemory(report = {}) {
   const title = report.summary || (lastTrade ? "Here is what I remember about the last trade." : "Here is the current wallet memory.");
   const rows = [];
   if (lastTrade) {
-    rows.push(["Last trade", esc(lastTrade.truth?.message || memoryTradeLine(lastTrade))]);
+    rows.push(["Last trade", esc(memoryTradeLine(lastTrade))]);
     rows.push(["Trade status", statusBadge(lastTrade.status || "unknown", memoryStatusType(lastTrade.status))]);
     rows.push(["Trade tx", renderTxLink(lastTrade.txHash, lastTrade.explorerUrl)]);
   }
@@ -1173,15 +991,12 @@ function renderAgentMemory(report = {}) {
     const a = activeAutomations[0];
     rows.push(["Top automation", esc(`${a.name || a.kind || a.id} - ${a.maxRuns ? `${a.runCount || 0}/${a.maxRuns}` : `${a.runCount || 0} runs`}`)]);
   }
-  if (failures[0]) rows.push(["Last issue", esc(failures[0].truth?.message || friendlyReason(failures[0].reason || failures[0].status || "unknown"))]);
+  if (failures[0]) rows.push(["Last issue", esc(friendlyReason(failures[0].reason || failures[0].status || "unknown"))]);
   rows.push(["Next", esc(report.nextAction || "ready")]);
   return `${esc(title)}${renderResultCard(rows)}`;
 }
 
 function memoryTradeLine(trade = {}) {
-  if (trade.type === "perp") {
-    return `${trade.side || "perp"} ${trade.symbol || ""}${trade.leverage ? ` ${trade.leverage}x` : ""}${trade.positionId ? `, position #${trade.positionId}` : ""}`;
-  }
   if (trade.type === "swap") {
     return `swap ${trade.amount || "some"} ${trade.fromToken || "USDC"} to ${trade.toToken || "token"}`;
   }
@@ -1198,18 +1013,17 @@ function memoryStatusType(status) {
   return "warn";
 }
 
-function renderPerpProposalResult({ result = {}, intent = {}, data = {} } = {}) {
+function renderProposalResult({ result = {}, data = {} } = {}) {
   const proposal = result.proposal || {};
-  let summary = `I prepared the perp trade. Review it before anything moves.`;
+  let summary = `I prepared the proposal. Review it before anything moves.`;
   summary += renderResultCard([
     ["Status", statusBadge(proposal.status || "requires_confirmation", "warn")],
-    ["Market", `${esc(proposal.side || intent.side || "long")} ${esc(proposal.symbol || intent.symbol || "BTC")}`],
-    ["Collateral", `${esc(proposal.collateralUsd || intent.collateralUsd || "n/a")} USDC`],
-    ["Leverage", `${esc(proposal.leverage || intent.leverage || "n/a")}x`],
-    ["Risk", esc(proposal.risk?.recommendation || result.mandateCheck?.reason || "checked")],
+    ["Target", esc(proposal.traderHandle || proposal.id || "proposal")],
+    ["Capital", proposal.capitalUsd ? `${esc(proposal.capitalUsd)} USDC` : "n/a"],
+    ["Risk", esc(result.mandateCheck?.reason || proposal.riskProfile || "checked")],
     ["Next", esc(data.nextAction || "approval_required")],
   ]);
-  summary += renderApprovalButton(result.approval?.id || proposal.approvalId, "Approve perp trade");
+  summary += renderApprovalButton(result.approval?.id || proposal.approvalId, "Approve proposal");
   return summary;
 }
 
@@ -1260,190 +1074,10 @@ function renderSimplePrimaryResult(data, { result, intent, tool, execution }) {
     })}`;
   }
 
-  if ((tool === "close_arc_perp_user_position" || tool === "close_all_arc_perp_user_positions") && execution) {
-    return `${esc(userFriendlyExecutionTitle(execution))}${renderSimpleReceiptRows({
-      txHash: execution.txHash || data.txHash,
-      explorerUrl: execution.explorerUrl || data.explorerUrl,
-      receiptUrl: execution.receiptUrl,
-      nextAction: friendlyReason(execution.reason || execution.nextAction || data.nextAction || "monitor_receipt")
-    })}`;
-  }
-
   return "";
 }
 
-function renderHumanFallback(data = {}, { result = {}, tool = "", execution = null } = {}) {
-  const ok = data.ok !== false && result.ok !== false && execution?.ok !== false;
-  const summary = data.narrative?.summary
-    || result.answer
-    || result.reason
-    || execution?.reason
-    || data.reason
-    || (ok ? "I finished checking that." : "I could not complete that.");
-  const next = result.nextAction || data.nextAction || execution?.nextAction;
-  const rows = [];
-  if (data.txHash || execution?.txHash) {
-    rows.push(["Transaction", renderTxLink(data.txHash || execution.txHash, data.explorerUrl || execution.explorerUrl)]);
-  }
-  if (data.receiptUrl || execution?.receiptUrl) {
-    rows.push(["Receipt", `<a href="${esc(data.receiptUrl || execution.receiptUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>`]);
-  }
-  if (next && next !== "none") {
-    rows.push(["Next", esc(humanNextAction(next))]);
-  }
-  if (!rows.length && /portfolio|balance|wallet/i.test(`${tool} ${summary}`)) {
-    rows.push(["Next", "Ask me to refresh balances, review risk, or plan a rebalance."]);
-  }
-  return `${esc(friendlyReason(summary))}${rows.length ? renderResultCard(rows) : ""}`;
-}
-
-function renderWalletBalance(result = {}, tool = "get_balance") {
-  const wallet = result.wallet || result.profile || {};
-  const railRows = [];
-  const tokenBalances = wallet.tokenBalances || {};
-  const railIds = Array.from(new Set([
-    ...Object.keys(wallet.balances || {}),
-    ...Object.keys(tokenBalances),
-    "arc-testnet",
-    "base-sepolia"
-  ]));
-
-  for (const railId of railIds) {
-    const tokens = Array.isArray(tokenBalances[railId])
-      ? tokenBalances[railId]
-      : [{ symbol: "USDC", amount: wallet.balances?.[railId] || 0 }];
-    const nonZero = tokens.filter((token) => Number(token.amount || 0) > 0);
-    railRows.push([
-      humanRail(railId),
-      nonZero.length
-        ? nonZero.map((token) => `${formatTokenAmount(token.amount)} ${esc(token.symbol || token.asset || "USDC")}`).join("<br>")
-        : `<span style="color:var(--ink-muted)">0</span>`
-    ]);
-  }
-
-  return `${tool === "sync_circle_balances" ? "I refreshed your wallet balances." : "Here is your wallet balance right now."}${renderResultCard([
-    ["Handle", esc(wallet.handle || "your wallet")],
-    ["Total", `${esc(wallet.balance ?? wallet.totalBalanceUsd ?? "0")} USDC`],
-    ...railRows
-  ])}`;
-}
-
-function renderRouteCapabilities(result = {}) {
-  const routes = Array.isArray(result.routes) ? result.routes : [];
-  const live = routes.filter((route) => String(route.status || "").toLowerCase() === "live");
-  const blocked = routes.filter((route) => String(route.status || "").toLowerCase() !== "live");
-  const title = live.length
-    ? "I checked the live route registry. These routes are available right now."
-    : "I checked the live route registry, and I do not see a route I should execute right now.";
-  const rows = [];
-  if (live.length) {
-    rows.push(["Live", live.slice(0, 8).map(renderRouteLine).join("<br>")]);
-  }
-  if (blocked.length) {
-    rows.push(["Not live", blocked.slice(0, 5).map((route) => `${renderRouteLine(route)} - ${esc(friendlyReason(route.reason || route.lastError || "not routable"))}`).join("<br>")]);
-  }
-  rows.push(["Next", live.length ? "Tell me the amount and route, like: swap 1 USDC to EURC on Arc." : "Ask me to check again later, or use a live pair when one appears."]);
-  return `${title}${renderResultCard(rows)}`;
-}
-
-function renderRouteLine(route = {}) {
-  const type = route.type === "bridge" ? "Bridge" : "Swap";
-  if (route.type === "bridge") {
-    return `${type}: ${esc(route.fromToken || "USDC")} ${esc(humanRail(route.fromRail))} -> ${esc(humanRail(route.toRail))}`;
-  }
-  return `${type}: ${esc(route.fromToken || "?")} -> ${esc(route.toToken || "?")} on ${esc(humanRail(route.fromRail || route.settlementRail))}`;
-}
-
-function renderAgentAnswer(result = {}, data = {}) {
-  const answer = cleanAgentAnswer(result.answer || data.summary || "I checked that for you.", result);
-  const rows = [];
-  if (Array.isArray(result.capabilities) && result.capabilities.length) {
-    rows.push(["I can help with", result.capabilities.slice(0, 6).map(cleanCapability).map(esc).join("<br>")]);
-  }
-  if (Array.isArray(result.routes) && result.routes.length) {
-    rows.push(["Available routes", result.routes.slice(0, 6).map((route) => {
-      if (route.type === "bridge") return `${esc(route.fromToken || "USDC")} ${esc(humanRail(route.fromRail))} -> ${esc(humanRail(route.toRail))}`;
-      return `${esc(route.fromToken)} -> ${esc(route.toToken)} on ${esc(humanRail(route.fromRail))}`;
-    }).join("<br>")]);
-  }
-  if (Array.isArray(result.automations) && result.automations.length) {
-    rows.push(["Automations", result.automations.slice(0, 6).map((automation) => {
-      const status = statusBadge(automation.status || "unknown", automation.status === "active" ? "ok" : "warn");
-      return `<code>${esc(automation.id || "automation")}</code> ${status} ${esc(automation.name || automation.prompt || "automation")}`;
-    }).join("<br>")]);
-  }
-  if (result.nextAction || data.nextAction) rows.push(["Next", esc(humanNextAction(result.nextAction || data.nextAction))]);
-  return `${esc(answer)}${rows.length ? renderResultCard(rows) : ""}`;
-}
-
-function cleanAgentAnswer(answer, result = {}) {
-  const raw = String(answer || "").trim();
-  if (/^action is answered/i.test(raw)) {
-    if (Array.isArray(result.routes) && result.routes.length) {
-      return "I checked the live routes for you.";
-    }
-    if (Array.isArray(result.automations) && result.automations.length) {
-      return "Here are the automations I found.";
-    }
-    if (Array.isArray(result.capabilities) && result.capabilities.length) {
-      return "Here is what I can do with your wallet.";
-    }
-    return "I checked that for you.";
-  }
-  if (/^the agent will read/i.test(raw)) {
-    return "I can check that live. Here is what is available right now.";
-  }
-  return raw;
-}
-
-function cleanCapability(capability) {
-  return String(capability || "")
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function shouldRenderTruth(data, tool) {
-  const status = String(data.status || data.result?.status || data.execution?.status || data.truth?.phase || "").toLowerCase().replaceAll(" ", "_");
-  if (status === "clarification_required" || status === "needs_more_detail") return false;
-  if (tool === "answer_agent_question" || data.result?.answer) return false;
-  if (tool === "get_balance" || tool === "sync_circle_balances" || tool === "get_agent_memory") return false;
-  if (tool === "list_route_capabilities" || tool === "list_arc_trading_primitives") return false;
-  if (tool === "analyze_portfolio" || tool === "get_market_intelligence" || tool === "get_market_feed_snapshot") return false;
-  if (tool?.includes("strategy") || tool?.includes("mandate")) return false;
-  if (data.result?.automation || Array.isArray(data.result?.automations)) return false;
-  const phase = String(data.truth?.phase || "").toLowerCase();
-  return Boolean(data.truth?.message && phase && phase !== "planned");
-}
-
-function renderTruth(truth = {}) {
-  const rows = [];
-  if (truth.phase) rows.push(["Status", statusBadge(truth.phase, truthStatusType(truth.phase))]);
-  if (truth.target) rows.push(["Target", esc(truth.target)]);
-  if (truth.txHash) rows.push(["Transaction", renderTxLink(truth.txHash, truth.explorerUrl)]);
-  if (truth.receiptUrl) rows.push(["Receipt", `<a href="${esc(truth.receiptUrl)}" target="_blank" rel="noreferrer" style="color:var(--accent)">open</a>`]);
-  if (truth.nextAction) rows.push(["Next", esc(humanNextAction(truth.nextAction))]);
-  return `${esc(friendlyTruthMessage(truth))}${rows.length ? renderResultCard(rows) : ""}`;
-}
-
-function friendlyTruthMessage(truth = {}) {
-  const message = String(truth.message || "");
-  if (/^Action is answered/i.test(message)) return "I answered that.";
-  return message || "I checked the action.";
-}
-
-function truthStatusType(phase) {
-  const value = String(phase || "").toLowerCase();
-  if (["settled", "completed", "submitted"].includes(value)) return "ok";
-  if (["failed", "expired"].includes(value)) return "fail";
-  return "warn";
-}
-
 function userFriendlyExecutionTitle(execution = {}) {
-  if (execution.tool === "close_arc_perp_user_position" || execution.tool === "close_all_arc_perp_user_positions") {
-    return execution.ok === false
-      ? "I could not close the perp position. Nothing changed."
-      : "I sent the close request.";
-  }
   if (execution.ok === false) return "I could not complete that action.";
   return "Done.";
 }
@@ -1458,12 +1092,10 @@ function formatApprovalResult(data) {
   const failed = ["failed", "rejected", "execution_failed", "user_wallet_signing_required", "execution_not_enabled"].includes(lowerStatus)
     || (!txHash && reason && /failed|not enough|missing|disabled|could not|not configured/i.test(reason));
   const title = txHash
-    ? (kind === "perp_trade" ? "Perp trade submitted on Arc." : "Approved. I submitted it on-chain.")
+    ? "Approved. I submitted it on-chain."
     : failed
       ? "Approved, but execution did not finish."
-      : kind === "perp_trade"
-        ? "Approved. I am checking the perp execution now."
-        : "Approved. I am checking the execution now.";
+      : "Approved. I am checking the execution now.";
   return `${esc(title)}
 ${renderResultCard([
   ["Status", statusBadge(status, txHash ? "ok" : failed ? "fail" : "warn")],
@@ -1510,7 +1142,7 @@ function formatHelp() {
 <div class="msg-result"><div class="label">Available commands</div><div style="display:grid;gap:8px;margin-top:6px">
 <div><code>send $10 to @alice</code> - Send USDC to another user</div>
 <div><code>bridge $1 USDC from arc to base</code> - Bridge between chains</div>
-<div><code>swap $1 USDC to EURC on arc</code> - Swap tokens</div>
+<div><code>swap $1 EURC to USDC on arc</code> - Swap tokens</div>
 <div><code>drop $1 to @alice @bob</code> - Send rewards to a recipient list</div>
 <div><code>drop $0.50 to first 10 replies</code> - Create a social reward flow that can be completed later</div>
 <div><code>list arc trading primitives</code> - Show live primitive readiness</div>
@@ -1519,8 +1151,6 @@ function formatHelp() {
 <div><code>list mandates</code> - Review rules the agent enforces before trades</div>
 <div><code>sync balances every 10 minutes</code> - Create automation</div>
 <div><code>list automations</code> - Show automations</div>
-<div><code>long BTC 2x with $1</code> - Prepare perp proposal</div>
-<div><code>close my last perp</code> - Close the latest open ArcPerps position when one exists</div>
 <div><code>keep 70% USDC, 20% EURC, 10% cirBTC</code> - Save a planning-only target allocation strategy</div>
 <div><code>rebalance my Arc wallet</code> - Build a rebalance plan without executing trades</div>
 </div></div>`;
@@ -1541,9 +1171,9 @@ function formatAutomationResult(data) {
   }
   if (Array.isArray(data.automations)) {
     if (!data.automations.length) return `No automations found.`;
-  const rows = data.automations.slice(0, 8).map((a) => [
+    const rows = data.automations.slice(0, 8).map((a) => [
       `<code>${esc(a.id)}</code>`,
-      `${esc(a.name || a.kind)} - ${statusBadge(a.status || "active", a.status === "completed" ? "ok" : "warn")} - every ${esc(formatAutomationInterval(a))}${a.maxRuns ? ` - ${esc(a.runCount || 0)}/${esc(a.maxRuns)} runs` : ""}${a.lastResult ? ` - last ${esc(automationLastLine(a.lastResult))}` : ""}`,
+      `${esc(a.name || a.kind)} - ${statusBadge(a.status || "active", a.status === "completed" ? "ok" : "warn")} - every ${esc(formatAutomationInterval(a))}${a.maxRuns ? ` - ${esc(a.runCount || 0)}/${esc(a.maxRuns)} runs` : ""}${a.lastResult ? ` - last ${esc(a.lastResult.status || (a.lastResult.ok ? "ok" : "failed"))}` : ""}`,
     ]);
     return `Automations loaded.${renderResultCard(rows)}`;
   }
@@ -1564,18 +1194,15 @@ function formatAutomationResult(data) {
 function formatAutomationLiveResult(automation = {}) {
   const last = automation.lastResult || {};
   const done = automation.status === "completed";
-  const title = automation.status === "paused"
-    ? "Automation is paused."
-    : done
-      ? "Automation finished."
-      : "Automation is running.";
+  const title = done
+    ? "Automation finished."
+    : `Automation is running.`;
   return `${title}${renderResultCard([
     ["ID", `<code>${esc(automation.id || "n/a")}</code>`],
     ["Status", statusBadge(automation.status || "active", done ? "ok" : "warn")],
     ["Runs", automation.maxRuns ? `${esc(automation.runCount || 0)}/${esc(automation.maxRuns)}` : `${esc(automation.runCount || 0)} runs`],
     ["Last run", automation.lastRunAt ? esc(new Date(automation.lastRunAt).toLocaleTimeString()) : "not yet"],
     ["Last result", esc(last.status || automation.lastError || "waiting")],
-    ["Last note", esc(last.truth?.message || last.reason || last.error || "")],
     ["Next run", esc(formatNextRun(automation.nextRunAt))],
   ])}`;
 }
@@ -1584,14 +1211,7 @@ function automationRunLine(run = {}) {
   const automation = run.automation || {};
   const result = run.result || {};
   if (run.error) return run.error;
-  return `${automation.name || automation.kind || "automation"} ran ${automation.runCount || 0}${automation.maxRuns ? `/${automation.maxRuns}` : ""}; ${automationLastLine(result.truth ? result : automation.lastResult || result)}`;
-}
-
-function automationLastLine(last = {}) {
-  if (last.truth?.message) return last.truth.message;
-  if (last.txHash) return "submitted on-chain";
-  if (last.reason || last.error) return friendlyReason(last.reason || last.error);
-  return last.status || (last.ok ? "ok" : "failed");
+  return `${automation.name || automation.kind || "automation"} ran ${automation.runCount || 0}${automation.maxRuns ? `/${automation.maxRuns}` : ""}; ${result.status || automation.lastResult?.status || "done"}`;
 }
 
 function formatNextRun(value) {
@@ -1620,22 +1240,49 @@ function isApprovalIntent(text) {
   return /^(approve|approved|confirm|confirmed|execute|yes|yeah|yep|go|go ahead|do it|run it)$/i.test(String(text || "").trim());
 }
 
-function conversationContext(messages = []) {
-  return messages
-    .filter((message) => message.role === "user" || message.role === "agent")
-    .slice(-8)
-    .map((message) => ({
-      role: message.role,
-      content: plainText(message.content || message.html || "")
-    }));
+function isAutomationUtilityIntent(text) {
+  const v = String(text || "").trim().toLowerCase();
+  return /^(list|show)\s+automations?$/.test(v)
+    || /^(automation|automations?)\s+(update|status)\??$/.test(v)
+    || /^automation update\??$/.test(v)
+    || /^run\s+(due\s+)?automations?$/.test(v)
+    || v === "automations";
 }
 
-function plainText(value) {
-  return String(value || "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]*>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 800);
+async function runAutomationCommand(text, handle) {
+  const lower = text.toLowerCase().trim();
+  if (/^(list|show)\s+automations?$/.test(lower) || lower === "automations" || /^(automation|automations?)\s+(update|status)\??$/.test(lower) || /^automation update\??$/.test(lower)) {
+    const latest = latestAutomationIdRef.current;
+    const data = await fetchJson(`/api/automations?handle=${encodeURIComponent(handle)}&limit=20`);
+    if (latest && !/^(list|show)\s+automations?$/.test(lower)) {
+      const automation = (data.automations || []).find((item) => item.id === latest);
+      if (automation) return { automation };
+    }
+    return data;
+  }
+  if (/^run\s+(due\s+)?automations?$/.test(lower)) {
+    return requestJson("/api/automations/run-due", { method: "POST", body: { limit: 20 } });
+  }
+  const match = text.match(/\bevery\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/i);
+  const maxRunsMatch = text.match(/\b(?:for|until|stop\s+after)\s+(\d{1,4})\s*(?:times?|runs?|executions?)\b/i);
+  let intervalMs;
+  if (match) {
+    const amount = Number(match[1]);
+    const unit = match[2].toLowerCase();
+    if (unit === "d" || unit.startsWith("day")) intervalMs = amount * 24 * 60 * 60_000;
+    else if (unit === "h" || unit.startsWith("hour") || unit.startsWith("hr")) intervalMs = amount * 60 * 60_000;
+    else if (unit === "m" || unit.startsWith("minute") || unit.startsWith("min")) intervalMs = amount * 60_000;
+    else intervalMs = amount * 1000;
+  }
+  return requestJson("/api/automations", {
+    method: "POST",
+    body: {
+      handle,
+      text,
+      intervalMs,
+      maxRuns: maxRunsMatch ? Number(maxRunsMatch[1]) : undefined,
+      defaultSettlementRail: localStorage.getItem("bunos:rail") || "arc-testnet"
+    },
+  });
 }
 

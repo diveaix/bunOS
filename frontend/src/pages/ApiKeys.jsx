@@ -10,7 +10,6 @@ export default function ApiKeys() {
   const [apiKeys, setApiKeys] = useState([]);
   const [lastCreatedKey, setLastCreatedKey] = useState(null);
   const signedIn = Boolean(session?.handle);
-  const visibleApiKeys = apiKeys.filter((key) => key && key.id);
 
   const loadKeys = useCallback(async () => {
     if (!signedIn) { setApiKeys([]); return; }
@@ -130,17 +129,17 @@ export default function ApiKeys() {
               <strong>Sign in first</strong>
               <span>Connect X to create an MCP API key for your wallet.</span>
             </div>
-          ) : visibleApiKeys.length === 0 ? (
+          ) : apiKeys.length === 0 ? (
             <div className="empty-state">
               <strong>No keys yet</strong>
               <span>Create a key to connect this wallet to Claude, Cursor, or any MCP client.</span>
             </div>
           ) : (
-            visibleApiKeys.map((key) => (
+            apiKeys.map((key) => (
               <div className="api-key-item" key={key.id}>
                 <div>
-                  <strong>{key.name || "MCP key"}</strong>
-                  <span>{key.prefix || "bunos_mcp"}...{key.last4 || "key"} · created {formatDate(key.createdAt)}</span>
+                  <strong>{key.name}</strong>
+                  <span>{key.prefix}...{key.last4} · created {formatDate(key.createdAt)}</span>
                   <small>{key.lastUsedAt ? `Last used ${formatDate(key.lastUsedAt)}` : "Not used yet"}</small>
                 </div>
                 <button type="button" className="secondary-action compact-button" onClick={() => revokeKey(key.id)}>

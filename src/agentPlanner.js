@@ -1,16 +1,6 @@
 import { parseSocialCommand } from "./intent.js";
 import { createPaymentIntent, createSocialBounty } from "./orchestrator.js";
 import { confirmAction } from "./agentActions.js";
-import {
-  closeAllArcPerpPositionsWithUserWallet,
-  closeArcPerpPositionWithUserWallet,
-  getArcPerpsPosition,
-  getArcPerpsReadiness,
-  getArcPerpsStatus,
-  listArcPerpsPositions,
-  quoteArcPerpPosition,
-  readArcPerpsOraclePrice
-} from "./arcPerpsEngine.js";
 import { listApprovals } from "./approvals.js";
 import {
   estimateAppKitBridge,
@@ -27,20 +17,12 @@ import {
   confirmDefiAction,
   getDefiActionReceipt,
   listDefiActions,
-  listDefiRouteCapabilities,
   listDefiTools,
-  listPerpMarkets,
   quoteDefiRoute
 } from "./defiOrchestrator.js";
 import { resolveXHandle } from "./identity.js";
 import { enqueueJob, runJob } from "./jobs.js";
 import { getPaymentReceipt, resolveIdentity } from "./queries.js";
-import {
-  assessLiquidationRisk,
-  listPerpIntelligence,
-  listPerpProposals,
-  proposePerpTrade
-} from "./perpsAgent.js";
 import { listCopyTradeProposals, proposeCopyTrade } from "./socialTradingAgent.js";
 import {
   fundWallet,
@@ -83,10 +65,10 @@ import {
 } from "./strategyAgent.js";
 import { getMarketIntelligence } from "./marketIntelligence.js";
 import { executionMonitorFromAgentResult } from "./executionMonitor.js";
-import { observeAgentExecution } from "./agentHarness.js";
 import { analyzePortfolio } from "./portfolioBrain.js";
 import { refreshMarketFeedSnapshot } from "./marketFeeds.js";
 import { ledger } from "./fixtures.js";
+import { config } from "./config.js";
 import {
   createMandate,
   deleteMandate,
@@ -94,40 +76,46 @@ import {
   parseMandateText,
   updateMandate
 } from "./mandates.js";
-import { config } from "./config.js";
 import {
-  buildAgentContext,
-  resolveContextualIntent,
-  summarizeAgentContextForModel
-} from "./agentContext.js";
-import {
-  cancelAgentWorkingTask,
-  publicAgentWorkingMemory
-} from "./agentWorkingMemory.js";
-import {
-  assertAgentPlanContract,
-  validateAgentPlanContract
-} from "./agentPlanGuard.js";
-import {
-  cancelAgentWorkflow,
-  createAndRunAgentWorkflow,
-  resumeAgentWorkflowsForExecutionTarget,
-  getAgentWorkflow,
-  listAgentWorkflows,
-  runDueAgentWorkflows,
-  runAgentWorkflow
-} from "./agentWorkflow.js";
+  accrueLaunchFees,
+  claimLaunchFees,
+  createTokenLaunch,
+  deployLaunchToken,
+  getAgentTreasury,
+  getLaunchFees,
+  getLaunchpadArchitecture,
+  getLaunchReceipt,
+  getTokenLaunch,
+  listLaunchFeed,
+  listTokenLaunches,
+  monitorLaunch,
+  openLaunchTrading,
+  planTokenLaunch,
+  seedLaunchLiquidity,
+  spendAgentCompute,
+  updateLaunchAgentPolicy
+} from "./launchpadArchitecture.js";
 
 const ALLOWED_TOOLS = new Set([
   "get_balance",
-  "answer_agent_question",
-  "cancel_agent_task",
-  "create_agent_workflow",
-  "resume_agent_workflow",
-  "get_agent_workflow",
-  "list_agent_workflows",
-  "cancel_agent_workflow",
   "get_agent_memory",
+  "get_launchpad_architecture",
+  "plan_token_launch",
+  "create_token_launch",
+  "deploy_launch_token",
+  "seed_launch_liquidity",
+  "open_launch_trading",
+  "update_launch_agent_policy",
+  "get_token_launch",
+  "list_token_launches",
+  "get_launch_receipt",
+  "monitor_launch",
+  "get_launch_fees",
+  "accrue_launch_fees",
+  "claim_launch_fees",
+  "get_agent_treasury",
+  "spend_agent_compute",
+  "list_launch_feed",
   "get_wallet_capabilities",
   "sync_circle_balances",
   "request_testnet_usdc",
@@ -143,19 +131,7 @@ const ALLOWED_TOOLS = new Set([
   "get_receipt",
   "propose_copy_trade",
   "list_copy_trade_proposals",
-  "list_perp_intelligence",
-  "assess_liquidation_risk",
   "quote_defi_route",
-  "propose_perp_trade",
-  "list_perp_proposals",
-  "arc_perps_readiness",
-  "arc_perps_status",
-  "quote_arc_perp_position",
-  "read_arc_perps_oracle_price",
-  "get_arc_perps_position",
-  "list_arc_perps_positions",
-  "close_all_arc_perp_user_positions",
-  "close_arc_perp_user_position",
   "appkit_readiness",
   "list_appkit_capabilities",
   "appkit_estimate_send",
@@ -167,12 +143,10 @@ const ALLOWED_TOOLS = new Set([
   "appkit_unified_balance",
   "resolve_x_handle",
   "list_defi_tools",
-  "list_route_capabilities",
   "list_defi_actions",
   "confirm_defi_action",
   "reconcile_defi_action",
   "get_defi_action_receipt",
-  "list_perp_markets",
   "get_market_intelligence",
   "get_market_feed_snapshot",
   "analyze_portfolio",
@@ -192,25 +166,22 @@ const ALLOWED_TOOLS = new Set([
   "pause_automations",
   "pause_automation",
   "resume_automation",
-  "delete_automation"
+  "delete_automation",
+  "answer_agent_question"
 ]);
 
 const TOKEN_PATTERN = "(?:0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{1,20})";
-const AMOUNT_PATTERN = "(?:\\d+(?:\\.\\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|a|an)";
-const TOKEN_BRIDGE_PATTERN = new RegExp(`(?:bridge|move)\\s+\\$?(${AMOUNT_PATTERN})\\s+(${TOKEN_PATTERN})\\s+from\\s+(arc|base|arc-testnet|base-sepolia)\\s+(?:to|onto)\\s+(arc|base|arc-testnet|base-sepolia)`, "i");
-const BRIDGE_PATTERN = new RegExp(`(?:bridge|move|send)\\s+\\$?(${AMOUNT_PATTERN})\\s*(?:usdc)?\\s+(?:from\\s+)?(arc|base|arc-testnet|base-sepolia)?\\s*(?:to|onto)\\s+(arc|base|arc-testnet|base-sepolia)`, "i");
-const SOURCE_SWAP_PATTERN = new RegExp(`(?:swap|convert)\\s+\\$?(${AMOUNT_PATTERN})\\s+(?:of\\s+)?(${TOKEN_PATTERN})\\s+(?:to|into|for)\\s+(${TOKEN_PATTERN})(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
-const SWAP_PATTERN = new RegExp(`(?:swap|convert)\\s+\\$?(${AMOUNT_PATTERN})\\s*(?:usdc)?\\s+(?:to|into|for)\\s+(${TOKEN_PATTERN})(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
-const BUY_PATTERN = new RegExp(`buy\\s+\\$?(${AMOUNT_PATTERN})\\s*(?:of\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:with|using)\\s+usdc)?(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
-const NATURAL_SWAP_PATTERN = new RegExp(`(?:turn|change|trade|convert|swap)\\s+(?:my\\s+)?\\$?(${AMOUNT_PATTERN})\\s+(?:of\\s+)?(${TOKEN_PATTERN})\\s+(?:to|into|for)\\s+(?:some\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:on|from|in|over)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
-const TARGET_SWAP_PATTERN = new RegExp(`(?:(?:buy|get|grab)(?:\\s+me)?|give\\s+me|i\\s+want|i\\s+need|need|want)\\s+(?:some\\s+)?(${TOKEN_PATTERN})\\s+(?:with|using|for)\\s+\\$?(${AMOUNT_PATTERN})\\s+(?:of\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:on|from|in|over)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
-const NATURAL_BRIDGE_PATTERN = new RegExp(`(?:bridge|move|transfer|send|put)\\s+\\$?(${AMOUNT_PATTERN})\\s*(?:of\\s+)?(${TOKEN_PATTERN})?\\s*(?:over\\s+)?(?:to|onto|on)\\s+(arc|base|arc-testnet|base-sepolia)(?:\\s+from\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const TOKEN_BRIDGE_PATTERN = new RegExp(`(?:bridge|move)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s+(${TOKEN_PATTERN})\\s+from\\s+(arc|base|arc-testnet|base-sepolia)\\s+(?:to|onto)\\s+(arc|base|arc-testnet|base-sepolia)`, "i");
+const BRIDGE_PATTERN = /(?:bridge|move|send)\s+\$?(\d+(?:\.\d+)?)\s*(?:usdc)?\s+(?:from\s+)?(arc|base|arc-testnet|base-sepolia)?\s*(?:to|onto)\s+(arc|base|arc-testnet|base-sepolia)/i;
+const SOURCE_SWAP_PATTERN = new RegExp(`(?:swap|convert)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s+(?:of\\s+)?(${TOKEN_PATTERN})\\s+(?:to|into|for)\\s+(${TOKEN_PATTERN})(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const SWAP_PATTERN = new RegExp(`(?:swap|convert)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s*(?:usdc)?\\s+(?:to|into|for)\\s+(${TOKEN_PATTERN})(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const BUY_PATTERN = new RegExp(`buy\\s+\\$?(\\d+(?:\\.\\d+)?)\\s*(?:of\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:with|using)\\s+usdc)?(?:\\s+(?:on|from|in)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const NATURAL_SWAP_PATTERN = new RegExp(`(?:turn|change|trade|convert|swap)\\s+(?:my\\s+)?\\$?(\\d+(?:\\.\\d+)?)\\s+(?:of\\s+)?(${TOKEN_PATTERN})\\s+(?:to|into|for)\\s+(?:some\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:on|from|in|over)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const TARGET_SWAP_PATTERN = new RegExp(`(?:(?:buy|get|grab)(?:\\s+me)?|give\\s+me|i\\s+want|i\\s+need|need|want)\\s+(?:some\\s+)?(${TOKEN_PATTERN})\\s+(?:with|using|for)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s+(?:of\\s+)?(${TOKEN_PATTERN})(?:\\s+(?:on|from|in|over)\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
+const NATURAL_BRIDGE_PATTERN = new RegExp(`(?:bridge|move|transfer|send|put)\\s+\\$?(\\d+(?:\\.\\d+)?)\\s*(?:of\\s+)?(${TOKEN_PATTERN})?\\s*(?:over\\s+)?(?:to|onto|on)\\s+(arc|base|arc-testnet|base-sepolia)(?:\\s+from\\s+(arc|base|arc-testnet|base-sepolia))?`, "i");
 const COPY_TRADE_PATTERN = /(?:copy\s*trade|copy|follow)\s+(@[a-zA-Z0-9_]{1,15})\s+(?:with|using|for)\s+\$?(\d+(?:\.\d+)?)/i;
 const AIRDROP_FIXED_PATTERN = /(?:airdrop|drop)\s+\$?(\d+(?:\.\d+)?)\s*(?:usdc)?\s+(?:each\s+)?(?:to\s+)?((?:@[a-zA-Z0-9_]{1,15}(?:[,\s]+|$)){1,})/i;
 const AIRDROP_SOCIAL_PATTERN = /(?:airdrop|drop)\s+\$?(\d+(?:\.\d+)?)\s*(?:usdc)?\s+(?:each\s+)?(?:to|for)\s+(?:the\s+)?first\s+(\d{1,5})\s+(?:comments?|replies?|commenters?|repliers?)(?:\s+(?:on|for)\s+(?:post|tweet)\s+([a-zA-Z0-9_:-]+))?/i;
-const LIQUIDATION_RISK_PATTERN = /(?:assess|check|calculate)?\s*(?:liquidation|liq)\s*(?:risk)?\s+(?:for\s+)?([a-zA-Z]{2,12})\s+(long|short)\s+\$?(\d+(?:\.\d+)?)\s*(?:at|with)?\s*(\d+(?:\.\d+)?)x/i;
-const ARC_PERP_QUOTE_PATTERN = /(?:quote\s+)?(?:arc\s+)?perp\s+([a-zA-Z]{2,12})\s+(long|short)\s+\$?(\d+(?:\.\d+)?)\s*(?:at|with)?\s*(\d+(?:\.\d+)?)x/i;
-const CLOSE_PERP_PATTERN = /(?:close|exit|flatten)\s+(?:(?:my|the)\s+)?(?:(last|latest|current)\s+)?(?:(?:arc\s+)?perp|position|trade)?(?:\s+#?(\d+))?(?:\s+([a-zA-Z]{2,12}))?(?:\s+(long|short))?/i;
 const INVALID_SWAP_TOKENS = new Set(["ARC", "BASE", "FROM", "IN", "ON", "TO"]);
 
 export function listAgentTools() {
@@ -226,8 +197,7 @@ export function planAgentAction({
   handle = "@sara",
   text,
   defaultSettlementRail = "arc-testnet",
-  source = "agent",
-  conversation = []
+  source = "agent"
 } = {}) {
   if (!text || typeof text !== "string") {
     throw new Error("Agent text is required");
@@ -235,7 +205,7 @@ export function planAgentAction({
 
   const user = resolveXHandle(handle);
   const capabilities = getWalletCapabilities(user.handle);
-  const parsed = parseWithFallbacks(text, defaultSettlementRail, conversation);
+  const parsed = parseWithFallbacks(text, defaultSettlementRail);
   const plan = planFromIntent({
     intent: parsed.intent,
     handle: user.handle,
@@ -245,7 +215,7 @@ export function planAgentAction({
 
   assertAllowedTool(plan.tool);
 
-  return finalizePlanned({
+  return {
     ok: true,
     source,
     handle: user.handle,
@@ -262,43 +232,7 @@ export function planAgentAction({
     },
     walletCapabilities: capabilities.capabilities,
     nextAction: plan.canExecuteNow ? "call_tool_after_policy_check" : "show_plan_or_request_user_confirmation"
-  });
-}
-
-export function planAgentIntent({
-  handle = "@sara",
-  intent,
-  defaultSettlementRail = "arc-testnet",
-  source = "agent_workflow",
-  text = null
-} = {}) {
-  const user = resolveXHandle(handle);
-  const capabilities = getWalletCapabilities(user.handle);
-  const plan = planFromIntent({
-    intent,
-    handle: user.handle,
-    defaultSettlementRail,
-    source
-  });
-  assertAllowedTool(plan.tool);
-  return finalizePlanned({
-    ok: true,
-    source,
-    handle: user.handle,
-    text: text || describeWorkflowIntent(intent),
-    parser: "workflow_step",
-    intent,
-    plan,
-    signer: plan.signer,
-    policy: {
-      backendSignerAllowed: false,
-      requiresConfirmation: plan.requiresConfirmation,
-      canExecuteNow: plan.canExecuteNow,
-      reason: plan.reason
-    },
-    walletCapabilities: capabilities.capabilities,
-    nextAction: plan.canExecuteNow ? "call_tool_after_policy_check" : "show_plan_or_request_user_confirmation"
-  });
+  };
 }
 
 export async function planAgentActionWithModel({
@@ -306,92 +240,26 @@ export async function planAgentActionWithModel({
   text,
   defaultSettlementRail = "arc-testnet",
   source = "agent",
-  useModel,
-  conversation = []
+  useModel
 } = {}) {
-  const deterministic = planAgentAction({ handle, text, defaultSettlementRail, source, conversation });
-  const context = buildAgentContext({
-    handle: deterministic.handle || handle,
-    text,
-    conversation,
-    deterministic,
-    defaultSettlementRail
-  });
-  const modelContext = summarizeAgentContextForModel(context);
-  const contextMeta = modelContext.contextMeta;
-  const contextualIntent = resolveContextualIntent({ text, context });
-  const contextualOverride = contextualIntent?.action === "tool_call"
-    && contextualIntent.tool === "cancel_agent_task";
-  const pendingAction = context.workingMemory?.pendingClarification?.draft?.action || null;
-  const contextualAction = contextualIntent?.pending?.draft?.action || contextualIntent?.action || null;
-  const deterministicAction = deterministic.intent?.pending?.draft?.action || deterministic.intent?.action || null;
-  const contextualContinuation = Boolean(
-    pendingAction
-    && contextualAction === pendingAction
-    && (!deterministic.plan.tool || deterministicAction === pendingAction)
-  );
-  if ((!deterministic.plan.tool || contextualOverride || contextualContinuation) && contextualIntent) {
-    try {
-      const user = resolveXHandle(handle);
-      const capabilities = getWalletCapabilities(user.handle);
-      const plan = planFromIntent({
-        intent: contextualIntent,
-        handle: user.handle,
-        defaultSettlementRail,
-        source
-      });
-      assertAllowedTool(plan.tool);
-
-      return finalizePlanned({
-        ok: true,
-        source,
-        handle: user.handle,
-        text,
-        parser: "agent_context",
-        intent: contextualIntent,
-        plan,
-        signer: plan.signer,
-        policy: {
-          backendSignerAllowed: false,
-          requiresConfirmation: plan.requiresConfirmation,
-          canExecuteNow: plan.canExecuteNow,
-          reason: plan.reason
-        },
-        walletCapabilities: capabilities.capabilities,
-        contextMeta,
-        model: {
-          ...getAgentModelReadiness(),
-          role: "context_fast_path",
-          error: null
-        },
-        nextAction: plan.canExecuteNow ? "call_tool_after_policy_check" : "show_plan_or_request_user_confirmation"
-      });
-    } catch {
-      // Fall through to the model or deterministic clarification.
-    }
-  }
+  const deterministic = planAgentAction({ handle, text, defaultSettlementRail, source });
   const modelAllowed = useModel !== false && source !== "automation";
-  const shouldPreferModel = modelAllowed && shouldUseModelBeforeDeterministic(deterministic);
-  if (!shouldPreferModel && (!modelAllowed || deterministic.plan.tool)) {
-    return finalizePlanned({
+  const modelFirst = modelAllowed && config.ai.routerMode !== "deterministic_first";
+  if (!modelAllowed || (!modelFirst && deterministic.plan.tool)) {
+    return {
       ...upgradeTerminalPlan(deterministic),
-      contextMeta,
       model: {
         ...getAgentModelReadiness(),
         role: modelAllowed ? "deterministic_fast_path" : "disabled_for_source",
         error: null
       }
-    });
+    };
   }
 
   let modelIntent = null;
   let modelError = null;
   try {
-    modelIntent = await planIntentWithModel({
-      text,
-      defaultSettlementRail,
-      context: modelContext
-    });
+    modelIntent = await planIntentWithModel({ text, defaultSettlementRail });
   } catch (error) {
     modelError = error.message;
   }
@@ -408,7 +276,7 @@ export async function planAgentActionWithModel({
       });
       assertAllowedTool(plan.tool);
 
-      return finalizePlanned({
+      return {
         ok: true,
         source,
         handle: user.handle,
@@ -424,27 +292,25 @@ export async function planAgentActionWithModel({
           reason: plan.reason
         },
         walletCapabilities: capabilities.capabilities,
-        contextMeta,
         model: {
           ...getAgentModelReadiness(),
           role: "primary_intent_planner"
         },
         nextAction: plan.canExecuteNow ? "call_tool_after_policy_check" : "show_plan_or_request_user_confirmation"
-      });
+      };
     } catch (error) {
       modelError = error.message;
     }
   }
 
-  return finalizePlanned({
+  return {
     ...upgradeTerminalPlan(deterministic),
-    contextMeta,
     model: {
       ...getAgentModelReadiness(),
       role: "fallback_or_unavailable",
       error: modelError
     }
-  });
+  };
 }
 
 export async function runAgentAction({
@@ -455,8 +321,7 @@ export async function runAgentAction({
   postId,
   idempotencyKey,
   fast = false,
-  useModel,
-  conversation = []
+  useModel
 } = {}) {
   const startedAt = Date.now();
   const planned = await planAgentActionWithModel({
@@ -464,15 +329,13 @@ export async function runAgentAction({
     text,
     defaultSettlementRail,
     source,
-    useModel,
-    conversation
+    useModel
   });
   const plannedAt = Date.now();
   const agentState = buildAgentStateSnapshot({
     handle: planned.handle,
     planned
   });
-  const contradictionBlock = contradictionBlockForPlan(planned);
 
   if (!planned.plan.tool) {
     const execution = buildAgentExecutionReport({
@@ -538,59 +401,6 @@ export async function runAgentAction({
     };
   }
 
-  if (contradictionBlock) {
-    const result = {
-      ok: false,
-      status: "context_conflict",
-      reason: contradictionBlock.reason,
-      nextAction: "refresh_or_clarify_before_execution"
-    };
-    const execution = buildAgentExecutionReport({ planned, result });
-    const decision = buildAgentDecision({ planned, result, execution, state: agentState });
-    const narrative = buildAgentNarrative({
-      planned,
-      result,
-      execution,
-      decision,
-      state: agentState
-    });
-    narrative.summary = contradictionBlock.summary;
-    narrative.nextAction = "refresh_or_clarify_before_execution";
-    rememberAgentExecution({ handle: planned.handle, planned, result, execution, decision });
-    recordAgentDecisionEvent({
-      handle: planned.handle,
-      source,
-      planned,
-      result,
-      execution,
-      decision,
-      narrative,
-      timing: {
-        planningMs: plannedAt - startedAt,
-        executionMs: 0,
-        totalMs: Date.now() - startedAt,
-        fast
-      }
-    });
-    return {
-      ok: false,
-      planned,
-      agentState,
-      decision,
-      narrative,
-      status: result.status,
-      execution,
-      reason: result.reason,
-      summary: narrative.summary,
-      whatChecked: narrative.whatChecked,
-      whatHappened: narrative.whatHappened,
-      why: narrative.why,
-      warnings: narrative.warnings,
-      receipt: narrative.receipt,
-      nextAction: result.nextAction
-    };
-  }
-
   let result;
   try {
     result = await executeAgentPlan({
@@ -610,13 +420,7 @@ export async function runAgentAction({
     };
   }
   const finishedAt = Date.now();
-  const initialExecution = buildAgentExecutionReport({ planned, result });
-  const observed = await observeAgentExecution({
-    planned,
-    result,
-    execution: initialExecution
-  });
-  const execution = observed.execution;
+  const execution = buildAgentExecutionReport({ planned, result });
   const decision = buildAgentDecision({
     planned,
     result,
@@ -653,7 +457,7 @@ export async function runAgentAction({
       narrative.model = modelReply.model;
     }
   }
-  const executionMonitor = observed.monitor || executionMonitorFromAgentResult({ result, execution });
+  const executionMonitor = executionMonitorFromAgentResult({ result, execution });
   const timing = {
     planningMs: plannedAt - startedAt,
     executionMs: finishedAt - plannedAt,
@@ -683,7 +487,6 @@ export async function runAgentAction({
     result,
     execution,
     executionMonitor,
-    harness: observed.trace,
     signer: result.payment?.signer || result.action?.signer || result.proposal?.signer || planned.signer,
     txHash: execution.txHash,
     explorerUrl: execution.explorerUrl,
@@ -704,7 +507,6 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
   if (!plan?.tool) {
     throw new Error("Agent plan is missing a tool");
   }
-  assertAgentPlanContract({ planned });
   assertAllowedTool(plan.tool);
   const args = plan.arguments || {};
 
@@ -753,6 +555,116 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
     return listArcTradingPrimitives();
   }
 
+  if (plan.tool === "get_launchpad_architecture") {
+    return getLaunchpadArchitecture();
+  }
+
+  if (plan.tool === "plan_token_launch") {
+    return planTokenLaunch({
+      ...args,
+      creatorHandle: args.creatorHandle || args.handle || handle,
+      handle: args.handle || handle
+    });
+  }
+
+  if (plan.tool === "create_token_launch") {
+    return createTokenLaunch({
+      ...args,
+      creatorHandle: args.creatorHandle || args.handle || handle,
+      handle: args.handle || handle,
+      idempotencyKey
+    });
+  }
+
+  if (plan.tool === "deploy_launch_token") {
+    return deployLaunchToken({
+      ...args,
+      handle: args.handle || handle,
+      idempotencyKey
+    });
+  }
+
+  if (plan.tool === "seed_launch_liquidity") {
+    return seedLaunchLiquidity({
+      ...args,
+      handle: args.handle || handle,
+      idempotencyKey
+    });
+  }
+
+  if (plan.tool === "open_launch_trading") {
+    return openLaunchTrading({
+      ...args,
+      handle: args.handle || handle,
+      idempotencyKey
+    });
+  }
+
+  if (plan.tool === "update_launch_agent_policy") {
+    return updateLaunchAgentPolicy({
+      ...args,
+      handle: args.handle || handle
+    });
+  }
+
+  if (plan.tool === "get_token_launch") {
+    return getTokenLaunch(args);
+  }
+
+  if (plan.tool === "list_token_launches") {
+    return listTokenLaunches({
+      ...args,
+      creatorHandle: args.creatorHandle || args.handle || handle
+    });
+  }
+
+  if (plan.tool === "get_launch_receipt") {
+    return getLaunchReceipt(args);
+  }
+
+  if (plan.tool === "monitor_launch") {
+    return monitorLaunch(args);
+  }
+
+  if (plan.tool === "get_launch_fees") {
+    return getLaunchFees(args);
+  }
+
+  if (plan.tool === "accrue_launch_fees") {
+    return accrueLaunchFees({
+      ...args,
+      handle: args.handle || handle,
+      idempotencyKey
+    });
+  }
+
+  if (plan.tool === "claim_launch_fees") {
+    return claimLaunchFees({
+      ...args,
+      handle: args.handle || handle,
+      idempotencyKey
+    });
+  }
+
+  if (plan.tool === "get_agent_treasury") {
+    return getAgentTreasury({
+      ...args,
+      handle: args.handle || handle
+    });
+  }
+
+  if (plan.tool === "spend_agent_compute") {
+    return spendAgentCompute({
+      ...args,
+      handle: args.handle || handle,
+      idempotencyKey
+    });
+  }
+
+  if (plan.tool === "list_launch_feed") {
+    return listLaunchFeed(args);
+  }
+
   if (plan.tool === "quote_defi_route") {
     return await quoteDefiRoute({
       ...args,
@@ -763,102 +675,12 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
     });
   }
 
-  if (plan.tool === "propose_perp_trade") {
-    return proposePerpTrade({
-      ...args,
-      handle,
-      postId,
-      idempotencyKey,
-      source
-    });
-  }
-
   if (plan.tool === "get_wallet_capabilities") {
     return getWalletCapabilities(args.handle || handle);
   }
 
   if (plan.tool === "get_agent_memory") {
     return buildAgentMemoryReport({ ...args, handle: args.handle || handle });
-  }
-
-  if (plan.tool === "answer_agent_question") {
-    return answerAgentQuestion({
-      ...args,
-      handle: args.handle || handle,
-      defaultSettlementRail: args.defaultSettlementRail || "arc-testnet"
-    });
-  }
-
-  if (plan.tool === "cancel_agent_task") {
-    return cancelAgentWorkingTask(handle);
-  }
-
-  if (plan.tool === "create_agent_workflow") {
-    return await createAndRunAgentWorkflow({
-      handle: args.handle || handle,
-      goal: args.goal,
-      steps: args.steps,
-      source,
-      planStep: async (intent) => planAgentIntent({
-        handle: args.handle || handle,
-        intent,
-        defaultSettlementRail: args.defaultSettlementRail || "arc-testnet",
-        source: "agent_workflow"
-      }),
-      executeStep: async (stepPlan) => await executeAgentPlan({
-        planned: stepPlan,
-        handle: args.handle || handle,
-        source: "agent_workflow",
-        idempotencyKey: `${idempotencyKey || "workflow"}:${stepPlan.plan.tool}:${Date.now()}`,
-        fast
-      })
-    });
-  }
-
-  if (plan.tool === "resume_agent_workflow") {
-    return await runAgentWorkflow({
-      workflowId: args.workflowId,
-      handle: args.handle || handle,
-      planStep: async (intent) => planAgentIntent({
-        handle: args.handle || handle,
-        intent,
-        defaultSettlementRail: args.defaultSettlementRail || "arc-testnet",
-        source: "agent_workflow"
-      }),
-      executeStep: async (stepPlan) => await executeAgentPlan({
-        planned: stepPlan,
-        handle: args.handle || handle,
-        source: "agent_workflow",
-        idempotencyKey: `${idempotencyKey || args.workflowId}:${stepPlan.plan.tool}:${Date.now()}`,
-        fast
-      })
-    });
-  }
-
-  if (plan.tool === "get_agent_workflow") {
-    return {
-      ok: true,
-      status: "answered",
-      workflow: getAgentWorkflow({
-        workflowId: args.workflowId,
-        handle: args.handle || handle
-      })
-    };
-  }
-
-  if (plan.tool === "list_agent_workflows") {
-    return listAgentWorkflows({
-      handle: args.handle || handle,
-      status: args.status,
-      limit: args.limit
-    });
-  }
-
-  if (plan.tool === "cancel_agent_workflow") {
-    return cancelAgentWorkflow({
-      workflowId: args.workflowId,
-      handle: args.handle || handle
-    });
   }
 
   if (plan.tool === "get_balance") {
@@ -900,83 +722,6 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
 
   if (plan.tool === "list_copy_trade_proposals") {
     return listCopyTradeProposals(args);
-  }
-
-  if (plan.tool === "list_perp_intelligence") {
-    return await listPerpIntelligence(args);
-  }
-
-  if (plan.tool === "assess_liquidation_risk") {
-    return assessLiquidationRisk(args);
-  }
-
-  if (plan.tool === "list_perp_proposals") {
-    return listPerpProposals(args);
-  }
-
-  if (plan.tool === "arc_perps_readiness") {
-    const readiness = getArcPerpsReadiness();
-    return {
-      ok: true,
-      status: readiness.ok ? "ready" : "not_configured",
-      readiness,
-      reason: readiness.ok ? "ArcPerps contracts are configured." : `ArcPerps contracts are not configured: ${readiness.missing.join(", ")}`,
-      nextAction: readiness.ok ? "inspect_arc_perps_status" : "configure_arc_perps_contracts"
-    };
-  }
-
-  if (plan.tool === "arc_perps_status") {
-    const status = await getArcPerpsStatus(args);
-    return {
-      ok: true,
-      status: status.ok ? "ready" : "not_configured",
-      arcPerps: status,
-      reason: status.ok ? "ArcPerps status loaded." : `ArcPerps contracts are not configured: ${status.missing?.join(", ") || "missing configuration"}`,
-      nextAction: status.ok ? "review_status" : "configure_arc_perps_contracts"
-    };
-  }
-
-  if (plan.tool === "quote_arc_perp_position") {
-    return await quoteArcPerpPosition(args);
-  }
-
-  if (plan.tool === "read_arc_perps_oracle_price") {
-    return await readArcPerpsOraclePrice(args);
-  }
-
-  if (plan.tool === "get_arc_perps_position") {
-    return await getArcPerpsPosition(args);
-  }
-
-  if (plan.tool === "list_arc_perps_positions") {
-    return await listArcPerpsPositions(args);
-  }
-
-  if (plan.tool === "close_arc_perp_user_position") {
-    const closeArgs = await resolveClosePerpPositionArgs({ handle, args });
-    if (closeArgs.ok === false) return closeArgs;
-    const result = await closeArcPerpPositionWithUserWallet({
-      ...args,
-      ...closeArgs,
-      handle: args.handle || handle,
-      idempotencyKey
-    });
-    if (result && result.ok === false) {
-      result.target ||= {
-        positionId: closeArgs.positionId,
-        position: closeArgs.memory?.position || null,
-        resolvedFrom: closeArgs.memory?.resolvedFrom || args.positionRef || null
-      };
-    }
-    return result;
-  }
-
-  if (plan.tool === "close_all_arc_perp_user_positions") {
-    return await closeAllArcPerpPositionsWithUserWallet({
-      ...args,
-      handle: args.handle || handle,
-      idempotencyKey
-    });
   }
 
   if (plan.tool === "appkit_readiness") {
@@ -1023,10 +768,6 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
     return listDefiTools();
   }
 
-  if (plan.tool === "list_route_capabilities") {
-    return listDefiRouteCapabilities(args);
-  }
-
   if (plan.tool === "list_defi_actions") {
     return listDefiActions(args);
   }
@@ -1058,10 +799,6 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
         type: args.type
       })
     });
-  }
-
-  if (plan.tool === "list_perp_markets") {
-    return await listPerpMarkets(args);
   }
 
   if (plan.tool === "get_market_intelligence") {
@@ -1138,6 +875,14 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
     return deleteAutomation(args);
   }
 
+  if (plan.tool === "answer_agent_question") {
+    return await answerAgentQuestion({
+      ...args,
+      handle: args.handle || handle,
+      text: args.text || planned.text
+    });
+  }
+
   if (plan.tool === "create_strategy_policy") {
     return createStrategyPolicy({ ...args, handle: args.handle || handle });
   }
@@ -1161,19 +906,100 @@ export async function executeAgentPlan({ planned, handle, source = "agent", post
   throw new Error(`Agent runner cannot execute tool: ${plan.tool}`);
 }
 
-function parseWithFallbacks(text, defaultSettlementRail, conversation = [], allowWorkflow = true) {
-  if (allowWorkflow) {
-    const workflow = parseWorkflowIntent(text, defaultSettlementRail);
-    if (workflow) return { parser: "deterministic_workflow", intent: workflow };
-  }
-  const conversational = parseConversationalIntent(text, defaultSettlementRail, conversation);
-  if (conversational) {
+async function answerAgentQuestion({ handle = "@sara", question = "", questionKind = "general", topic = "general", limit = 8 } = {}) {
+  const normalizedHandle = resolveXHandle(handle).handle;
+  const kind = String(questionKind || topic || "general").toLowerCase();
+
+  if (kind.includes("automation")) {
+    const automations = listAutomations({ handle: normalizedHandle, limit: Number(limit) || 8 }).automations || [];
+    const focused = automations.find((item) => item.status === "paused") || automations[0] || null;
+    const statusLine = focused
+      ? `${focused.id} is ${focused.status}. It has run ${focused.runCount || 0}${focused.maxRuns ? `/${focused.maxRuns}` : ""} time(s).`
+      : "I do not see any saved automations for this wallet yet.";
+    const reason = focused
+      ? automationPauseReason(focused)
+      : "There is nothing to pause, resume, or inspect yet.";
     return {
-      parser: "conversation_intent",
-      intent: conversational
+      ok: true,
+      status: "answered",
+      questionKind: kind,
+      summary: `${statusLine} ${reason} I did not create a new automation.`,
+      automations,
+      nextAction: focused ? "ask_to_resume_pause_delete_or_run" : "create_automation_if_you_want_one"
     };
   }
 
+  if (kind.includes("route")) {
+    const intelligence = getMarketIntelligence({ handle: normalizedHandle, settlementRail: "arc-testnet", limit: Number(limit) || 8 });
+    const settled = (ledger.defiActions || [])
+      .filter((action) => action.handle === normalizedHandle && ["settled", "completed", "submitted", "quoted"].includes(action.status))
+      .slice(-20)
+      .map((action) => routeLabelFromAction(action))
+      .filter(Boolean);
+    const available = Array.from(new Set(settled)).slice(0, 6);
+    const degraded = (intelligence.routeStats || [])
+      .filter((route) => route.failureRate >= 0.5 || route.quoteUnavailableCount > 0)
+      .slice(0, 4)
+      .map((route) => route.label || route.key);
+    return {
+      ok: true,
+      status: "answered",
+      questionKind: kind,
+      summary: available.length
+        ? `Recent live routes I can see: ${available.join(", ")}. I will still quote live before moving funds.`
+        : "I do not have a fresh successful route cached yet. Ask for a specific swap or bridge and I will quote it live before anything moves.",
+      routes: {
+        recentlyAvailable: available,
+        degraded
+      },
+      nextAction: "ask_for_specific_route"
+    };
+  }
+
+  if (kind.includes("balance")) {
+    const wallet = getWalletProfile(normalizedHandle);
+    return {
+      ok: true,
+      status: "answered",
+      questionKind: kind,
+      summary: wallet?.walletAddress
+        ? `I can check the wallet on Arc and supported rails. Current synced value is about US$${Number(wallet.totalBalanceUsd || wallet.balance || 0).toFixed(2)}.`
+        : "Connect X and create a Circle wallet first, then I can read balances and route trades from that user wallet.",
+      wallet,
+      nextAction: "check_balance_or_sync_wallet"
+    };
+  }
+
+  const memory = buildAgentMemoryReport({ handle: normalizedHandle, limit: Number(limit) || 8 });
+  return {
+    ok: true,
+    status: "answered",
+    questionKind: kind,
+    summary: "I can read your wallet, launch tokens, quote and execute supported swaps or bridges, remember recent actions, and run scheduled automations. Ask in normal language; I will choose the tool and explain what happened.",
+    memory,
+    nextAction: "send_natural_language_request"
+  };
+}
+
+function automationPauseReason(automation = {}) {
+  const lastError = automation.lastError || automation.lastResult?.reason || automation.lastResult?.error;
+  if (lastError) return `The latest reason is: ${lastError}.`;
+  if (automation.status === "paused") return "It is paused because it was manually paused or failed a safety check earlier.";
+  if (automation.status === "completed") return "It finished its run limit.";
+  return automation.nextRunAt ? `Next run is scheduled for ${automation.nextRunAt}.` : "There is no next run scheduled.";
+}
+
+function routeLabelFromAction(action = {}) {
+  const request = action.request || action;
+  const fromToken = request.fromToken || request.asset || "USDC";
+  const toToken = request.toToken || request.asset || fromToken;
+  const fromRail = request.fromRail || request.settlementRail || "arc-testnet";
+  const toRail = request.toRail || fromRail;
+  const type = fromRail !== toRail ? "bridge" : "swap";
+  return `${type}: ${fromToken} -> ${toToken} (${fromRail}${fromRail !== toRail ? ` to ${toRail}` : ""})`;
+}
+
+function parseWithFallbacks(text, defaultSettlementRail) {
   try {
     const socialIntent = parseSocialCommand(text);
     if (socialIntent.action !== "clarify") {
@@ -1209,166 +1035,49 @@ function parseWithFallbacks(text, defaultSettlementRail, conversation = [], allo
     parser: "clarification_required",
     intent: {
       action: "clarify",
-      question: "Do you want to send USDC, bridge/swap, check balances, inspect approvals, use AppKit, or work with perps/copy-trading proposals?"
+      question: "Do you want to launch a token, send USDC, bridge/swap, check balances, inspect approvals, use AppKit, or work with copy-trading proposals?"
     }
   };
 }
 
-export async function resumeAgentWorkflowsFromMonitor({
-  kind,
-  id,
-  handle,
-  defaultSettlementRail = "arc-testnet",
-  source = "execution_monitor",
-  fast = true
-} = {}) {
-  return await resumeAgentWorkflowsForExecutionTarget({
-    kind,
-    id,
-    handle,
-    planStep: async (intent, workflow) => planAgentIntent({
-      handle: workflow.handle,
-      intent,
-      defaultSettlementRail,
-      source: "agent_workflow"
-    }),
-    executeStep: async (stepPlan, workflow) => await executeAgentPlan({
-      planned: stepPlan,
-      handle: workflow.handle,
-      source,
-      idempotencyKey: `${workflow.id}:${kind}:${id}:${stepPlan.plan.tool}`,
-      fast
-    })
-  });
-}
-
-export async function runDueAgentWorkflowsFromWorker({
-  limit = 10,
-  defaultSettlementRail = "arc-testnet",
-  source = "workflow_worker",
-  fast = true
-} = {}) {
-  return await runDueAgentWorkflows({
-    limit,
-    planStep: async (intent, workflow) => planAgentIntent({
-      handle: workflow.handle,
-      intent,
-      defaultSettlementRail,
-      source: "agent_workflow"
-    }),
-    executeStep: async (stepPlan, workflow) => await executeAgentPlan({
-      planned: stepPlan,
-      handle: workflow.handle,
-      source,
-      idempotencyKey: `${workflow.id}:due:${workflow.currentStepIndex}:${stepPlan.plan.tool}`,
-      fast
-    })
-  });
-}
-
-function parseWorkflowIntent(text, defaultSettlementRail) {
-  const raw = String(text || "").trim();
-  const parts = raw.split(/\s+(?:and\s+then|then|after\s+that)\s+/i)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length < 2 || parts.length > 4) return null;
-  const intents = [];
-  for (const part of parts) {
-    const parsed = parseWithFallbacks(part, defaultSettlementRail, [], false);
-    if (!parsed.intent || parsed.intent.action === "clarify") return null;
-    if (parsed.intent.action === "tool_call" && [
-      "create_agent_workflow",
-      "resume_agent_workflow",
-      "cancel_agent_workflow"
-    ].includes(parsed.intent.tool)) return null;
-    intents.push(parsed.intent);
-  }
-  return {
-    action: "tool_call",
-    tool: "create_agent_workflow",
-    arguments: {
-      goal: raw,
-      steps: intents,
-      defaultSettlementRail
-    }
-  };
-}
-
-function parseConversationalIntent(text, defaultSettlementRail, conversation = []) {
+function parseTokenLaunch(text) {
   const raw = String(text || "").trim();
   const lower = raw.toLowerCase();
-  if (!raw) return null;
+  const isLaunchRequest = (
+    /\b(launch|create|plan|deploy)\b/.test(lower)
+    && /\b(token|coin|launchpad|liquidity|ticker)\b/.test(lower)
+  ) || /\btoken launch\b/.test(lower);
+  if (!isLaunchRequest) return null;
 
-  const lastTopic = inferLastTopic(conversation);
+  const explicitSymbol = raw.match(/\b(?:symbol|ticker)\s+([a-zA-Z0-9]{2,12})\b/i)?.[1];
+  const launchSymbol = raw.match(/\b(?:launch|create|deploy|plan)\s+([A-Z][A-Z0-9]{1,11})\b/)?.[1];
+  const symbol = explicitSymbol || launchSymbol || extractSymbol(raw) || "ARCX";
+  const named = raw.match(/\b(?:named|called|name)\s+([a-zA-Z0-9 ]{2,40})(?:\s+with|\s+symbol|\s+ticker|$)/i)?.[1];
+  const supply = raw.match(/\b(\d+(?:\.\d+)?)\s*(m|million|k|thousand)?\s+(?:supply|tokens?)\b/i);
+  const lock = raw.match(/\b(\d{1,5})\s*(?:days?|d)\s+(?:lock|locked|liquidity lock)\b/i)
+    || raw.match(/\block\s+(?:for\s+)?(\d{1,5})\s*(?:days?|d)\b/i);
+  const liquidity = raw.match(/\$?(\d+(?:\.\d+)?)\s*(?:usdc|usd)?\s+(?:liquidity|seed|pool)\b/i)
+    || raw.match(/\b(?:liquidity|seed|pool)\s+(?:with\s+)?\$?(\d+(?:\.\d+)?)/i);
 
-  if (/^(?:how|what)\s+(?:do|can)\s+i\s+(?:use|do)\s+(?:this|it)\??$/.test(lower)
-    || /^how\s+to\s+use\s+(?:this|it)\??$/.test(lower)
-    || /^how\s+does\s+(?:this|it)\s+work\??$/.test(lower)) {
-    return toolIntent("answer_agent_question", {
-      questionKind: "how_to",
-      topic: lastTopic || "agent",
-      question: raw,
-      defaultSettlementRail
-    });
-  }
-
-  if (/\bwhat\b.*\bautomations?\b.*\b(can|could|available|support|run|do)\b/.test(lower)
-    || /\bwhat\b.*\b(can|could)\b.*\bautomations?\b/.test(lower)
-    || /^what automations can you run\??$/.test(lower)) {
-    return toolIntent("answer_agent_question", {
-      questionKind: "automation_capabilities",
-      topic: "automation",
-      question: raw,
-      defaultSettlementRail
-    });
-  }
-
-  if (/\b(?:why|what happened|how come)\b[\s\S]{0,80}\bautomations?\b[\s\S]{0,80}\b(?:paused|stopped|failed|not running|did not run|didn't run)\b/.test(lower)
-    || /\bautomations?\b[\s\S]{0,80}\b(?:why|what happened|status|paused|stopped|failed|not running|did not run|didn't run)\b/.test(lower)
-    || /^why\s+was\s+(?:the\s+)?automation\s+paused\??$/.test(lower)) {
-    return toolIntent("answer_agent_question", {
-      questionKind: "automation_status",
-      topic: "automation",
-      question: raw,
-      defaultSettlementRail
-    });
-  }
-
-  if (/\bwhat\b.*\b(tokens?|coins?|assets?|pairs?)\b.*\b(can|could|support|swap|bridge|trade)\b/.test(lower)
-    || /\bwhat\b.*\b(can|could)\b.*\b(swap|bridge|trade)\b/.test(lower)
-    || /\bwhich\b.*\b(tokens?|coins?|assets?|pairs?|routes?)\b.*\b(live|available|supported|tradable|routable)\b/.test(lower)) {
-    return toolIntent("answer_agent_question", {
-      questionKind: /\bbridge\b/.test(lower) ? "bridge_capabilities" : "swap_capabilities",
-      topic: /\bbridge\b/.test(lower) ? "bridge" : "swap",
-      question: raw,
-      defaultSettlementRail
-    });
-  }
-
-  if (/^(?:what\s+(?:can|do)\s+you\s+(?:do|support)|help|help me|how do i use bunos|how do i use the agent)(?:\s+(?:bro|man|mate|please|pls))?\??$/.test(lower)) {
-    return toolIntent("answer_agent_question", {
-      questionKind: "agent_capabilities",
-      topic: "agent",
-      question: raw,
-      defaultSettlementRail
-    });
-  }
-
-  return null;
+  return {
+    symbol,
+    ...(named ? { name: named.trim() } : {}),
+    ...(supply ? { totalSupply: scaleNumber(supply[1], supply[2]) } : {}),
+    ...(liquidity ? { liquiditySeedUsd: Number(liquidity[1]) } : {}),
+    ...(lock ? { liquidityLockDays: Number(lock[1]) } : {})
+  };
 }
 
 function parseBridge(text, defaultSettlementRail) {
-  const normalizedText = normalizeTradingLanguage(text);
-  const tokenMatch = normalizedText.match(TOKEN_BRIDGE_PATTERN);
+  const tokenMatch = text.match(TOKEN_BRIDGE_PATTERN);
   if (tokenMatch) {
     const token = normalizeSwapToken(tokenMatch[2]);
-    const amount = parseAmountValue(tokenMatch[1]);
     const fromRail = normalizeRail(tokenMatch[3]) || defaultSettlementRail;
     const toRail = normalizeRail(tokenMatch[4]);
-    if (!amount || !token || !toRail || fromRail === toRail) return null;
+    if (!token || !toRail || fromRail === toRail) return null;
     return {
       action: "quote_bridge",
-      amount,
+      amount: Number(tokenMatch[1]),
       asset: token,
       fromToken: token,
       toToken: token,
@@ -1377,16 +1086,15 @@ function parseBridge(text, defaultSettlementRail) {
     };
   }
 
-  const naturalMatch = normalizedText.match(NATURAL_BRIDGE_PATTERN);
+  const naturalMatch = text.match(NATURAL_BRIDGE_PATTERN);
   if (naturalMatch) {
-    const amount = parseAmountValue(naturalMatch[1]);
     const toRail = normalizeRail(naturalMatch[3]);
     const fromRail = normalizeRail(naturalMatch[4]) || defaultSettlementRail;
     const token = normalizeSwapToken(naturalMatch[2] || "USDC");
-    if (!amount || !token || !toRail || fromRail === toRail) return null;
+    if (!token || !toRail || fromRail === toRail) return null;
     return {
       action: "quote_bridge",
-      amount,
+      amount: Number(naturalMatch[1]),
       asset: token,
       fromToken: token,
       toToken: token,
@@ -1395,15 +1103,14 @@ function parseBridge(text, defaultSettlementRail) {
     };
   }
 
-  const match = normalizedText.match(BRIDGE_PATTERN);
+  const match = text.match(BRIDGE_PATTERN);
   if (!match) return null;
-  const amount = parseAmountValue(match[1]);
   const fromRail = normalizeRail(match[2]) || defaultSettlementRail;
   const toRail = normalizeRail(match[3]);
-  if (!amount || !toRail || fromRail === toRail) return null;
+  if (!toRail || fromRail === toRail) return null;
   return {
     action: "quote_bridge",
-    amount,
+    amount: Number(match[1]),
     asset: "USDC",
     fromToken: "USDC",
     toToken: "USDC",
@@ -1413,8 +1120,7 @@ function parseBridge(text, defaultSettlementRail) {
 }
 
 function parseSwap(text, defaultSettlementRail) {
-  const normalizedText = normalizeTradingLanguage(text);
-  const naturalMatch = normalizedText.match(NATURAL_SWAP_PATTERN);
+  const naturalMatch = text.match(NATURAL_SWAP_PATTERN);
   if (naturalMatch) {
     return buildSwapIntent({
       amount: naturalMatch[1],
@@ -1425,7 +1131,7 @@ function parseSwap(text, defaultSettlementRail) {
     });
   }
 
-  const targetMatch = normalizedText.match(TARGET_SWAP_PATTERN);
+  const targetMatch = text.match(TARGET_SWAP_PATTERN);
   if (targetMatch) {
     return buildSwapIntent({
       amount: targetMatch[2],
@@ -1436,7 +1142,7 @@ function parseSwap(text, defaultSettlementRail) {
     });
   }
 
-  const sourceMatch = normalizedText.match(SOURCE_SWAP_PATTERN);
+  const sourceMatch = text.match(SOURCE_SWAP_PATTERN);
   if (sourceMatch) {
     return buildSwapIntent({
       amount: sourceMatch[1],
@@ -1447,7 +1153,7 @@ function parseSwap(text, defaultSettlementRail) {
     });
   }
 
-  const match = normalizedText.match(SWAP_PATTERN) || normalizedText.match(BUY_PATTERN);
+  const match = text.match(SWAP_PATTERN) || text.match(BUY_PATTERN);
   if (!match) return null;
   return buildSwapIntent({
     amount: match[1],
@@ -1459,10 +1165,9 @@ function parseSwap(text, defaultSettlementRail) {
 }
 
 function buildSwapIntent({ amount, fromToken, toToken, settlementRail, defaultSettlementRail }) {
-  const normalizedAmount = parseAmountValue(amount);
   const normalizedFromToken = normalizeSwapToken(fromToken);
   const normalizedToToken = normalizeSwapToken(toToken);
-  if (!normalizedAmount || !normalizedFromToken || !normalizedToToken || normalizedFromToken === normalizedToToken) return null;
+  if (!normalizedFromToken || !normalizedToToken || normalizedFromToken === normalizedToToken) return null;
   const normalizedRail = normalizeRail(settlementRail) || defaultSettlementRail;
   if (!isSupportedSwapPair({ settlementRail: normalizedRail, fromToken: normalizedFromToken, toToken: normalizedToToken })) {
     return {
@@ -1472,7 +1177,7 @@ function buildSwapIntent({ amount, fromToken, toToken, settlementRail, defaultSe
   }
   return {
     action: "quote_swap",
-    amount: normalizedAmount,
+    amount: Number(amount),
     fromToken: normalizedFromToken,
     toToken: normalizedToToken,
     settlementRail: normalizedRail
@@ -1482,6 +1187,70 @@ function buildSwapIntent({ amount, fromToken, toToken, settlementRail, defaultSe
 function parseToolCommand(text, defaultSettlementRail) {
   const raw = String(text || "").trim();
   const lower = raw.toLowerCase();
+
+  const launchPlan = parseTokenLaunch(raw);
+  if (launchPlan) {
+    return toolIntent(/\b(create|save|draft)\b/.test(lower) ? "create_token_launch" : "plan_token_launch", launchPlan);
+  }
+
+  const launchId = raw.match(/\b(launch_\d{4,}|launch_[a-zA-Z0-9_:-]+)\b/i)?.[1];
+  if (launchId && /\b(deploy|deploy token)\b/.test(lower)) {
+    return toolIntent("deploy_launch_token", { launchId });
+  }
+  if (launchId && /\b(seed|liquidity|pool)\b/.test(lower)) {
+    return toolIntent("seed_launch_liquidity", {
+      launchId,
+      ...(extractAmount(raw) ? { amountUsd: extractAmount(raw) } : {})
+    });
+  }
+  if (launchId && /\b(go live|open trading|start trading|launch trading)\b/.test(lower)) {
+    return toolIntent("open_launch_trading", { launchId });
+  }
+  if (launchId && /\b(accrue|simulate|record|add)\b.*\b(fees?|volume|trading)\b/.test(lower)) {
+    const amount = extractAmount(raw);
+    return toolIntent("accrue_launch_fees", {
+      launchId,
+      ...(amount && /\b(volume|trading volume|trade volume)\b/.test(lower) ? { volumeUsd: amount } : {}),
+      ...(amount && !/\b(volume|trading volume|trade volume)\b/.test(lower) ? { feeUsd: amount } : {})
+    });
+  }
+  if (launchId && /\b(claim|collect)\b.*\b(fees?|earnings|revenue)\b/.test(lower)) {
+    return toolIntent("claim_launch_fees", {
+      launchId,
+      ...(extractAmount(raw) ? { amountUsd: extractAmount(raw) } : {}),
+      destination: /\b(wallet|balance)\b/.test(lower) ? "wallet" : "compute_credits"
+    });
+  }
+  if (launchId && /\b(fees?|earnings|revenue|runway|treasury|compute credits?)\b/.test(lower)) {
+    return toolIntent("get_launch_fees", { launchId });
+  }
+  if (launchId && /\b(monitor|health|status|check)\b/.test(lower)) {
+    return toolIntent("monitor_launch", { launchId });
+  }
+  if (launchId && /\b(receipt|timeline)\b/.test(lower)) {
+    return toolIntent("get_launch_receipt", { launchId });
+  }
+  if (launchId && /\b(show|get|read)\b/.test(lower)) {
+    return toolIntent("get_token_launch", { launchId });
+  }
+  if (/\b(list|show|discover|latest)\b.*\b(launch feed|launches feed|public launches|launch market)\b/.test(lower)) {
+    return toolIntent("list_launch_feed", { limit: extractLimit(raw) || 10 });
+  }
+  if (/\b(list|show)\b.*\b(launches|token launches|launchpad)\b/.test(lower)) {
+    return toolIntent(/\b(feed|discover|latest|public|market)\b/.test(lower) ? "list_launch_feed" : "list_token_launches", { limit: extractLimit(raw) || 10 });
+  }
+  if (/\b(launchpad architecture|launch architecture|how.*launchpad|launchpad status)\b/.test(lower)) {
+    return toolIntent("get_launchpad_architecture");
+  }
+  if (/\b(spend|use|burn)\b.*\b(compute|credits?|runtime|api|llm|tools?)\b/.test(lower)) {
+    return toolIntent("spend_agent_compute", {
+      ...(extractAmount(raw) ? { amountUsd: extractAmount(raw) } : {}),
+      purpose: /\b(llm|model)\b/.test(lower) ? "llm_usage" : /\b(api|mcp|tools?)\b/.test(lower) ? "tool_usage" : "agent_runtime"
+    });
+  }
+  if (/\b(treasury|runway|compute credits?|agent earnings|self.funding|self funding)\b/.test(lower)) {
+    return toolIntent("get_agent_treasury", { limit: extractLimit(raw) || 10 });
+  }
 
   const targetAllocations = parseTargetAllocations(raw);
   const mandateId = raw.match(/\b(mandate_[a-zA-Z0-9_:-]+)\b/i)?.[1];
@@ -1499,7 +1268,7 @@ function parseToolCommand(text, defaultSettlementRail) {
     return toolIntent("list_mandates", { limit: extractLimit(raw) || 10 });
   }
   const mandate = parseMandateText(raw);
-  if (mandate && /\b(remember|rule|mandate|never|do not|don't|only|allow|allowed|max|maximum|limit|dca|keep me|close perps if|stop[-\s]?loss|take[-\s]?profit)\b/.test(lower)) {
+  if (mandate && /\b(remember|rule|mandate|never|do not|don't|only|allow|allowed|max|maximum|limit|dca|keep me|stop[-\s]?loss|take[-\s]?profit)\b/.test(lower)) {
     return toolIntent("create_mandate", {
       text: raw,
       kind: mandate.kind,
@@ -1507,28 +1276,7 @@ function parseToolCommand(text, defaultSettlementRail) {
     });
   }
 
-  const workflowId = raw.match(/\b(workflow_[a-zA-Z0-9_:-]+)\b/i)?.[1];
-  if (workflowId && /\b(cancel|stop|drop)\b/.test(lower)) {
-    return toolIntent("cancel_agent_workflow", { workflowId });
-  }
-  if (workflowId && /\b(resume|continue|run|proceed)\b/.test(lower)) {
-    return toolIntent("resume_agent_workflow", { workflowId });
-  }
-  if (workflowId) {
-    return toolIntent("get_agent_workflow", { workflowId });
-  }
-  if (/\b(list|show|current|recent)\b.*\b(workflows?|multi[-\s]?step tasks?)\b/.test(lower)) {
-    return toolIntent("list_agent_workflows", { limit: extractLimit(raw) || 10 });
-  }
-
   const automationId = raw.match(/\b(auto_[a-zA-Z0-9_:-]+)\b/i)?.[1];
-  if (/\b(?:pause|stop|disable|close|cancel|turn\s+off|shut\s+down|kill)\b[\s\S]{0,80}\b(?:all|every|active|running)\b[\s\S]{0,80}\b(?:automations?|scheduled tasks?|recurring tasks?|schedules?)\b/.test(lower)
-    || /\b(?:all|every|active|running)\b[\s\S]{0,80}\b(?:automations?|scheduled tasks?|recurring tasks?|schedules?)\b[\s\S]{0,80}\b(?:pause|stop|disable|close|cancel|turn\s+off|shut\s+down|kill)\b/.test(lower)) {
-    return toolIntent("pause_automations", {
-      status: "active",
-      limit: extractLimit(raw) || 100000
-    });
-  }
   if (automationId && /\b(delete|remove|cancel)\b/.test(lower)) {
     return toolIntent("delete_automation", { automationId });
   }
@@ -1540,6 +1288,9 @@ function parseToolCommand(text, defaultSettlementRail) {
   }
   if (automationId && /\b(run|execute|trigger)\b/.test(lower)) {
     return toolIntent("run_automation", { automationId });
+  }
+  if (isAgentQuestion(raw)) {
+    return toolIntent("answer_agent_question", questionArgs(raw));
   }
   if (/^(?:list|show|current|status)\s+(?:my\s+)?(?:automations?|scheduled tasks?|recurring tasks?)\b/.test(lower)
     || /^(?:automations?|scheduled tasks?|recurring tasks?)\s+(?:list|status|current|update)\b/.test(lower)
@@ -1565,20 +1316,8 @@ function parseToolCommand(text, defaultSettlementRail) {
     });
   }
 
-  if (/\b(bridge|swap|defi)\b.*\b(status|receipt|tx|transaction|what happened|update)\b|\b(status|receipt|tx|transaction|what happened|update)\b.*\b(bridge|swap|defi)\b/i.test(raw)) {
-    const type = /\bbridge\b/i.test(raw) ? "bridge" : /\bswap\b/i.test(raw) ? "swap" : undefined;
-    return toolIntent("get_defi_action_receipt", { actionId: "__latest__", type });
-  }
-
-  if (/\b(show|list|read|check|open)\s+(my\s+|the\s+)?(agent\s+|wallet\s+)?memory\b/.test(lower)) {
-    return toolIntent("get_agent_memory", { limit: extractLimit(raw) || 8 });
-  }
-
   if (/\b(memory|remember|last trade|recent trades?|trade history|what happened|what did you do|what are you doing|what happened with|status update|catch me up|recap)\b/.test(lower)
-    && /\b(agent|wallet|trade|trades?|swap|bridge|perp|position|automation|actions?|history|last|recent|you)\b/.test(lower)) {
-    return toolIntent("get_agent_memory", { limit: extractLimit(raw) || 8 });
-  }
-  if (/\b(perp|position)\b.*\b(status|update|receipt|what happened)\b|\b(status|update|receipt|what happened)\b.*\b(perp|position)\b/.test(lower)) {
+    && /\b(agent|wallet|trade|trades?|swap|bridge|automation|actions?|history|last|recent|you)\b/.test(lower)) {
     return toolIntent("get_agent_memory", { limit: extractLimit(raw) || 8 });
   }
 
@@ -1682,7 +1421,7 @@ function parseToolCommand(text, defaultSettlementRail) {
   if (defiActionId && /\breceipt|status|tx|transaction\b/i.test(raw)) {
     return toolIntent("get_defi_action_receipt", { actionId: defiActionId });
   }
-  if (/\btrade\b.*\b(status|receipt|tx|transaction|what happened|update)\b|\b(status|receipt|tx|transaction|what happened|update)\b.*\btrade\b/i.test(raw)) {
+  if (/\b(bridge|swap|defi|trade)\b.*\b(status|receipt|tx|transaction|what happened|update)\b|\b(status|receipt|tx|transaction|what happened|update)\b.*\b(bridge|swap|defi|trade)\b/i.test(raw)) {
     const type = /\bbridge\b/i.test(raw) ? "bridge" : /\bswap\b/i.test(raw) ? "swap" : undefined;
     return toolIntent("get_defi_action_receipt", { actionId: "__latest__", type });
   }
@@ -1703,32 +1442,6 @@ function parseToolCommand(text, defaultSettlementRail) {
     return toolIntent("list_copy_trade_proposals", { limit: extractLimit(raw) || 10 });
   }
 
-  const liq = raw.match(LIQUIDATION_RISK_PATTERN);
-  if (liq) {
-    return toolIntent("assess_liquidation_risk", {
-      symbol: liq[1].toUpperCase(),
-      side: liq[2].toLowerCase(),
-      collateralUsd: Number(liq[3]),
-      leverage: Number(liq[4])
-    });
-  }
-
-    const arcPerpQuote = raw.match(ARC_PERP_QUOTE_PATTERN);
-  if (arcPerpQuote) {
-    return toolIntent("quote_arc_perp_position", {
-      symbol: arcPerpQuote[1].toUpperCase(),
-      side: arcPerpQuote[2].toLowerCase(),
-      marginUsd: Number(arcPerpQuote[3]),
-      leverage: Number(arcPerpQuote[4])
-    });
-  }
-
-  if (/\b(perp|hyperliquid)\b.*\bmarkets?\b|\bmarkets?\b.*\b(perp|hyperliquid)\b/.test(lower)) {
-    return toolIntent("list_perp_markets", { limit: extractLimit(raw) || 10 });
-  }
-  if (/\bperp intelligence|funding rates?/.test(lower)) {
-    return toolIntent("list_perp_intelligence", { limit: extractLimit(raw) || 10 });
-  }
   if (/\b(market intelligence|route health|route history|why.*route.*fail|why.*swap.*fail|why.*bridge.*fail|market regime)\b/.test(lower)) {
     return toolIntent("get_market_intelligence", {
       settlementRail: extractRail(raw) || defaultSettlementRail,
@@ -1740,29 +1453,6 @@ function parseToolCommand(text, defaultSettlementRail) {
       settlementRail: extractRail(raw) || defaultSettlementRail
     });
   }
-  if (/\bperp proposals?\b/.test(lower)) {
-    return toolIntent("list_perp_proposals", { limit: extractLimit(raw) || 10 });
-  }
-
-  if (/\barc\b.*\bperps?\b.*\breadiness|\barc_perps_readiness\b/.test(lower)) {
-    return toolIntent("arc_perps_readiness");
-  }
-  if (/\barc\b.*\bperps?\b.*\bstatus|\barc_perps_status\b/.test(lower)) {
-    return toolIntent("arc_perps_status");
-  }
-  if (/\boracle\b.*\bprice\b|\bprice\b.*\boracle\b/.test(lower)) {
-    return toolIntent("read_arc_perps_oracle_price", { symbol: extractSymbol(raw) || "BTC" });
-  }
-  const closePerp = parseClosePerp(raw);
-  if (closePerp) {
-    return toolIntent(closePerp.closeAll ? "close_all_arc_perp_user_positions" : "close_arc_perp_user_position", closePerp);
-  }
-  if (/\barc\b.*\bperps?\b.*\bpositions?\b/.test(lower)) {
-    const positionId = raw.match(/\bposition\s+#?(\d+)\b/i)?.[1];
-    if (positionId) return toolIntent("get_arc_perps_position", { positionId: Number(positionId) });
-    return toolIntent("list_arc_perps_positions", { limit: extractLimit(raw) || 10 });
-  }
-
   if (/\bapp\s*kit\b.*\breadiness|\bappkit\b.*\breadiness|\bappkit_readiness\b/.test(lower)) {
     return toolIntent("appkit_readiness");
   }
@@ -1798,15 +1488,6 @@ function parseToolCommand(text, defaultSettlementRail) {
   if (/\bdefi\b.*\btools?\b|\bwhat defi/.test(lower)) {
     return toolIntent("list_defi_tools");
   }
-  if (/\b(live|available|supported|route|routes|routable|tradable)\b/.test(lower)
-    && /\b(swap|bridge|route|routes|pairs?)\b/.test(lower)
-    && /\b(show|list|what|which|available|live|supported)\b/.test(lower)) {
-    return toolIntent("list_route_capabilities", {
-      status: /\b(live|available|routable|tradable)\b/.test(lower) ? "live" : undefined,
-      type: /\bbridge\b/.test(lower) ? "bridge" : /\b(swap|pairs?)\b/.test(lower) ? "swap" : undefined,
-      limit: extractLimit(raw) || 25
-    });
-  }
   if (/\b(arc|trading)\b.*\bprimitives?\b|\bwhat can.*\b(trade|arc)\b/.test(lower)) {
     return toolIntent("list_arc_trading_primitives");
   }
@@ -1829,18 +1510,18 @@ function withAgentHandle(tool, args, handle) {
   const next = { ...args };
   if (tool === "send_usdc" || tool === "create_social_bounty" || tool === "create_airdrop") {
     next.senderHandle ||= handle;
+  } else if (tool === "plan_token_launch" || tool === "create_token_launch") {
+    next.creatorHandle ||= handle;
+    next.handle ||= handle;
+  } else if (["deploy_launch_token", "seed_launch_liquidity", "open_launch_trading", "update_launch_agent_policy", "accrue_launch_fees", "claim_launch_fees", "spend_agent_compute"].includes(tool)) {
+    next.handle ||= handle;
+  } else if (tool === "get_agent_treasury") {
+    next.handle ||= handle;
   } else if (![
-    "arc_perps_readiness",
     "appkit_readiness",
     "list_appkit_capabilities",
     "list_defi_tools",
-    "list_route_capabilities",
-    "list_arc_trading_primitives",
-    "quote_arc_perp_position",
-    "read_arc_perps_oracle_price",
-    "get_arc_perps_position",
-    "list_arc_perps_positions",
-    "answer_agent_question"
+    "list_arc_trading_primitives"
   ].includes(tool)) {
     next.handle ||= handle;
   }
@@ -1848,31 +1529,17 @@ function withAgentHandle(tool, args, handle) {
 }
 
 function riskForTool(tool) {
-  if (["send_usdc", "create_social_bounty", "create_airdrop", "award_airdrop", "quote_defi_route", "appkit_bridge_usdc", "appkit_swap", "appkit_send_usdc", "confirm_action", "confirm_defi_action", "request_testnet_usdc"].includes(tool)) {
+  if (["send_usdc", "create_social_bounty", "create_airdrop", "award_airdrop", "quote_defi_route", "appkit_bridge_usdc", "appkit_swap", "appkit_send_usdc", "confirm_action", "confirm_defi_action", "request_testnet_usdc", "seed_launch_liquidity", "open_launch_trading", "claim_launch_fees", "spend_agent_compute"].includes(tool)) {
     return "high";
   }
-  if (["propose_perp_trade", "propose_copy_trade", "assess_liquidation_risk", "quote_arc_perp_position", "close_arc_perp_user_position", "close_all_arc_perp_user_positions", "create_strategy_policy", "plan_rebalance_strategy", "reduce_risk_strategy", "run_strategy_check", "create_mandate", "update_mandate", "delete_mandate", "create_automation", "run_automation", "run_due_automations", "pause_automation", "resume_automation", "delete_automation"].includes(tool)) {
+  if (["propose_copy_trade", "create_token_launch", "deploy_launch_token", "update_launch_agent_policy", "accrue_launch_fees", "create_strategy_policy", "plan_rebalance_strategy", "reduce_risk_strategy", "run_strategy_check", "create_mandate", "update_mandate", "delete_mandate", "create_automation", "run_automation", "run_due_automations", "pause_automation", "resume_automation", "delete_automation"].includes(tool)) {
     return "medium";
   }
   return "low";
 }
 
-function contradictionBlockForPlan(planned = {}) {
-  const tool = planned.plan?.tool;
-  if (!tool || riskForTool(tool) !== "high") return null;
-  const contradictions = planned.contextMeta?.contextIntegrity?.items || [];
-  const blocking = contradictions.filter((item) => item.blocksExecution);
-  if (!blocking.length) return null;
-  const first = blocking[0];
-  return {
-    reason: `Current context has conflicting ${first.topic || first.kind || "execution"} evidence. I need a fresh read before moving funds.`,
-    summary: "I found conflicting current information, so I am not moving funds yet. Refresh the route, wallet, or receipt state first, then I can continue safely.",
-    contradictions: blocking
-  };
-}
-
 function signerForTool(tool, args) {
-  if (["send_usdc", "create_social_bounty", "create_airdrop", "award_airdrop", "quote_defi_route", "confirm_action", "confirm_defi_action", "appkit_bridge_usdc", "appkit_swap"].includes(tool)) {
+  if (["send_usdc", "create_social_bounty", "create_airdrop", "award_airdrop", "quote_defi_route", "confirm_action", "confirm_defi_action", "appkit_bridge_usdc", "appkit_swap", "deploy_launch_token", "seed_launch_liquidity", "open_launch_trading", "claim_launch_fees", "spend_agent_compute"].includes(tool)) {
     return circleUserSigner({
       operation: tool,
       settlementRail: args.settlementRail || args.fromRail || "arc-testnet",
@@ -1880,7 +1547,7 @@ function signerForTool(tool, args) {
       executionStatus: "policy_checked"
     });
   }
-  if (["appkit_send_usdc", "appkit_estimate_send", "appkit_unified_balance", "propose_perp_trade", "propose_copy_trade", "close_arc_perp_user_position", "close_all_arc_perp_user_positions"].includes(tool)) {
+  if (["appkit_send_usdc", "appkit_estimate_send", "appkit_unified_balance", "propose_copy_trade"].includes(tool)) {
     return userWalletSigningRequired({
       operation: tool,
       settlementRail: args.settlementRail || args.fromRail || "arc-testnet",
@@ -1890,320 +1557,37 @@ function signerForTool(tool, args) {
   return readOnlySigner({ operation: tool });
 }
 
-function shouldUseModelBeforeDeterministic(planned = {}) {
-  if (config.ai.routerMode === "deterministic_first") return false;
-  if (config.ai.routerMode === "model_first") {
-    if (planned.parser === "conversation_intent") return false;
-    if (["confirm_action", "get_receipt", "get_defi_action_receipt"].includes(planned.plan?.tool)) return false;
-    return true;
-  }
-  if (!planned?.plan?.tool) return true;
-  if (planned.parser === "conversation_intent") return false;
-  if (planned.plan.tool === "answer_agent_question") return false;
-  if (planned.parser?.includes("deterministic_social_command")) return false;
-  return false;
-}
-
-function inferLastTopic(conversation = []) {
-  const items = Array.isArray(conversation) ? conversation.slice().reverse() : [];
-  for (const item of items) {
-    const text = String(item.content || item.text || "").toLowerCase();
-    if (!text) continue;
-    if (/\bautomation|scheduled|recurring\b/.test(text)) return "automation";
-    if (/\bswap|pair|token|coin|asset|route\b/.test(text)) return "swap";
-    if (/\bbridge|rail|base|arc\b/.test(text)) return "bridge";
-    if (/\bperp|position|long|short|leverage\b/.test(text)) return "perps";
-    if (/\bmandate|rule|policy\b/.test(text)) return "mandates";
-    if (/\bportfolio|balance|wallet\b/.test(text)) return "wallet";
-  }
-  return null;
-}
-
-function answerAgentQuestion({
-  questionKind = "agent_capabilities",
-  topic = "agent",
-  question = "",
-  handle,
-  defaultSettlementRail = "arc-testnet"
-} = {}) {
-  const kind = String(questionKind || "agent_capabilities");
-  const normalizedTopic = String(topic || "agent");
-  if (kind === "pending_task") {
-    const working = publicAgentWorkingMemory(handle);
-    const pending = working.pendingClarification;
-    if (!pending) {
-      return {
-        ok: true,
-        status: "answered",
-        answer: "There is no unfinished task right now. Tell me what you want to do next.",
-        topic: working.topic || normalizedTopic,
-        nextAction: "ready_for_next_instruction"
-      };
-    }
-    const missing = (pending.missing || []).map(readableMissingField);
-    return {
-      ok: true,
-      status: "answered",
-      answer: [
-        working.objective ? `We were working on this: ${working.objective}` : "We were finishing your last request.",
-        missing.length
-          ? `I still need ${joinNaturalList(missing)} so I do not guess with your money.`
-          : "I have the details and can continue when you are ready."
-      ].join(" "),
-      topic: working.topic || normalizedTopic,
-      nextAction: missing.length ? "provide_missing_task_details" : "continue_active_task"
-    };
-  }
-  if (kind === "how_to") {
-    return {
-      ok: true,
-      status: "answered",
-      answer: howToAnswer(normalizedTopic, defaultSettlementRail),
-      topic: normalizedTopic,
-      nextAction: "send_natural_language_request"
-    };
-  }
-
-  if (kind === "swap_capabilities" || normalizedTopic === "swap") {
-    const routes = listDefiRouteCapabilities({
-      type: "swap",
-      limit: 20
-    }).routes || [];
-    const live = routes.filter((route) => route.status === "live");
-    return {
-      ok: true,
-      status: "answered",
-      answer: buildSwapCapabilityAnswer(live),
-      topic: "swap",
-      routes: live,
-      nextAction: live.length ? "ask_for_swap_amount" : "check_route_registry_later"
-    };
-  }
-
-  if (kind === "bridge_capabilities" || normalizedTopic === "bridge") {
-    const routes = listDefiRouteCapabilities({
-      type: "bridge",
-      limit: 20
-    }).routes || [];
-    const live = routes.filter((route) => route.status === "live");
-    return {
-      ok: true,
-      status: "answered",
-      answer: buildBridgeCapabilityAnswer(live),
-      topic: "bridge",
-      routes: live,
-      nextAction: live.length ? "ask_for_bridge_amount" : "check_route_registry_later"
-    };
-  }
-
-  if (kind === "automation_status") {
-    const automations = listAutomations({ handle, limit: 8 }).automations || [];
-    const active = automations.filter((item) => item.status === "active");
-    const paused = automations.filter((item) => item.status === "paused");
-    const latest = automations[0] || null;
-    const focus = paused[0] || latest;
-    const reason = focus
-      ? automationPauseReason(focus)
-      : "I do not see an automation for this wallet yet.";
-    return {
-      ok: true,
-      status: "answered",
-      answer: focus
-        ? [
-          `${focus.id} is ${focus.status}.`,
-          reason,
-          focus.status === "paused"
-            ? "I did not create a new automation. I only checked the existing one."
-            : "I did not change anything."
-        ].join(" ")
-        : reason,
-      topic: "automation",
-      automations,
-      nextAction: focus?.status === "paused" ? "resume_or_edit_automation_if_needed" : "ready_for_next_instruction"
-    };
-  }
-
-  if (kind === "automation_capabilities" || normalizedTopic === "automation") {
-    const automations = listAutomations({ handle, limit: 8 }).automations || [];
-    const active = automations.filter((item) => item.status === "active");
-    return {
-      ok: true,
-      status: "answered",
-      answer: [
-        "I can run recurring wallet and trading checks, but I only create one when you give me a clear schedule.",
-        active.length
-          ? `You currently have ${active.length} active automation${active.length === 1 ? "" : "s"}.`
-          : "You do not have any active automations right now.",
-        "Examples: 'sync balances every 10 minutes', 'swap 1 USDC to EURC every 10 seconds for 4 times', or 'pause all running automations'."
-      ].join(" "),
-      topic: "automation",
-      automations,
-      capabilities: [
-        "sync balances",
-        "repeat an agent action on a schedule",
-        "run due automations",
-        "pause/resume/delete automations",
-        "stop all active automations"
-      ],
-      nextAction: "give_automation_schedule"
-    };
-  }
-
-  return {
-    ok: true,
-    status: "answered",
-    answer: [
-      "Tell me what you want in normal language and I will choose the right tool before touching funds.",
-      "I can check balances, send USDC to X handles, swap live token routes, bridge rails, prepare perps, save trading rules, and run scheduled actions.",
-      `For this wallet (${handle || "your handle"}), I default to ${defaultSettlementRail}.`
-    ].join(" "),
-    topic: "agent",
-    nextAction: "send_natural_language_request"
-  };
-}
-
-function automationPauseReason(automation = {}) {
-  const last = automation.lastResult || {};
-  const error = automation.lastError || last.reason || last.error || last.status || "";
-  if (/create another automation|runaway loop|resolved to create another automation/i.test(error)) {
-    return "It paused because the saved automation text looked like it was trying to create another automation. I stop that automatically to prevent a runaway loop.";
-  }
-  if (automation.status === "completed") {
-    return automation.maxRuns
-      ? `It completed after ${automation.runCount || automation.maxRuns}/${automation.maxRuns} runs.`
-      : "It is completed.";
-  }
-  if (automation.status === "active") {
-    return automation.nextRunAt
-      ? `It is still active. The next run is scheduled for ${new Date(automation.nextRunAt).toISOString()}.`
-      : "It is active, but I do not see the next scheduled run.";
-  }
-  if (automation.status === "paused") {
-    return error
-      ? `It paused after this issue: ${error}`
-      : "It is paused, but I do not see a detailed pause reason in memory.";
-  }
-  return error || "I found the automation, but it does not have a detailed status reason.";
-}
-
-function readableMissingField(field) {
-  return {
-    amount: "the amount",
-    recipientHandle: "the recipient",
-    fromToken: "the token to spend",
-    toToken: "the token to receive",
-    fromRail: "the source network",
-    toRail: "the destination network",
-    symbol: "the market",
-    side: "whether you want long or short",
-    collateralUsd: "the collateral amount",
-    leverage: "the leverage",
-    text: "the action to repeat",
-    schedule: "the schedule"
-  }[field] || String(field);
-}
-
-function joinNaturalList(values = []) {
-  if (values.length <= 1) return values[0] || "one more detail";
-  return `${values.slice(0, -1).join(", ")} and ${values.at(-1)}`;
-}
-
-function buildSwapCapabilityAnswer(routes = []) {
-  if (!routes.length) {
-    return "I do not see any live swap route right now. That means I should not pretend a swap is tradable until the route registry or provider proves it.";
-  }
-  const pairs = routes
-    .map((route) => `${route.fromToken} to ${route.toToken} on ${humanRail(route.fromRail)}`)
-    .filter(Boolean);
-  return `Right now I can try these live swaps: ${pairs.slice(0, 6).join(", ")}. To use one, say something like 'swap 1 USDC to EURC on Arc'.`;
-}
-
-function buildBridgeCapabilityAnswer(routes = []) {
-  if (!routes.length) {
-    return "I do not see any live bridge route right now. I can still check again later, but I should not move funds without a live route.";
-  }
-  const labels = routes
-    .map((route) => `${route.fromToken || "USDC"} from ${humanRail(route.fromRail)} to ${humanRail(route.toRail)}`)
-    .filter(Boolean);
-  return `Right now I can check these live bridge routes: ${labels.slice(0, 6).join(", ")}. To use one, say something like 'bridge 5 USDC from Arc to Base'.`;
-}
-
-function howToAnswer(topic, defaultSettlementRail) {
-  if (topic === "automation") {
-    return "For automations, tell me the action, the interval, and when to stop. Example: 'swap 1 USDC to EURC every 10 seconds for 4 times'. I will save it and show live run status.";
-  }
-  if (topic === "swap") {
-    return "For swaps, tell me amount, source token, target token, and rail. Example: 'swap 1 USDC to EURC on Arc'. I check live routes first; if no route exists, no funds move.";
-  }
-  if (topic === "bridge") {
-    return "For bridges, tell me amount, token, source rail, and destination rail. Example: 'bridge 5 USDC from Arc to Base'. Small bridges can be expensive, so I check route quality first.";
-  }
-  if (topic === "perps") {
-    return "For perps, give symbol, side, collateral, and leverage. Example: 'long BTC with 1 USDC at 2x'. I prepare the trade, ask for approval, then show the transaction when it submits.";
-  }
-  if (topic === "wallet") {
-    return "For wallet checks, ask naturally: 'show my balance', 'analyze my portfolio', or 'what changed since my last trade'. I will read wallet state and memory before answering.";
-  }
-  return `Use bunOS like a trading assistant. Say the outcome you want, not a command name. Example: 'swap 1 USDC to EURC on ${humanRail(defaultSettlementRail)}', 'show live routes', or 'analyze my wallet'.`;
-}
-
-function humanRail(rail) {
-  const value = String(rail || "");
-  if (value === "arc-testnet") return "Arc";
-  if (value === "base-sepolia") return "Base";
-  return value || "this rail";
-}
-
 function reasonForTool(tool) {
-  if (tool === "answer_agent_question") return "The agent will answer a capability or usage question without executing a trade.";
   if (tool === "get_balance") return "The agent will read the current wallet profile.";
-  if (tool === "get_agent_memory") return "The agent will read recent trades, perps, automations, approvals, and failures from its wallet memory.";
-  if (tool.includes("agent_workflow")) return "The agent will run a bounded multi-step workflow with separate policy checks for each step.";
+  if (tool === "get_agent_memory") return "The agent will read recent trades, automations, approvals, and failures from its wallet memory.";
+  if (tool === "get_launchpad_architecture") return "The agent will read the token launchpad architecture and policy model.";
+  if (tool === "plan_token_launch") return "The agent will create a plan-only token launch with liquidity and policy metadata. No token is deployed.";
+  if (tool === "create_token_launch") return "The agent will create a persistent token launch draft with liquidity and policy metadata.";
+  if (tool === "deploy_launch_token") return "The agent will deploy the token through the deterministic Arc launch factory adapter.";
+  if (tool === "seed_launch_liquidity") return "The agent will seed and lock TOKEN/USDC launch-owned liquidity from the creator's Arc USDC balance.";
+  if (tool === "open_launch_trading") return "The agent will open trading after token deployment and locked liquidity are complete.";
+  if (tool === "monitor_launch") return "The agent will check launch status, liquidity lock, route health, and next action.";
+  if (tool === "get_launch_fees") return "The agent will read launch fee accrual, compute credits, spend, and runway.";
+  if (tool === "accrue_launch_fees") return "The agent will record local trading-fee accrual for a live launch until the Arc pool fee reader is connected.";
+  if (tool === "claim_launch_fees") return "The agent will claim launch fees into compute credits or the creator wallet.";
+  if (tool === "get_agent_treasury") return "The agent will read aggregate self-funding runway across the creator's launches.";
+  if (tool === "spend_agent_compute") return "The agent will spend existing compute credits from the launch treasury for runtime, API, or tool usage.";
+  if (tool === "list_launch_feed") return "The agent will read the public Arc launch discovery feed with liquidity and fee metadata.";
   if (tool === "sync_circle_balances") return "The agent will refresh Circle balances into the local ledger.";
   if (tool.includes("airdrop")) return "The agent will use the Arc airdrop campaign ledger and Circle user-wallet payment path.";
   if (tool.startsWith("appkit")) return "The agent will use the Arc AppKit/Circle user-wallet path when configured.";
-  if (tool.includes("perp")) return "The agent will use the perps analysis/proposal surface without backend signer execution.";
-  if (tool === "analyze_portfolio") return "The agent will inspect wallet exposure, pending actions, perps risk, and strategy drift without executing trades.";
+  if (tool === "analyze_portfolio") return "The agent will inspect wallet exposure, pending actions, and strategy drift without executing trades.";
   if (tool === "get_market_feed_snapshot") return "The agent will refresh external market feeds and mark unavailable data as stale instead of inventing prices.";
   if (tool.includes("mandate")) return "The agent will save or inspect standing trading rules and enforce them before future trades.";
   if (tool.includes("automation")) return "The agent will create or manage a recurring automation through the same policy-gated execution path.";
-  if (tool === "list_route_capabilities") return "The agent will read the live route registry before suggesting swaps or bridges.";
   if (tool.includes("strategy") || tool.includes("rebalance")) return "The agent will create a portfolio strategy plan without executing trades automatically.";
   if (tool.includes("defi")) return "The agent will use the DeFi action ledger and user-wallet execution provider.";
   return "The agent will call the matching allowlisted tool.";
 }
 
-function describeWorkflowIntent(intent = {}) {
-  if (intent.action === "quote_swap") return `Swap ${intent.amount || "some"} ${intent.fromToken || "USDC"} to ${intent.toToken || "a token"}.`;
-  if (intent.action === "quote_bridge") return `Bridge ${intent.amount || "some"} ${intent.fromToken || "USDC"} to ${intent.toRail || "another rail"}.`;
-  if (intent.action === "send_payment") return `Send ${intent.amount || "some"} USDC to ${intent.recipientHandle || "a recipient"}.`;
-  if (intent.action === "tool_call") return `Run ${intent.tool}.`;
-  return `Run ${intent.action || "workflow step"}.`;
-}
-
-function parseClosePerp(text) {
-  const lower = String(text || "").toLowerCase();
-  if (!/\b(close|exit|flatten)\b/.test(lower) || !/\b(perp|position|trade|long|short|last|latest|current)\b/.test(lower)) {
-    return null;
-  }
-  const match = text.match(CLOSE_PERP_PATTERN);
-  const explicitPositionId = text.match(/\b(?:position|pos|trade)?\s*#?(\d+)\b/i)?.[1] || match?.[2];
-  const closeAll = /\b(all|every|active|open)\b/.test(lower) && !explicitPositionId;
-  const symbol = match?.[3] && !["PERP", "POSITION", "TRADE"].includes(match[3].toUpperCase())
-    ? match[3].toUpperCase()
-    : extractSymbol(text);
-  const side = match?.[4]?.toLowerCase() || (/\blong\b/i.test(text) ? "long" : /\bshort\b/i.test(text) ? "short" : null);
-  return {
-    ...(closeAll ? { closeAll: true } : explicitPositionId ? { positionId: Number(explicitPositionId) } : { positionRef: match?.[1] || "latest_open" }),
-    ...(symbol ? { symbol } : {}),
-    ...(side ? { side } : {})
-  };
-}
-
 function extractAmount(text) {
-  const normalized = normalizeTradingLanguage(text);
-  const match = String(normalized || "").match(/\$?(\d+(?:\.\d+)?)/);
-  return match ? parseAmountValue(match[1]) : null;
+  const match = String(text || "").match(/\$?(\d+(?:\.\d+)?)/);
+  return match ? Number(match[1]) : null;
 }
 
 function extractLimit(text) {
@@ -2211,17 +1595,88 @@ function extractLimit(text) {
   return match ? Number(match[1]) : null;
 }
 
-function isAutomationRequest(text) {
-  const lower = String(text || "").toLowerCase();
-  if (/\?|\b(?:why|what|how|when|where|which|status|update|list|paused|stopped|failed|not running|did not run|didn't run)\b/.test(lower)) {
+function scaleNumber(value, suffix) {
+  const number = Number(value);
+  const unit = String(suffix || "").toLowerCase();
+  if (unit === "m" || unit === "million") return number * 1_000_000;
+  if (unit === "k" || unit === "thousand") return number * 1_000;
+  return number;
+}
+
+function isAgentQuestion(text) {
+  const lower = String(text || "").toLowerCase().trim();
+  if (!lower) return false;
+  if (/\b(swap|bridge|defi|action|payment|trade)\b.*\b(status|receipt|update|what happened)\b|\b(status|receipt|update|what happened)\b.*\b(swap|bridge|defi|action|payment|trade)\b/.test(lower)) {
     return false;
   }
-  const hasAutomationVerb = /\b(?:create|make|start|run|schedule|automate|repeat)\b/.test(lower);
-  const hasAutomationNoun = /\b(?:automation|scheduled task|recurring task|schedule)\b/.test(lower);
-  const hasSchedule = /\bevery\s+(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\s*(?:second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/.test(lower)
-    || /\b(?:daily|hourly|weekly|recurring|repeat)\b/.test(lower);
-  const hasRepeatableAction = /\b(?:swap|bridge|send|sync|refresh|check|rebalance|analy[sz]e|run strategy|show balance|balance)\b/.test(lower);
-  return hasSchedule && hasRepeatableAction && (hasAutomationVerb || hasAutomationNoun || /\brepeat\b/.test(lower) || !/\b(?:once|now|right now)\b/.test(lower));
+  if (/\b(swap|convert|turn|change|trade|bridge|move|transfer|send|buy|get me|give me)\b/.test(lower)
+    && /\b\d+(?:\.\d+)?\b/.test(lower)
+    && /\b(usdc|eurc|cirbtc|weth|0x[a-f0-9]{40})\b/i.test(lower)) {
+    return false;
+  }
+  if (/\b(what should i do|am i overexposed|overexposed|changed since last trade|portfolio brain|portfolio intelligence)\b/.test(lower)
+    && /\b(portfolio|wallet|bags?|exposure|trade)\b/.test(lower)) {
+    return false;
+  }
+  const questionLike = /\?$/.test(lower) || /^(what|why|how|when|where|which|can|could|do|does|did|is|are|was|were|tell me|show me|explain)\b/.test(lower);
+  if (!questionLike) return false;
+  return /\b(you|bunos|agent|tool|tools|route|routes|swap|bridge|balance|wallet|automation|automations|scheduled|status|paused|failed|trade|use|capabilities|can do)\b/.test(lower);
+}
+
+function questionArgs(text) {
+  const lower = String(text || "").toLowerCase();
+  let questionKind = "general";
+  let topic = "general";
+  if (/\b(route|routes|swap|bridge|token|tokens)\b/.test(lower)) {
+    questionKind = "routes";
+    topic = "routes";
+  } else if (/\b(automation|automations|scheduled|recurring|paused|pause)\b/.test(lower)) {
+    questionKind = /\b(why|paused|pause|failed|stopped)\b/.test(lower) ? "automation_status" : "automation_capabilities";
+    topic = "automation";
+  } else if (/\b(balance|wallet|assets?|funds?)\b/.test(lower)) {
+    questionKind = "balance_help";
+    topic = "wallet";
+  } else if (/\b(what.*can|can.*do|capabilities|tools?|use this|how to use)\b/.test(lower)) {
+    questionKind = "capabilities";
+    topic = "general";
+  }
+  return {
+    question: String(text || "").trim(),
+    questionKind,
+    topic,
+    limit: extractLimit(text) || 8
+  };
+}
+
+function isAutomationRequest(text) {
+  const lower = String(text || "").toLowerCase();
+  if (isAgentQuestion(text)) return false;
+  const hasSchedule = /\bevery\s+(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty)\s*(?:second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/.test(lower);
+  const hasAutomationVerb = /\b(auto(?:mate)?|schedule|repeat|recurring)\b/.test(lower);
+  const hasCreationVerb = /\b(create|make|start|run|set\s+up|schedule|automate|repeat)\b/.test(lower);
+  const hasRepeatableAction = /\b(swap|bridge|send|sync|check|show|balance|balances|rebalance|close|open|buy|sell|transfer|refresh)\b/.test(lower);
+  return hasRepeatableAction && (hasSchedule || (hasAutomationVerb && hasCreationVerb));
+}
+
+function numberFromText(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return numeric;
+  const words = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    fifteen: 15,
+    twenty: 20,
+    thirty: 30
+  };
+  return words[String(value || "").toLowerCase()] || 0;
 }
 
 function extractAutomationIntervalMinutes(text) {
@@ -2230,10 +1685,10 @@ function extractAutomationIntervalMinutes(text) {
 
 function extractAutomationSchedule(text) {
   const raw = String(text || "").toLowerCase();
-  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/);
+  const match = raw.match(/\bevery\s+(\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty)\s*(second|seconds|sec|secs|s|minute|minutes|min|mins|m|hour|hours|hr|hrs|h|day|days|d)\b/);
   const maxRuns = extractAutomationMaxRuns(raw);
   if (!match) return { intervalMinutes: 60, intervalMs: 60 * 60_000, ...(maxRuns ? { maxRuns } : {}) };
-  const amount = parseNumberWord(match[1]);
+  const amount = numberFromText(match[1]);
   const unit = match[2];
   let intervalMs;
   if (unit === "d" || unit.startsWith("day")) intervalMs = amount * 24 * 60 * 60_000;
@@ -2248,29 +1703,8 @@ function extractAutomationSchedule(text) {
 }
 
 function extractAutomationMaxRuns(text) {
-  const match = String(text || "").match(/\b(?:for|until|stop\s+after)\s+(\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|sixty)\s*(?:times?|runs?|executions?)\b/i);
-  return match ? parseNumberWord(match[1]) : null;
-}
-
-function parseNumberWord(value) {
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) return numeric;
-  return {
-    one: 1,
-    two: 2,
-    three: 3,
-    four: 4,
-    five: 5,
-    six: 6,
-    seven: 7,
-    eight: 8,
-    nine: 9,
-    ten: 10,
-    fifteen: 15,
-    twenty: 20,
-    thirty: 30,
-    sixty: 60
-  }[String(value || "").toLowerCase()] || 0;
+  const match = String(text || "").match(/\b(?:for|until|stop\s+after)\s+(\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:times?|runs?|executions?)\b/i);
+  return match ? numberFromText(match[1]) : null;
 }
 
 function extractRail(text) {
@@ -2286,32 +1720,7 @@ function extractHandles(text) {
 }
 
 function extractSymbol(text) {
-  const ignored = new Set([
-    "ARC",
-    "BASE",
-    "USDC",
-    "EURC",
-    "CIRBTC",
-    "PRICE",
-    "ORACLE",
-    "PERP",
-    "POSITION",
-    "POSITIONS",
-    "TRADE",
-    "TRADES",
-    "CLOSE",
-    "EXIT",
-    "FLATTEN",
-    "MY",
-    "THE",
-    "LAST",
-    "LATEST",
-    "CURRENT",
-    "ALL",
-    "EVERY",
-    "ACTIVE",
-    "OPEN"
-  ]);
+  const ignored = new Set(["ARC", "BASE", "USDC", "EURC", "CIRBTC", "PRICE", "ORACLE"]);
   const match = String(text || "").toUpperCase().match(/\b[A-Z]{2,12}\b/g)?.find((item) => !ignored.has(item));
   return match || null;
 }
@@ -2468,29 +1877,6 @@ function planFromIntent({ intent, handle, defaultSettlementRail, source }) {
     };
   }
 
-  if (intent.action === "propose_perp_trade") {
-    return {
-      tool: "propose_perp_trade",
-      arguments: {
-        handle,
-        symbol: intent.symbol,
-        side: intent.side,
-        collateralUsd: intent.collateralUsd,
-        leverage: intent.leverage,
-        settlementRail: defaultSettlementRail
-      },
-      canExecuteNow: false,
-      requiresConfirmation: true,
-      risk: Number(intent.leverage) > 2 ? "high" : "medium",
-      signer: userWalletSigningRequired({
-        operation: "open_perp_position",
-        settlementRail: defaultSettlementRail,
-        reason: "Perp execution needs a user-owned signing adapter. The agent can produce the proposal first."
-      }),
-      reason: "Perp proposal is available now; live execution remains user-wallet gated."
-    };
-  }
-
   return {
     tool: null,
     arguments: {},
@@ -2513,77 +1899,12 @@ function normalizeRail(value) {
 function normalizeSwapToken(value) {
   const raw = String(value || "").trim();
   if (/^0x[a-fA-F0-9]{40}$/.test(raw)) return raw;
-  const alias = TOKEN_ALIASES.get(raw.toLowerCase());
-  if (alias) return alias;
   const token = raw.toUpperCase();
   if (!token || INVALID_SWAP_TOKENS.has(token)) return null;
   if (token === "ETH") return "WETH";
   if (token === "CIRBTC") return "cirBTC";
   return token;
 }
-
-function normalizeTradingLanguage(text) {
-  let next = String(text || "");
-  next = next.replace(/\b(?:a|an|one)\s+(?:dollar|usd|usdc)\b/gi, "1 USDC");
-  next = next.replace(/\btwo\s+(?:dollars?|usd|usdc)\b/gi, "2 USDC");
-  next = next.replace(/\bthree\s+(?:dollars?|usd|usdc)\b/gi, "3 USDC");
-  next = next.replace(/\bfour\s+(?:dollars?|usd|usdc)\b/gi, "4 USDC");
-  next = next.replace(/\bfive\s+(?:dollars?|usd|usdc)\b/gi, "5 USDC");
-  next = next.replace(/\bsix\s+(?:dollars?|usd|usdc)\b/gi, "6 USDC");
-  next = next.replace(/\bseven\s+(?:dollars?|usd|usdc)\b/gi, "7 USDC");
-  next = next.replace(/\beight\s+(?:dollars?|usd|usdc)\b/gi, "8 USDC");
-  next = next.replace(/\bnine\s+(?:dollars?|usd|usdc)\b/gi, "9 USDC");
-  next = next.replace(/\bten\s+(?:dollars?|usd|usdc)\b/gi, "10 USDC");
-  next = next.replace(/\beuro\s+(?:coin|stablecoin|stable|token)\b/gi, "EURC");
-  next = next.replace(/\busd\s+(?:coin|stablecoin|stable|token)\b/gi, "USDC");
-  next = next.replace(/\bcircle\s+btc\b/gi, "cirBTC");
-  next = next.replace(/\bcircle\s+bitcoin\b/gi, "cirBTC");
-  next = next.replace(/\bwrapped\s+eth(?:ereum)?\b/gi, "WETH");
-  next = next.replace(/\beth(?:ereum)?\b/gi, "WETH");
-  return next;
-}
-
-function parseAmountValue(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  if (!raw) return null;
-  if (raw === "a" || raw === "an" || raw === "one") return 1;
-  const words = new Map([
-    ["two", 2],
-    ["three", 3],
-    ["four", 4],
-    ["five", 5],
-    ["six", 6],
-    ["seven", 7],
-    ["eight", 8],
-    ["nine", 9],
-    ["ten", 10]
-  ]);
-  if (words.has(raw)) return words.get(raw);
-  const numeric = Number(raw.replace(/^\$/, ""));
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
-}
-
-const TOKEN_ALIASES = new Map([
-  ["euro", "EURC"],
-  ["eur", "EURC"],
-  ["eurocoin", "EURC"],
-  ["euro coin", "EURC"],
-  ["euro stable", "EURC"],
-  ["euro stablecoin", "EURC"],
-  ["dollar", "USDC"],
-  ["dollars", "USDC"],
-  ["usd", "USDC"],
-  ["usd coin", "USDC"],
-  ["stable dollar", "USDC"],
-  ["circle dollar", "USDC"],
-  ["bitcoin", "cirBTC"],
-  ["btc", "cirBTC"],
-  ["circle btc", "cirBTC"],
-  ["circle bitcoin", "cirBTC"],
-  ["wrapped eth", "WETH"],
-  ["wrapped ethereum", "WETH"],
-  ["ethereum", "WETH"]
-]);
 
 function isSupportedSwapPair({ settlementRail, fromToken, toToken }) {
   return Boolean(settlementRail && fromToken && toToken && fromToken !== toToken);
@@ -2612,100 +1933,6 @@ function resolveDefiActionId({ handle, actionId, type } = {}) {
     throw new Error(`I could not find a recent ${type || "DeFi"} action for this wallet.`);
   }
   return action.id;
-}
-
-async function resolveClosePerpPositionArgs({ handle, args = {} } = {}) {
-  if (args.positionId) {
-    return { positionId: Number(args.positionId) };
-  }
-
-  let profile;
-  try {
-    profile = getWalletProfile(handle);
-  } catch (error) {
-    return {
-      ok: false,
-      status: "wallet_not_found",
-      reason: `I could not resolve ${handle}'s wallet before closing the position: ${error.message}`,
-      nextAction: "connect_wallet"
-    };
-  }
-
-  const arcWallet = profile.wallets?.find((wallet) => wallet.rail === "arc-testnet");
-  if (!arcWallet?.address) {
-    return {
-      ok: false,
-      status: "wallet_not_found",
-      reason: `I cannot close a perp for ${profile.handle} because there is no Arc wallet bound to this account.`,
-      nextAction: "connect_wallet"
-    };
-  }
-
-  let positionsResult;
-  try {
-    positionsResult = await listArcPerpsPositions({
-      ownerAddress: arcWallet.address,
-      limit: 50
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      status: "position_lookup_failed",
-      reason: `I could not inspect ArcPerps positions before closing: ${error.message}`,
-      nextAction: "check_arc_perps_readiness"
-    };
-  }
-
-  const symbol = args.symbol ? String(args.symbol).toUpperCase() : null;
-  const side = args.side ? String(args.side).toLowerCase() : null;
-  const openPositions = (positionsResult.positions || [])
-    .filter((position) => position.open)
-    .filter((position) => !symbol || position.symbol?.toUpperCase() === symbol)
-    .filter((position) => !side || position.side === side);
-  let position = openPositions[0];
-
-  if (!position) {
-    const proposal = ledger.perpProposals
-      .filter((item) => item.handle === profile.handle)
-      .filter((item) => item.positionId)
-      .filter((item) => ["submitted", "settled", "open"].includes(String(item.status || "").toLowerCase()))
-      .filter((item) => !symbol || String(item.symbol || "").toUpperCase() === symbol)
-      .filter((item) => !side || String(item.side || "").toLowerCase() === side)
-      .slice()
-      .reverse()[0];
-    if (proposal) {
-      position = {
-        id: Number(proposal.positionId),
-        symbol: proposal.symbol,
-        side: proposal.side,
-        owner: arcWallet.address,
-        open: true,
-        source: "agent_memory"
-      };
-    }
-  }
-
-  if (!position) {
-    const filters = [symbol, side].filter(Boolean).join(" ");
-    return {
-      ok: false,
-      status: "position_not_found",
-      reason: `I did not find an open ${filters ? `${filters} ` : ""}ArcPerps position for ${profile.handle}. Nothing was closed.`,
-      nextAction: "list_arc_perps_positions",
-      memory: {
-        walletAddress: arcWallet.address,
-        openPositions: (positionsResult.positions || []).filter((item) => item.open).map((item) => item.id)
-      }
-    };
-  }
-
-  return {
-    positionId: position.id,
-    memory: {
-      resolvedFrom: args.positionRef || "latest_open",
-      position
-    }
-  };
 }
 
 function buildAgentExecutionReport({ planned, result = {} } = {}) {
@@ -2737,8 +1964,6 @@ function buildAgentExecutionReport({ planned, result = {} } = {}) {
   const failureStatuses = new Set([
     "failed",
     "rejected",
-    "position_not_found",
-    "position_lookup_failed",
     "wallet_not_found",
     "user_wallet_signing_required",
     "execution_not_enabled",
@@ -2763,15 +1988,12 @@ function buildAgentExecutionReport({ planned, result = {} } = {}) {
       paymentId: payment?.id || null,
       actionId: action?.id || receipt?.action?.id || null,
       approvalId: result.approval?.id || payment?.approvalId || action?.approvalId || proposal?.approvalId || null,
-      proposalId: proposal?.id || null,
-      positionId: result.positionId || result.position?.id || proposal?.positionId || null,
-      workflowId: result.workflow?.id || null
+      proposalId: proposal?.id || null
     },
     memory: {
       lastTool: tool,
       lastActionId: action?.id || payment?.id || proposal?.id || null,
-      lastTrade: result.positionId || result.position?.id || proposal?.id || null,
-      workflowId: result.workflow?.id || null,
+      lastTrade: action?.id || proposal?.id || null,
       ...(result.memory || {})
     }
   };
@@ -2785,8 +2007,6 @@ function executionReason({ planned, result, status, ok }) {
   if (ok && result.txHash) return `Submitted ${planned?.plan?.tool || "action"} on-chain.`;
   if (ok && status === "submitted") return "The action was submitted and is waiting for settlement.";
   if (ok && status === "requires_confirmation") return "The action is prepared and needs explicit user approval.";
-  if (ok && result.workflow?.id) return `Workflow ${result.workflow.id} is ${status}.`;
-  if (ok && planned?.plan?.tool === "close_arc_perp_user_position") return "The close-position request was accepted.";
   if (!ok && status === "user_wallet_signing_required") return "This action needs the user's Circle wallet signing path before it can execute.";
   return planned?.plan?.reason || (ok ? "The agent completed the requested tool call." : "The agent could not complete the requested tool call.");
 }
@@ -2794,12 +2014,8 @@ function executionReason({ planned, result, status, ok }) {
 function nextActionForStatus(status, planned) {
   const value = String(status || "").toLowerCase();
   if (value === "requires_confirmation") return "approve_action";
-  if (value === "waiting_approval") return "approve_current_step_then_resume_workflow";
-  if (value === "waiting_execution") return "monitor_receipt_then_resume_workflow";
-  if (value === "paused_budget") return "resume_workflow";
   if (value === "submitted") return "monitor_receipt";
   if (value === "settled" || value === "completed") return "done";
-  if (value === "position_not_found") return "list_arc_perps_positions";
   if (value === "user_wallet_signing_required") return "connect_or_enable_user_wallet_signing";
   if (value === "execution_not_enabled") return "enable_execution_or_check_provider";
   if (value === "quote_unavailable") return "choose_supported_route";
@@ -2810,17 +2026,13 @@ function nextActionForStatus(status, planned) {
 
 function narrateAgentFailure({ planned, error }) {
   const tool = planned?.plan?.tool || "requested action";
-  if (tool === "close_arc_perp_user_position") {
-    return `I tried to close the perp position, but it failed before submission: ${error.message}`;
-  }
   return `I tried to run ${tool}, but it failed: ${error.message}`;
 }
 
 function shouldUseModelNarrator({ planned, result, execution }) {
   const tool = planned?.plan?.tool;
   if (!tool) return false;
-  if (["answer_agent_question", "get_balance", "sync_circle_balances", "get_wallet_capabilities", "list_route_capabilities"].includes(tool)) return false;
-  if (result?.answer) return false;
+  if (["get_balance", "sync_circle_balances", "get_wallet_capabilities"].includes(tool)) return false;
   if (result?.wallet) return false;
   return execution?.status !== "clarification_required";
 }
@@ -2830,13 +2042,6 @@ function assertAllowedTool(tool) {
   if (!ALLOWED_TOOLS.has(tool)) {
     throw new Error(`Agent planned unsupported tool: ${tool}`);
   }
-}
-
-function finalizePlanned(planned) {
-  return {
-    ...planned,
-    contract: validateAgentPlanContract({ planned })
-  };
 }
 
 function upgradeTerminalPlan(planned) {

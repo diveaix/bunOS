@@ -23,10 +23,9 @@ export function getMarketIntelligence({ handle, settlementRail = "arc-testnet", 
     .reverse()
     .slice(0, Number(limit) || 50);
   const routeStats = summarizeRoutes(actions);
-  const perps = summarizePerps({ handle: normalized, settlementRail });
   const feeds = getMarketFeedSnapshot({ settlementRail });
-  const regime = detectRegime({ routeStats, perps, feeds });
-  const warnings = buildGlobalWarnings({ routeStats, perps, regime, feeds });
+  const regime = detectRegime({ routeStats, feeds });
+  const warnings = buildGlobalWarnings({ routeStats, regime, feeds });
 
   return {
     ok: true,
@@ -36,7 +35,6 @@ export function getMarketIntelligence({ handle, settlementRail = "arc-testnet", 
     regime,
     feeds,
     routeStats,
-    perps,
     warnings,
     recommendation: recommendationForRegime(regime),
     signer: {
@@ -191,33 +189,7 @@ function summarizeRoutes(actions) {
   }));
 }
 
-function summarizePerps({ handle, settlementRail }) {
-  const proposals = ledger.perpProposals
-    .filter((proposal) => (
-      (!handle || proposal.handle === handle)
-      && (!settlementRail || proposal.settlementRail === settlementRail)
-    ))
-    .slice()
-    .reverse()
-    .slice(0, 20);
-  const elevated = proposals.filter((proposal) => Number(proposal.risk?.riskScore || 0) > 55);
-  const averageLeverage = average(proposals.map((proposal) => Number(proposal.leverage || 0)).filter(Boolean));
-
-  return {
-    proposalCount: proposals.length,
-    elevatedRiskCount: elevated.length,
-    averageLeverage,
-    lastProposal: proposals[0] ? {
-      id: proposals[0].id,
-      symbol: proposals[0].symbol,
-      side: proposals[0].side,
-      status: proposals[0].status,
-      riskScore: proposals[0].risk?.riskScore || null
-    } : null
-  };
-}
-
-function detectRegime({ routeStats, perps, feeds }) {
+function detectRegime({ routeStats, feeds }) {
   if (feeds?.regime?.status === "stale_data") {
     return {
       status: "stale_data",
@@ -248,10 +220,10 @@ function detectRegime({ routeStats, perps, feeds }) {
       reason: "Recent route history shows fees are elevated relative to trade size."
     };
   }
-  if (degraded || perps.elevatedRiskCount >= 2) {
+  if (degraded) {
     return {
       status: "risk_off",
-      reason: "Recent execution quality or leverage risk is degraded, so the agent should avoid forcing trades."
+      reason: "Recent execution quality is degraded, so the agent should avoid forcing trades."
     };
   }
   if (attempts >= 2 && failures === 0) {
@@ -269,14 +241,13 @@ function detectRegime({ routeStats, perps, feeds }) {
   };
 }
 
-function buildGlobalWarnings({ routeStats, perps, regime, feeds }) {
+function buildGlobalWarnings({ routeStats, regime, feeds }) {
   const warnings = [];
   if (regime.status !== "risk_on" && regime.status !== "neutral") warnings.push(regime.reason);
   const degraded = routeStats.find((route) => route.attempts >= 2 && route.failureRate >= 0.5);
   if (degraded) warnings.push(`${degraded.label} has a ${(degraded.failureRate * 100).toFixed(0)}% recent failure rate.`);
   const highFee = routeStats.find((route) => route.averageFeeRatio >= 0.15);
   if (highFee) warnings.push(`${highFee.label} has recent average fees near ${(highFee.averageFeeRatio * 100).toFixed(1)}%.`);
-  if (perps.elevatedRiskCount) warnings.push(`${perps.elevatedRiskCount} recent perp proposal(s) are elevated risk.`);
   if (feeds?.warnings?.length) warnings.push(...feeds.warnings);
   return unique(warnings).slice(0, 5);
 }

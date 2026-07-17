@@ -1,6 +1,5 @@
 import { config } from "./config.js";
 import { ledger } from "./fixtures.js";
-import { listHyperliquidMarkets } from "./hyperliquidAdapter.js";
 import { nextEventId } from "./ids.js";
 
 const SUPPORTED_ASSETS = ["USDC", "EURC", "cirBTC", "WETH", "NATIVE"];
@@ -14,7 +13,6 @@ const COINGECKO_IDS = {
 const STALE_MS = 5 * 60_000;
 const feedCache = {
   prices: null,
-  perps: null,
   fetchedAt: null,
   error: null
 };
@@ -26,7 +24,6 @@ export async function refreshMarketFeedSnapshot({ assets = SUPPORTED_ASSETS, set
 
   const fetchedAt = new Date().toISOString();
   let prices;
-  let perps;
   let error = null;
 
   try {
@@ -36,15 +33,7 @@ export async function refreshMarketFeedSnapshot({ assets = SUPPORTED_ASSETS, set
     prices = referencePrices({ assets, reason: err.message });
   }
 
-  try {
-    perps = await fetchPerpsContext();
-  } catch (err) {
-    error = error || err.message;
-    perps = referencePerpsContext(err.message);
-  }
-
   feedCache.prices = prices;
-  feedCache.perps = perps;
   feedCache.fetchedAt = fetchedAt;
   feedCache.error = error;
 
@@ -62,11 +51,10 @@ export async function refreshMarketFeedSnapshot({ assets = SUPPORTED_ASSETS, set
 
 export function getMarketFeedSnapshot({ assets = SUPPORTED_ASSETS, settlementRail = "arc-testnet" } = {}) {
   const prices = filterPrices(feedCache.prices || referencePrices({ assets, reason: "Market feeds have not been refreshed yet." }), assets);
-  const perps = feedCache.perps || referencePerpsContext("Market feeds have not been refreshed yet.");
   const routeSampling = summarizeRouteSampling({ settlementRail });
   const liquidity = liquiditySnapshot(routeSampling);
-  const freshness = freshnessStatus({ prices, perps, fetchedAt: feedCache.fetchedAt, error: feedCache.error });
-  const regime = detectFeedRegime({ prices, perps, liquidity, freshness });
+  const freshness = freshnessStatus({ prices, fetchedAt: feedCache.fetchedAt, error: feedCache.error });
+  const regime = detectFeedRegime({ prices, liquidity, freshness });
 
   return {
     ok: true,
@@ -74,12 +62,11 @@ export function getMarketFeedSnapshot({ assets = SUPPORTED_ASSETS, settlementRai
     settlementRail,
     assets,
     prices,
-    perps,
     routeSampling,
     liquidity,
     freshness,
     regime,
-    warnings: feedWarnings({ prices, perps, liquidity, freshness, regime }),
+    warnings: feedWarnings({ prices, liquidity, freshness, regime }),
     recommendation: feedRecommendation(regime),
     updatedAt: new Date().toISOString()
   };
@@ -139,31 +126,6 @@ async function fetchTokenPrices({ assets }) {
   }));
 }
 
-async function fetchPerpsContext() {
-  const markets = await listHyperliquidMarkets({ limit: 20 });
-  const marketRows = (markets.markets || []).map((market) => ({
-    symbol: market.symbol,
-    markPrice: numericOrNull(market.markPrice || market.mid),
-    mid: numericOrNull(market.mid),
-    funding: numericOrNull(market.funding),
-    openInterest: numericOrNull(market.openInterest),
-    maxLeverage: market.maxLeverage || null,
-    volatilityProxy: numericOrNull(market.volatilityProxy),
-    dataAvailability: {
-      funding: market.funding === null || market.funding === undefined ? "unavailable" : "available",
-      openInterest: market.openInterest === null || market.openInterest === undefined ? "unavailable" : "available",
-      volatilityProxy: market.volatilityProxy === null || market.volatilityProxy === undefined ? "unavailable" : "available"
-    }
-  }));
-  return {
-    provider: markets.provider,
-    mode: markets.mode,
-    freshness: markets.freshness || (markets.mode === "live" ? "fresh" : "stale_reference"),
-    fetchedAt: markets.fetchedAt || null,
-    markets: marketRows
-  };
-}
-
 function referencePrices({ assets, reason }) {
   return Object.fromEntries(assets.map((asset) => {
     const symbol = normalizeAsset(asset);
@@ -180,17 +142,6 @@ function referencePrices({ assets, reason }) {
     }
     return [symbol, priceUnavailable(symbol, reason)];
   }));
-}
-
-function referencePerpsContext(reason) {
-  return {
-    provider: "hyperliquid",
-    mode: "unavailable",
-    freshness: "stale_data",
-    fetchedAt: null,
-    reason,
-    markets: []
-  };
 }
 
 function summarizeRouteSampling({ settlementRail }) {
@@ -244,11 +195,11 @@ function liquiditySnapshot(routeSampling) {
   };
 }
 
-function freshnessStatus({ prices, perps, fetchedAt, error }) {
+function freshnessStatus({ prices, fetchedAt, error }) {
   const stale = !fetchedAt || Date.now() - new Date(fetchedAt).getTime() > STALE_MS;
   const unavailablePrices = Object.values(prices).filter((price) => price.freshness === "unavailable").length;
   const stalePrices = Object.values(prices).filter((price) => price.freshness === "stale_data").length;
-  const status = error || stale || stalePrices || unavailablePrices || perps.freshness === "stale_data"
+  const status = error || stale || stalePrices || unavailablePrices
     ? "stale_data"
     : "fresh";
   return {
@@ -264,29 +215,27 @@ function freshnessStatus({ prices, perps, fetchedAt, error }) {
   };
 }
 
-function detectFeedRegime({ prices, perps, liquidity, freshness }) {
+function detectFeedRegime({ prices, liquidity, freshness }) {
   if (freshness.status !== "fresh" && Object.values(prices).some((price) => price.freshness === "unavailable")) {
     return { status: "stale_data", reason: freshness.reason };
   }
   if (liquidity.status === "low_liquidity") return { status: "low_liquidity", reason: liquidity.reason };
   if (liquidity.status === "high_fee") return { status: "high_fee", reason: liquidity.reason };
-  const highVol = Object.values(prices).find((price) => Math.abs(Number(price.change24hPct || 0)) >= 8)
-    || perps.markets?.find((market) => Number(market.volatilityProxy || 0) >= 0.03);
-  if (highVol) return { status: "high_volatility", reason: "Market feed shows elevated 24h move or perp volatility proxy." };
+  const highVol = Object.values(prices).find((price) => Math.abs(Number(price.change24hPct || 0)) >= 8);
+  if (highVol) return { status: "high_volatility", reason: "Market feed shows elevated 24h move." };
   const btc = prices.cirBTC || prices.BTC;
   if (Number(btc?.change24hPct || 0) > 2) return { status: "risk_on", reason: "BTC proxy is positive and route sampling is not degraded." };
-  if (Number(btc?.change24hPct || 0) < -2) return { status: "risk_off", reason: "BTC proxy is negative; reduce leverage and avoid forced entries." };
+  if (Number(btc?.change24hPct || 0) < -2) return { status: "risk_off", reason: "BTC proxy is negative; avoid forced entries." };
   return { status: freshness.status === "fresh" ? "neutral" : "stale_data", reason: freshness.status === "fresh" ? "Feeds are available without a strong directional signal." : freshness.reason };
 }
 
-function feedWarnings({ prices, perps, liquidity, freshness, regime }) {
+function feedWarnings({ prices, liquidity, freshness, regime }) {
   const warnings = [];
   if (freshness.status !== "fresh") warnings.push(freshness.reason);
   if (liquidity.status !== "healthy" && liquidity.status !== "unknown") warnings.push(liquidity.reason);
   for (const price of Object.values(prices)) {
     if (price.freshness === "unavailable") warnings.push(`${price.symbol} price unavailable: ${price.reason}`);
   }
-  if (perps.freshness !== "fresh") warnings.push("Perps feed is not fresh; funding/open-interest may be unavailable.");
   if (regime.status === "high_volatility") warnings.push(regime.reason);
   return Array.from(new Set(warnings)).slice(0, 6);
 }
@@ -327,11 +276,6 @@ function normalizeAsset(asset) {
   if (value.toUpperCase() === "CIRBTC" || value === "cirBTC") return "cirBTC";
   if (value.toUpperCase() === "ETH") return "WETH";
   return value.toUpperCase();
-}
-
-function numericOrNull(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
 }
 
 function round(value, precision = 4) {

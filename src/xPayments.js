@@ -5,7 +5,6 @@ import { refreshExecutionMonitor } from "./executionMonitor.js";
 import { ledger } from "./fixtures.js";
 import { nextXCommandId } from "./ids.js";
 import { createApprovalToken } from "./securityGuards.js";
-import { publicUrl as buildPublicUrl } from "./publicUrls.js";
 
 export function verifyXWebhook({ headers, rawBody = "" }) {
   if (!config.webhookSecret) {
@@ -103,7 +102,7 @@ export function getXWebhookStatus({ host = "localhost:4317", protocol = "http" }
     eventId: `evt_demo_${Date.now()}`,
     postId: `post_demo_${Date.now()}`,
     actorHandle: "@sara",
-    text: "@bunOS long BTC with 3 USDC at 2x",
+    text: "@bunOS send $1 USDC to @alice",
     settlementRail: "arc-testnet"
   };
   const rawBody = JSON.stringify(samplePayload);
@@ -334,7 +333,7 @@ export function getXCommandReceipt({ commandId, host, protocol = "http" } = {}) 
   if (!command) {
     throw new Error("X command not found");
   }
-  const publicUrl = buildPublicUrl(`/x/commands/${encodeURIComponent(command.id)}`, { host, protocol });
+  const publicUrl = host ? `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}` : null;
   const approvalUrl = relatedApprovalUrl(command, { host, protocol });
   const links = {
     receiptUrl: publicUrl,
@@ -453,7 +452,9 @@ export function buildXCommandReply(command, result = {}, { publicUrl, approvalUr
   }
 
   if (core.proposal) {
-    return `Perps proposal ready: ${core.proposal.side} ${core.proposal.symbol} with ${formatAmount(core.proposal.collateralUsd, "USDC")} at ${core.proposal.leverage}x. User approval/signing is required before execution. ${signerLabel} ${urlSuffix}`.trim();
+    const trader = core.proposal.traderHandle ? ` for ${core.proposal.traderHandle}` : "";
+    const capital = core.proposal.capitalUsd ? ` with ${formatAmount(core.proposal.capitalUsd, "USDC")}` : "";
+    return `Proposal ready${trader}${capital}. User approval/signing is required before execution. ${signerLabel} ${urlSuffix}`.trim();
   }
 
   if (core.markets) {
@@ -473,9 +474,8 @@ function resultRefs(result = {}) {
     approvalId: core.approval?.id || core.payment?.approvalId || core.airdrop?.approvalId || core.action?.approvalId || core.proposal?.approvalId || execution.ids?.approvalId || null,
     proposalId: core.proposal?.id || execution.ids?.proposalId || null,
     defiActionId: core.action?.id || execution.ids?.actionId || null,
-    positionId: execution.ids?.positionId || core.position?.id || null,
     txHash: execution.txHash || core.txHash || result.txHash || null,
-    jobId: core.job?.id || core.execution?.jobId || core.proposal?.execution?.jobId || null,
+    jobId: core.job?.id || core.execution?.jobId || null,
     claimId: core.claim?.paymentId || null
   };
 }
@@ -517,7 +517,7 @@ export async function refreshXCommandExecution({
     };
   }
   command.finalReply = buildXCommandFinalReply(command, refreshed.monitor, {
-    publicUrl: buildPublicUrl(`/x/commands/${encodeURIComponent(command.id)}`, { host, protocol })
+    publicUrl: host ? `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}` : null
   });
 
   return {
@@ -533,7 +533,7 @@ function summarizeResult(result = {}) {
   const execution = result.execution || core.execution || {};
   return {
     ok: result.ok !== false,
-    kind: execution.tool || (core.payment ? "payment" : core.airdrop ? "airdrop" : core.automation ? "automation" : Array.isArray(core.automations) ? "automation_list" : core.proposal ? "perp_proposal" : core.action ? "defi_action" : core.claim ? "claim" : "action"),
+    kind: execution.tool || (core.payment ? "payment" : core.airdrop ? "airdrop" : core.automation ? "automation" : Array.isArray(core.automations) ? "automation_list" : core.proposal ? "proposal" : core.action ? "defi_action" : core.claim ? "claim" : "action"),
     status: execution.status || core.payment?.status || core.airdrop?.status || core.automation?.status || core.proposal?.status || core.action?.status || core.claim?.status || core.approval?.status || result.status || null,
     idempotentReplay: Boolean(result.idempotentReplay),
     decision: result.decision ? {
@@ -558,7 +558,7 @@ function resolveRelated(command) {
     automation: refs.automationId ? ledger.automations.find((item) => item.id === refs.automationId) || null : null,
     approval: refs.approvalId ? ledger.approvals.find((item) => item.id === refs.approvalId) || null : null,
     defiAction: refs.defiActionId ? ledger.defiActions.find((item) => item.id === refs.defiActionId) || null : null,
-    proposal: refs.proposalId ? ledger.perpProposals.find((item) => item.id === refs.proposalId) || null : null,
+    proposal: refs.proposalId ? ledger.copyTradeProposals.find((item) => item.id === refs.proposalId) || null : null,
     job: refs.jobId ? ledger.jobs.find((item) => item.id === refs.jobId) || null : null
   };
 }
@@ -582,7 +582,6 @@ function commandMonitorTarget(command) {
   const refs = command.resultRefs || {};
   if (refs.defiActionId) return { kind: "defi_action", id: refs.defiActionId };
   if (refs.paymentId) return { kind: "payment", id: refs.paymentId };
-  if (refs.proposalId) return { kind: "perp_proposal", id: refs.proposalId };
   return null;
 }
 
@@ -652,14 +651,14 @@ function buildXCommandIdempotencyKey({
 
 function relatedApprovalUrl(command, { host, protocol = "http" } = {}) {
   const approvalId = command.resultRefs?.approvalId;
-  if (!approvalId) {
+  if (!approvalId || !host) {
     return null;
   }
 
   const approval = ledger.approvals.find((item) => item.id === approvalId);
   const token = approval ? createApprovalToken({ approval, commandId: command.id }) : null;
   const suffix = token ? `?approvalToken=${encodeURIComponent(token)}` : "";
-  return buildPublicUrl(`/x/commands/${encodeURIComponent(command.id)}/approve${suffix}`, { host, protocol });
+  return `${protocol}://${host}/x/commands/${encodeURIComponent(command.id)}/approve${suffix}`;
 }
 
 function normalizeCommandText(text) {

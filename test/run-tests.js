@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { config } from "../src/config.js";
-import { planAgentAction, runAgentAction, runDueAgentWorkflowsFromWorker } from "../src/agentPlanner.js";
+import { planAgentAction, runAgentAction } from "../src/agentPlanner.js";
 import { openSecret } from "../src/cryptoBox.js";
 import { redactRpcUrl } from "../src/arcRpc.js";
 import { ledger, users } from "../src/fixtures.js";
@@ -14,10 +14,9 @@ import {
   createPaymentIntent,
   createSocialBounty
 } from "../src/orchestrator.js";
-import { enqueueJob, getJobQueueHealth, listJobs, runDueJobs, runJob } from "../src/jobs.js";
+import { enqueueJob, listJobs, runDueJobs, runJob } from "../src/jobs.js";
 import { listApprovals } from "../src/approvals.js";
 import { callMcpTool, mcpTools } from "../src/mcp.js";
-import { createAgentWorkflow, findDueAgentWorkflows, runAgentWorkflow } from "../src/agentWorkflow.js";
 import { completeMockXOAuth } from "../src/xOAuth.js";
 import {
   getXCommandReceipt,
@@ -42,7 +41,7 @@ import {
   listProviderWork,
   retryPaymentTransfer
 } from "../src/reconciliation.js";
-import { bridgeFunds, getWalletProfile } from "../src/walletAccounts.js";
+import { bridgeFunds, fundWallet, getWalletProfile } from "../src/walletAccounts.js";
 import {
   awardAirdrop,
   createAirdrop,
@@ -55,8 +54,6 @@ import {
   getDefiActionReceipt,
   listDefiActions,
   listDefiTools,
-  listDefiRouteCapabilities,
-  listPerpMarkets,
   quoteDefiRoute,
   searchPredictionMarkets
 } from "../src/defiOrchestrator.js";
@@ -65,11 +62,6 @@ import { refreshMarketFeedSnapshot } from "../src/marketFeeds.js";
 import { getDefiExecutionReadiness } from "../src/defiExecution.js";
 import { buildTradeSimulation } from "../src/tradeRisk.js";
 import {
-  getArcPerpsReadiness,
-  getArcPerpsStatus,
-  quoteArcPerpPosition
-} from "../src/arcPerpsEngine.js";
-import {
   applyMcpApiKeyContext,
   authenticateMcpApiKey,
   createMcpApiKey,
@@ -77,12 +69,6 @@ import {
   revokeMcpApiKey
 } from "../src/mcpApiKeys.js";
 import { redactSensitive } from "../src/redaction.js";
-import {
-  acquireWorkerLease,
-  getWorkerLease,
-  releaseWorkerLease,
-  renewWorkerLease
-} from "../src/store.js";
 import {
   assertNoBackendSignerSpend,
   assertPublicPayloadSafe,
@@ -99,11 +85,8 @@ import {
 import { buildAgentMemoryReport } from "../src/agentMemory.js";
 import {
   createAutomation,
-  runAutomation,
   runDueAutomations
 } from "../src/automations.js";
-import { buildExecutionTruth, truthFromAgentPayload } from "../src/executionTruth.js";
-import { checkRouteCapability, routeCapabilityForUi } from "../src/routeRegistry.js";
 
 config.providerMode = "mock";
 config.transferProvider = "mock";
@@ -147,18 +130,6 @@ const tests = [
         amount: 10,
         asset: "USDC",
         rule: "first_valid_commenter"
-      });
-    }
-  ],
-  [
-    "parses X-native perp commands",
-    async () => {
-      assert.deepEqual(parseSocialCommand("@bunOS long BTC with $20 at 2x"), {
-        action: "propose_perp_trade",
-        symbol: "BTC",
-        side: "long",
-        collateralUsd: 20,
-        leverage: 2
       });
     }
   ],
@@ -358,48 +329,6 @@ const tests = [
     }
   ],
   [
-    "creates confirmation-gated perp proposals from X webhook commands",
-    async () => {
-      const result = await processXPaymentEvent({
-        actorHandle: "@sara",
-        text: "@bunOS short ETH with 15 USDC at 2x",
-        postId: "post_perp_001",
-        eventId: "evt_perp_001",
-        settlementRail: "arc-testnet"
-      });
-
-      assert.equal(result.ok, true);
-      assert.equal(result.proposal.status, "requires_confirmation");
-      assert.equal(result.proposal.source, "x-webhook");
-      assert.equal(result.proposal.symbol, "ETH");
-      assert.ok(result.approval.id);
-      assert.equal(result.command.intent.action, "propose_perp_trade");
-      assert.equal(result.command.resultRefs.proposalId, result.proposal.id);
-
-      const inbox = listXCommands({ handle: "@sara", limit: 1 });
-      assert.equal(inbox.commands[0].id, result.command.id);
-
-      const receipt = getXCommandReceipt({
-        commandId: result.command.id,
-        host: "localhost:4319",
-        protocol: "http"
-      });
-      assert.equal(receipt.receipt.related.proposal.id, result.proposal.id);
-      assert.equal(receipt.receipt.publicUrl, `http://localhost:4319/x/commands/${result.command.id}`);
-      assert.match(receipt.receipt.reply, /No backend signer used/);
-
-      const replay = await processXPaymentEvent({
-        actorHandle: "@sara",
-        text: "@bunOS short ETH with 15 USDC at 2x",
-        postId: "post_perp_001",
-        eventId: "evt_perp_001",
-        settlementRail: "arc-testnet"
-      });
-      assert.equal(replay.idempotentReplay, true);
-      assert.equal(replay.proposal.id, result.proposal.id);
-    }
-  ],
-  [
     "auto-claims pending escrow when the intended X user connects",
     async () => {
       const payment = await createPaymentIntent({
@@ -472,9 +401,9 @@ const tests = [
 
       const result = await runXBotCommand({
         actorHandle: "@sara",
-        text: "@bunOS long BTC with 12 USDC at 2x",
+        text: "@bunOS send 12 USDC to @bob",
         postId: "1234567890123456789",
-        eventId: "evt_loop_perp_001",
+        eventId: "evt_loop_send_001",
         settlementRail: "arc-testnet",
         host: "bunos.xyz",
         protocol: "https"
@@ -833,7 +762,6 @@ const tests = [
       assert.equal(tools.ok, true);
       assert.ok(tools.protocols.find((protocol) => protocol.id === "lifi"));
       assert.ok(tools.protocols.find((protocol) => protocol.id === "polymarket"));
-      assert.ok(tools.protocols.find((protocol) => protocol.id === "hyperliquid"));
     }
   ],
   [
@@ -883,72 +811,6 @@ const tests = [
     }
   ],
   [
-    "uses route capability registry before live swap provider calls",
-    async () => {
-      const previousLiveAdapters = config.defi.liveAdapters;
-      try {
-        config.defi.liveAdapters = true;
-        const routes = listDefiRouteCapabilities({ type: "swap", fromRail: "arc-testnet" });
-        assert.equal(routes.ok, true);
-        assert.ok(routes.routes.find((route) => route.fromToken === "USDC" && route.toToken === "EURC" && route.status === "live"));
-        assert.ok(routes.routes.find((route) => route.fromToken === "USDC" && route.toToken === "cirBTC" && route.status === "unavailable"));
-
-        const blocked = await quoteDefiRoute({
-          handle: "@sara",
-          fromRail: "arc-testnet",
-          toRail: "arc-testnet",
-          type: "swap",
-          amount: 1,
-          fromToken: "USDC",
-          toToken: "cirBTC",
-          slippage: 0.005
-        });
-
-        assert.equal(blocked.ok, false);
-        assert.equal(blocked.action.status, "quote_unavailable");
-        assert.equal(blocked.routeCapability.status, "unavailable");
-        assert.match(blocked.reason, /cannot find a live swap route/i);
-        assert.doesNotMatch(blocked.reason, /AppKit|LI\.FI|server error|fallback/i);
-      } finally {
-        config.defi.liveAdapters = previousLiveAdapters;
-      }
-    }
-  ],
-  [
-    "requires fresh probe before trusting seeded live routes in real mode",
-    async () => {
-      const previousLiveAdapters = config.defi.liveAdapters;
-      const previousProbeEnabled = config.defi.routeProbeEnabled;
-      try {
-        config.defi.liveAdapters = true;
-        config.defi.routeProbeEnabled = true;
-
-        const decision = checkRouteCapability({
-          type: "swap",
-          fromRail: "arc-testnet",
-          toRail: "arc-testnet",
-          fromToken: "USDC",
-          toToken: "EURC"
-        });
-
-        assert.equal(decision.ok, false);
-        assert.equal(decision.status, "stale_probe_required");
-        assert.equal(decision.route.status, "live");
-        assert.equal(decision.route.effectiveStatus, "stale_probe_required");
-        assert.match(decision.reason, /fresh live quote/i);
-
-        const ui = routeCapabilityForUi();
-        const staleKnownLive = ui.live.find((route) => route.fromToken === "USDC" && route.toToken === "EURC");
-        assert.ok(staleKnownLive);
-        assert.equal(staleKnownLive.effectiveStatus, "stale_probe_required");
-        assert.equal(staleKnownLive.probeRequired, true);
-      } finally {
-        config.defi.liveAdapters = previousLiveAdapters;
-        config.defi.routeProbeEnabled = previousProbeEnabled;
-      }
-    }
-  ],
-  [
     "queues DeFi execution immediately after a route is created",
     async () => {
       const quoted = await quoteDefiRoute({
@@ -985,308 +847,6 @@ const tests = [
         handle: "@sara"
       });
       assert.equal(confirmed.skipped, true);
-    }
-  ],
-  [
-    "MCP execution refresh resumes waiting agent workflows",
-    async () => {
-      const action = {
-        id: "defi_mcp_resume",
-        handle: "@sara",
-        type: "swap",
-        status: "settled",
-        request: {
-          amount: 1,
-          fromToken: "USDC",
-          toToken: "EURC",
-          fromRail: "arc-testnet",
-          toRail: "arc-testnet"
-        },
-        execution: {
-          backendSignerAllowed: false,
-          txHash: `0x${"e".repeat(64)}`
-        },
-        txHash: `0x${"e".repeat(64)}`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      ledger.defiActions.push(action);
-      const workflow = createAgentWorkflow({
-        handle: "@sara",
-        goal: "Finish settled swap and check balance",
-        steps: [
-          {
-            action: "quote_swap",
-            amount: 1,
-            fromToken: "USDC",
-            toToken: "EURC",
-            settlementRail: "arc-testnet"
-          },
-          { action: "tool_call", tool: "get_balance", arguments: {} }
-        ]
-      });
-      workflow.status = "waiting_execution";
-      workflow.steps[0].status = "waiting_execution";
-      workflow.steps[0].evidence = {
-        status: "submitted",
-        actionId: action.id
-      };
-
-      const monitor = await callMcpTool("refresh_execution_monitor", {
-        kind: "defi_action",
-        id: action.id,
-        handle: "@sara",
-        runWorker: false
-      });
-      assert.equal(monitor.ok, true);
-      assert.equal(monitor.monitor.lifecycle, "settled");
-      assert.equal(monitor.workflowContinuation.resumed, 1);
-      assert.equal(monitor.workflowContinuation.workflows[0].status, "completed");
-      assert.equal(monitor.workflowContinuation.workflows[0].workflow.lastRun.modelCalls, 0);
-      assert.equal(monitor.workflowContinuation.workflows[0].workflow.steps[0].evidence.txHash, `0x${"e".repeat(64)}`);
-    }
-  ],
-  [
-    "agent workflows track receipt retry backoff and exhaustion",
-    async () => {
-      const action = {
-        id: "defi_workflow_retry",
-        handle: "@sara",
-        type: "swap",
-        status: "submitted",
-        request: {
-          amount: 1,
-          fromToken: "USDC",
-          toToken: "EURC",
-          fromRail: "arc-testnet",
-          toRail: "arc-testnet"
-        },
-        execution: {
-          backendSignerAllowed: false
-        },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      ledger.defiActions.push(action);
-      const workflow = createAgentWorkflow({
-        handle: "@sara",
-        goal: "Wait for submitted swap then check balance",
-        steps: [
-          {
-            action: "quote_swap",
-            amount: 1,
-            fromToken: "USDC",
-            toToken: "EURC",
-            settlementRail: "arc-testnet"
-          },
-          { action: "tool_call", tool: "get_balance", arguments: {} }
-        ]
-      });
-      workflow.status = "waiting_execution";
-      workflow.steps[0].status = "waiting_execution";
-      workflow.steps[0].evidence = {
-        status: "submitted",
-        actionId: action.id
-      };
-
-      const adapters = {
-        planStep: async () => ({ plan: { tool: "get_balance" }, intent: { action: "get_balance" } }),
-        executeStep: async () => ({ ok: true, status: "completed" })
-      };
-      const first = await runAgentWorkflow({
-        workflowId: workflow.id,
-        handle: "@sara",
-        ...adapters,
-        forceRefresh: true
-      });
-      assert.equal(first.status, "waiting_execution");
-      assert.equal(first.workflow.retry.waitingRefreshAttempts, 1);
-      assert.ok(first.workflow.retry.nextRefreshAt);
-
-      const second = await runAgentWorkflow({
-        workflowId: workflow.id,
-        handle: "@sara",
-        ...adapters,
-        forceRefresh: false
-      });
-      assert.equal(second.workflow.lastRun.outcome, "backoff_waiting");
-      assert.equal(second.workflow.retry.waitingRefreshAttempts, 1);
-
-      workflow.retry.waitingRefreshAttempts = workflow.retry.maxAttempts;
-      workflow.retry.nextRefreshAt = new Date(Date.now() - 1_000).toISOString();
-      const exhausted = await runAgentWorkflow({
-        workflowId: workflow.id,
-        handle: "@sara",
-        ...adapters,
-        forceRefresh: false
-      });
-      assert.equal(exhausted.workflow.lastRun.outcome, "retry_exhausted");
-      assert.equal(exhausted.workflow.retry.exhausted, true);
-
-      const metrics = getAgentMetrics();
-      assert.ok(metrics.workflows.exhausted >= 1);
-    }
-  ],
-  [
-    "due workflow worker resumes only due waiting workflows",
-    async () => {
-      const dueAction = {
-        id: "defi_workflow_due",
-        handle: "@sara",
-        type: "swap",
-        status: "submitted",
-        request: {
-          amount: 1,
-          fromToken: "USDC",
-          toToken: "EURC",
-          fromRail: "arc-testnet",
-          toRail: "arc-testnet"
-        },
-        execution: {
-          backendSignerAllowed: false
-        },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      const laterAction = {
-        ...dueAction,
-        id: "defi_workflow_later"
-      };
-      ledger.defiActions.push(dueAction, laterAction);
-
-      const makeWorkflow = (actionId) => {
-        const workflow = createAgentWorkflow({
-          handle: "@sara",
-          goal: "Wait for swap then check balance",
-          steps: [
-            {
-              action: "quote_swap",
-              amount: 1,
-              fromToken: "USDC",
-              toToken: "EURC",
-              settlementRail: "arc-testnet"
-            },
-            { action: "tool_call", tool: "get_balance", arguments: {} }
-          ]
-        });
-        workflow.status = "waiting_execution";
-        workflow.steps[0].status = "waiting_execution";
-        workflow.steps[0].evidence = {
-          status: "submitted",
-          actionId
-        };
-        return workflow;
-      };
-
-      const dueWorkflow = makeWorkflow(dueAction.id);
-      dueWorkflow.retry.nextRefreshAt = new Date(Date.now() - 1_000).toISOString();
-      const laterWorkflow = makeWorkflow(laterAction.id);
-      laterWorkflow.retry.nextRefreshAt = new Date(Date.now() + 60_000).toISOString();
-
-      const due = findDueAgentWorkflows({ handle: "@sara", limit: 10 });
-      assert.ok(due.find((workflow) => workflow.id === dueWorkflow.id));
-      assert.ok(!due.find((workflow) => workflow.id === laterWorkflow.id));
-
-      let ran = await runDueAgentWorkflowsFromWorker({ limit: 10 });
-      assert.equal(ran.ran.length, 1);
-      assert.equal(ran.ran[0].workflow.id, dueWorkflow.id);
-      assert.equal(ran.ran[0].status, "waiting_execution");
-
-      dueAction.status = "settled";
-      dueAction.txHash = `0x${"d".repeat(64)}`;
-      dueWorkflow.retry.nextRefreshAt = new Date(Date.now() - 1_000).toISOString();
-      ran = await runDueAgentWorkflowsFromWorker({ limit: 10 });
-      assert.equal(ran.ran.length, 1);
-      assert.equal(ran.ran[0].status, "completed");
-      assert.equal(ran.ran[0].workflow.steps[0].evidence.txHash, `0x${"d".repeat(64)}`);
-    }
-  ],
-  [
-    "worker lease allows one owner and supports safe expiry takeover",
-    async () => {
-      const name = `test-worker-${Date.now()}`;
-      const now = Date.now();
-
-      const first = await acquireWorkerLease({
-        name,
-        ownerId: "worker-a",
-        ttlMs: 30_000,
-        now
-      });
-      assert.equal(first.acquired, true);
-      assert.equal(first.lease.ownerId, "worker-a");
-
-      const blocked = await acquireWorkerLease({
-        name,
-        ownerId: "worker-b",
-        ttlMs: 30_000,
-        now: now + 1_000
-      });
-      assert.equal(blocked.acquired, false);
-      assert.equal(blocked.lease.ownerId, "worker-a");
-
-      const wrongRenewal = await renewWorkerLease({
-        name,
-        ownerId: "worker-b",
-        ttlMs: 30_000,
-        now: now + 2_000
-      });
-      assert.equal(wrongRenewal.renewed, false);
-
-      const wrongRelease = await releaseWorkerLease({
-        name,
-        ownerId: "worker-b"
-      });
-      assert.equal(wrongRelease.released, false);
-
-      const takeover = await acquireWorkerLease({
-        name,
-        ownerId: "worker-b",
-        ttlMs: 30_000,
-        now: now + 31_000
-      });
-      assert.equal(takeover.acquired, true);
-      assert.equal((await getWorkerLease(name)).ownerId, "worker-b");
-
-      const released = await releaseWorkerLease({
-        name,
-        ownerId: "worker-b"
-      });
-      assert.equal(released.released, true);
-      assert.equal(await getWorkerLease(name), null);
-    }
-  ],
-  [
-    "worker health separates historical failures from current incidents",
-    async () => {
-      const now = Date.now();
-      const historical = {
-        id: `job_health_old_${now}`,
-        type: "test",
-        status: "failed",
-        runAfter: new Date(now - 48 * 60 * 60_000).toISOString(),
-        createdAt: new Date(now - 48 * 60 * 60_000).toISOString(),
-        updatedAt: new Date(now - 47 * 60 * 60_000).toISOString()
-      };
-      const recent = {
-        ...historical,
-        id: `job_health_recent_${now}`,
-        createdAt: new Date(now - 60_000).toISOString(),
-        updatedAt: new Date(now - 30_000).toISOString()
-      };
-      ledger.jobs.push(historical);
-
-      let health = getJobQueueHealth({ now, recentWindowMs: 60 * 60_000 });
-      assert.equal(health.ok, true);
-      assert.equal(health.recentFailed, 0);
-      assert.ok(health.historicalFailed >= 1);
-
-      ledger.jobs.push(recent);
-      health = getJobQueueHealth({ now, recentWindowMs: 60 * 60_000 });
-      assert.equal(health.ok, false);
-      assert.equal(health.recentFailed, 1);
-
-      ledger.jobs = ledger.jobs.filter((job) => ![historical.id, recent.id].includes(job.id));
     }
   ],
   [
@@ -1366,30 +926,6 @@ const tests = [
       assert.equal(receipt.receipt.explorerUrl, "https://testnet.arcscan.app/tx/0xabc123");
       assert.equal(receipt.receipt.simulation.recommendation, "route_is_possible_but_uneconomical");
       assert.equal(receipt.receipt.nextAction, "reconcile_defi_action");
-
-      const railwayReceipt = getDefiActionReceipt({
-        actionId: quoted.action.id,
-        host: "backend-production-efc9.up.railway.app",
-        protocol: "https"
-      });
-      assert.equal(railwayReceipt.receipt.publicUrl, `https://bunos.xyz/defi/actions/${quoted.action.id}`);
-
-      const previousPublicBase = process.env.PUBLIC_APP_BASE_URL;
-      try {
-        process.env.PUBLIC_APP_BASE_URL = "https://bunos.xyz";
-        const canonicalReceipt = getDefiActionReceipt({
-          actionId: quoted.action.id,
-          host: "backend-production-efc9.up.railway.app",
-          protocol: "https"
-        });
-        assert.equal(canonicalReceipt.receipt.publicUrl, `https://bunos.xyz/defi/actions/${quoted.action.id}`);
-      } finally {
-        if (previousPublicBase === undefined) {
-          delete process.env.PUBLIC_APP_BASE_URL;
-        } else {
-          process.env.PUBLIC_APP_BASE_URL = previousPublicBase;
-        }
-      }
     }
   ],
   [
@@ -1447,56 +983,6 @@ const tests = [
       assert.equal(appKitBridgeSimulation.sourceTokenFeeAmount, 0.204683);
       assert.equal(appKitBridgeSimulation.requiredSourceAmount, 1.204683);
       assert.equal(appKitBridgeSimulation.estimatedFeeUsd, 0.204683);
-
-      const appKitBaseUnitFeeSimulation = buildTradeSimulation({
-        user: users.get("@sara"),
-        wallet: getWalletProfile("@sara"),
-        action: {
-          type: "bridge",
-          amount: 1,
-          amountUsd: 1,
-          fromToken: "USDC",
-          toToken: "USDC",
-          fromRail: "arc-testnet",
-          toRail: "base-sepolia"
-        },
-        quote: {
-          estimate: {
-            fees: [
-              {
-                type: "forwarder",
-                amount: "56500",
-                token: { symbol: "USDC", decimals: 6 }
-              }
-            ]
-          }
-        }
-      });
-      assert.equal(appKitBaseUnitFeeSimulation.ok, true);
-      assert.equal(appKitBaseUnitFeeSimulation.sourceTokenFeeAmount, 0.0565);
-      assert.equal(appKitBaseUnitFeeSimulation.requiredSourceAmount, 1.0565);
-
-      const appKitSwapOutputSimulation = buildTradeSimulation({
-        user: users.get("@sara"),
-        wallet: getWalletProfile("@sara"),
-        action: {
-          type: "swap",
-          amount: 1,
-          amountUsd: 1,
-          fromToken: "USDC",
-          toToken: "cirBTC",
-          fromRail: "arc-testnet",
-          toRail: "arc-testnet"
-        },
-        quote: {
-          estimate: {
-            estimatedOutput: { token: "cirBTC", amount: "0.00000913" },
-            stopLimit: { token: "cirBTC", amount: "0.000009" }
-          }
-        }
-      });
-      assert.equal(appKitSwapOutputSimulation.output.amount, 0.00000913);
-      assert.equal(appKitSwapOutputSimulation.output.minAmount, 0.000009);
 
       const expensiveTinyBridge = buildTradeSimulation({
         user: users.get("@sara"),
@@ -1654,18 +1140,14 @@ const tests = [
     }
   ],
   [
-    "supports read-only Polymarket and Hyperliquid discovery actions",
+    "supports read-only Polymarket discovery actions",
     async () => {
       const markets = await searchPredictionMarkets({ handle: "@sara", query: "bitcoin", limit: 1 });
-      const perps = await listPerpMarkets({ handle: "@sara", limit: 1 });
       const actions = listDefiActions({ handle: "@sara" });
 
       assert.equal(markets.ok, true);
       assert.equal(markets.provider, "polymarket");
-      assert.equal(perps.ok, true);
-      assert.equal(perps.provider, "hyperliquid");
       assert.ok(actions.actions.find((action) => action.protocol === "polymarket"));
-      assert.ok(actions.actions.find((action) => action.protocol === "hyperliquid"));
     }
   ],
   [
@@ -1722,7 +1204,7 @@ const tests = [
 
       const primitives = await callMcpTool("list_arc_trading_primitives", {});
       assert.equal(primitives.ok, true);
-      for (const name of ["swap", "bridge", "perps", "airdrop", "bounty", "automation"]) {
+      for (const name of ["swap", "bridge", "airdrop", "bounty", "automation"]) {
         assert.ok(primitives.primitives.find((primitive) => primitive.name === name), `${name} primitive missing`);
       }
 
@@ -1928,23 +1410,6 @@ const tests = [
       assert.equal(updated.ok, true);
       assert.equal(updated.mandate.rules.maxTradeUsd, 5);
 
-      const leverageRule = await callMcpTool("create_mandate", {
-        handle: "@mandy",
-        text: "max leverage 2x"
-      });
-      assert.equal(leverageRule.ok, true);
-
-      const rejectedPerp = await callMcpTool("propose_perp_trade", {
-        handle: "@mandy",
-        symbol: "BTC",
-        side: "long",
-        collateralUsd: 2,
-        leverage: 5
-      });
-      assert.equal(rejectedPerp.ok, false);
-      assert.equal(rejectedPerp.status, "rejected");
-      assert.match(rejectedPerp.reason, /caps leverage/i);
-
       const deleted = await callMcpTool("delete_mandate", {
         handle: "@mandy",
         mandateId: listed.mandates[0].id
@@ -1962,7 +1427,6 @@ const tests = [
         "list_automations",
         "run_automation",
         "run_due_automations",
-        "pause_automations",
         "pause_automation",
         "resume_automation",
         "delete_automation"
@@ -1990,19 +1454,6 @@ const tests = [
       assert.equal(paused.automation.status, "paused");
       const resumed = await callMcpTool("resume_automation", { automationId: created.automation.id });
       assert.equal(resumed.automation.status, "active");
-
-      const second = await callMcpTool("create_automation", {
-        handle: "@automator",
-        kind: "sync_circle_balances",
-        intervalMinutes: 1
-      });
-      const bulkPaused = await callMcpTool("pause_automations", { handle: "@automator" });
-      assert.equal(bulkPaused.ok, true);
-      assert.equal(bulkPaused.paused, 2);
-      const afterBulkPause = await callMcpTool("list_automations", { handle: "@automator", status: "active" });
-      assert.equal(afterBulkPause.automations.length, 0);
-      await callMcpTool("resume_automation", { automationId: created.automation.id });
-      await callMcpTool("delete_automation", { automationId: second.automation.id });
 
       const due = await callMcpTool("run_due_automations", { limit: 10 });
       const ran = due.ran.find((result) => result.automation.id === created.automation.id);
@@ -2042,21 +1493,6 @@ const tests = [
       assert.equal(balanceSchedule.plan.arguments.intervalMs, 10_000);
       assert.equal(balanceSchedule.plan.arguments.maxRuns, 4);
 
-      const wordInterval = createAutomation({
-        handle: "@sara",
-        text: "run an automation. show my balance every ten secs for 2 times"
-      });
-      assert.equal(wordInterval.automation.intervalMs, 10_000);
-      assert.equal(wordInterval.automation.maxRuns, 2);
-
-      const stopAll = planAgentAction({
-        handle: "@sara",
-        text: "close all the automations running now",
-        source: "test-automation"
-      });
-      assert.equal(stopAll.plan.tool, "pause_automations");
-      assert.equal(stopAll.plan.arguments.status, "active");
-
       const createdFromText = createAutomation({
         handle: "@sara",
         text: "run an automation. swap $1 of USDC to EURC every 10 secs for 4 times"
@@ -2084,22 +1520,10 @@ const tests = [
       assert.equal(runner.automation.runCount, 2);
       assert.equal(runner.automation.status, "completed");
       assert.equal(runner.automation.nextRunAt, null);
-
-      const recursive = createAutomation({
-        handle: "@sara",
-        text: "create an automation. swap 1 USDC to EURC every ten seconds for 2 times",
-        nextRunAt: new Date(Date.now() - 1_000).toISOString()
-      });
-      recursive.automation.payload.text = "create an automation. swap 1 USDC to EURC";
-      const recursiveRun = await runAutomation({ automationId: recursive.automation.id });
-      assert.equal(recursiveRun.ok, false);
-      assert.equal(recursiveRun.automation.status, "paused");
-      assert.equal(recursiveRun.automation.nextRunAt, null);
-      assert.match(recursiveRun.error, /prevent a runaway loop/i);
     }
   ],
   [
-    "creates copy trading and perps proposals as approvals",
+    "creates copy trading proposals as approvals",
     async () => {
       const copy = await callMcpTool("propose_copy_trade", {
         handle: "@sara",
@@ -2112,108 +1536,16 @@ const tests = [
       assert.ok(copy.approval.id);
       assert.equal(copy.proposal.signer.backendSignerAllowed, false);
 
-      const risk = await callMcpTool("assess_liquidation_risk", {
-        handle: "@sara",
-        symbol: "BTC",
-        side: "long",
-        collateralUsd: 20,
-        leverage: 2
-      });
-      assert.equal(risk.ok, true);
-      assert.equal(risk.assessment.symbol, "BTC");
-
-      const perp = await callMcpTool("propose_perp_trade", {
-        handle: "@sara",
-        symbol: "BTC",
-        side: "long",
-        collateralUsd: 20,
-        leverage: 2
-      });
-      assert.equal(perp.ok, true);
-      assert.equal(perp.proposal.status, "requires_confirmation");
-      assert.ok(perp.approval.id);
-      assert.equal(perp.proposal.signer.backendSignerAllowed, false);
-
       const approvals = listApprovals({ handle: "@sara", status: "pending" });
       assert.ok(approvals.approvals.find((approval) => approval.kind === "copy_trade"));
-      assert.ok(approvals.approvals.find((approval) => approval.kind === "perp_trade"));
 
       const confirmed = await callMcpTool("confirm_action", {
-        approvalId: perp.approval.id,
+        approvalId: copy.approval.id,
         handle: "@sara"
       });
       assert.equal(confirmed.ok, true);
-      assert.equal(confirmed.result.job.type, "execute_perp_proposal");
-      assert.equal(confirmed.result.worker.ok, true);
+      assert.equal(confirmed.result.proposal.status, "confirmed");
       assert.equal(confirmed.result.proposal.execution.backendSignerAllowed, false);
-      assert.equal(confirmed.result.executionSummary.kind, "perp_trade");
-      assert.equal(confirmed.result.executionSummary.proposalId, confirmed.result.proposal.id);
-    }
-  ],
-  [
-    "exposes ArcPerps Lite settlement tools and quotes",
-    async () => {
-      const names = mcpTools.map((tool) => tool.name);
-      for (const name of [
-        "arc_perps_readiness",
-        "arc_perps_status",
-        "quote_arc_perp_position",
-        "read_arc_perps_oracle_price",
-        "get_arc_perps_position",
-        "list_arc_perps_positions",
-        "open_arc_perp_user_position",
-        "close_arc_perp_user_position",
-        "sync_arc_perps_oracle"
-      ]) {
-        assert.ok(names.includes(name), `${name} missing`);
-      }
-
-      const readiness = getArcPerpsReadiness();
-      assert.equal(readiness.rail, "arc-testnet");
-      assert.equal(readiness.maxLeverage, config.arcPerps.maxLeverage);
-      assert.equal(readiness.backendSignerAllowed, false);
-
-      const status = await getArcPerpsStatus();
-      assert.equal(status.rail, "arc-testnet");
-      assert.ok(Array.isArray(status.missing));
-
-      const quote = await quoteArcPerpPosition({
-        symbol: "BTC",
-        side: "long",
-        marginUsd: 20,
-        leverage: 2,
-        markPrice: 100000
-      });
-      assert.equal(quote.ok, true);
-      assert.equal(quote.quote.settlement, "ArcPerpsVault");
-      assert.equal(quote.quote.notionalUsd, 40);
-      assert.equal(quote.quote.entryPrice, 100000);
-      assert.ok(quote.quote.liquidationPrice < quote.quote.entryPrice);
-
-      const mcpQuote = await callMcpTool("quote_arc_perp_position", {
-        symbol: "ETH",
-        side: "short",
-        marginUsd: 10,
-        leverage: 2,
-        markPrice: 3000
-      });
-      assert.equal(mcpQuote.ok, true);
-      assert.ok(mcpQuote.quote.liquidationPrice > mcpQuote.quote.entryPrice);
-
-      const userOpen = await callMcpTool("open_arc_perp_user_position", {
-        handle: "@sara",
-        symbol: "BTC",
-        side: "long",
-        marginUsd: 1,
-        leverage: 2
-      });
-      assert.equal(userOpen.ok, false);
-      assert.equal(userOpen.backendSignerAllowed, false);
-      assert.equal(userOpen.status, "user_wallet_signing_required");
-
-      const oracleSync = await callMcpTool("sync_arc_perps_oracle", { symbols: ["BTC"] });
-      assert.equal(oracleSync.ok, false);
-      assert.equal(oracleSync.skipped, true);
     }
   ],
   [
@@ -2267,19 +1599,6 @@ const tests = [
         assert.equal(names.includes(name), false, `${name} should not be exposed`);
       }
 
-      for (const name of [
-        "set_arc_perps_oracle_price",
-        "set_arc_perps_market",
-        "approve_arc_perps_usdc",
-        "deposit_arc_perps_margin",
-        "withdraw_arc_perps_margin",
-        "provide_arc_perps_liquidity",
-        "open_arc_perp_position",
-        "close_arc_perp_position"
-      ]) {
-        assert.equal(names.includes(name), false, `${name} should not be exposed`);
-      }
-
       const descriptions = mcpTools.map((tool) => tool.description.toLowerCase()).join("\n");
       assert.equal(descriptions.includes("settlement signer funds"), false);
       assert.equal(descriptions.includes("backend-signer tools"), false);
@@ -2292,20 +1611,46 @@ const tests = [
       assert.ok(names.includes("plan_agent_action"));
       assert.ok(names.includes("run_agent_action"));
       assert.ok(names.includes("list_agent_tools"));
+      assert.ok(names.includes("get_launchpad_architecture"));
+      assert.ok(names.includes("plan_token_launch"));
+      assert.ok(names.includes("create_token_launch"));
+      assert.ok(names.includes("deploy_launch_token"));
+      assert.ok(names.includes("seed_launch_liquidity"));
+      assert.ok(names.includes("open_launch_trading"));
+      assert.ok(names.includes("monitor_launch"));
+      assert.ok(names.includes("get_launch_fees"));
+      assert.ok(names.includes("accrue_launch_fees"));
+      assert.ok(names.includes("claim_launch_fees"));
+      assert.ok(names.includes("get_agent_treasury"));
+      assert.ok(names.includes("spend_agent_compute"));
+      assert.ok(names.includes("list_launch_feed"));
       const agentTools = await callMcpTool("list_agent_tools", {});
       assert.equal(agentTools.tools.includes("create_wallet"), false);
       for (const name of [
         "get_balance",
+        "get_launchpad_architecture",
+        "plan_token_launch",
+        "create_token_launch",
+        "deploy_launch_token",
+        "seed_launch_liquidity",
+        "open_launch_trading",
+        "get_token_launch",
+        "list_token_launches",
+        "get_launch_receipt",
+        "monitor_launch",
+        "get_launch_fees",
+        "accrue_launch_fees",
+        "claim_launch_fees",
+        "get_agent_treasury",
+        "spend_agent_compute",
+        "list_launch_feed",
         "sync_circle_balances",
         "list_approvals",
         "get_defi_action_receipt",
         "propose_copy_trade",
         "create_airdrop",
         "list_arc_trading_primitives",
-        "arc_perps_readiness",
         "appkit_readiness",
-        "list_perp_markets",
-        "close_arc_perp_user_position",
         "get_market_intelligence",
         "get_market_feed_snapshot",
         "create_mandate",
@@ -2412,29 +1757,6 @@ const tests = [
       assert.equal(cirBtcSwap.intent.toToken, "cirBTC");
       assert.equal(cirBtcSwap.plan.arguments.toToken, "cirBTC");
 
-      const planned = await callMcpTool("plan_agent_action", {
-        handle: "@sara",
-        text: "long btc with $5 at 2x"
-      });
-      assert.equal(planned.plan.tool, "propose_perp_trade");
-      assert.equal(planned.signer.backendSignerAllowed, false);
-
-      const closePerp = planAgentAction({
-        handle: "@sara",
-        text: "close arc perp position #42"
-      });
-      assert.equal(closePerp.plan.tool, "close_arc_perp_user_position");
-      assert.equal(closePerp.plan.arguments.positionId, 42);
-      assert.equal(closePerp.signer.backendSignerAllowed, false);
-
-      const closeNaturalPerp = planAgentAction({
-        handle: "@sara",
-        text: "close my perp position"
-      });
-      assert.equal(closeNaturalPerp.plan.tool, "close_arc_perp_user_position");
-      assert.equal(closeNaturalPerp.plan.arguments.positionRef, "latest_open");
-      assert.equal(closeNaturalPerp.plan.arguments.symbol, undefined);
-
       const balance = planAgentAction({
         handle: "@sara",
         text: "show my balance"
@@ -2475,38 +1797,208 @@ const tests = [
       });
       assert.equal(marketPlan.plan.tool, "get_market_intelligence");
 
-      const automationCapability = planAgentAction({
+      const treasuryPlan = planAgentAction({
         handle: "@sara",
-        text: "what automations can you run?"
+        text: "show my agent treasury"
       });
-      assert.equal(automationCapability.plan.tool, "answer_agent_question");
-      assert.equal(automationCapability.plan.arguments.questionKind, "automation_capabilities");
-      assert.equal(automationCapability.plan.arguments.topic, "automation");
+      assert.equal(treasuryPlan.plan.tool, "get_agent_treasury");
+      assert.equal(treasuryPlan.plan.arguments.handle, "@sara");
 
-      const swapCapability = planAgentAction({
+      const launchFeedPlan = planAgentAction({
         handle: "@sara",
-        text: "what tokens can you swap?"
+        text: "list latest launch feed"
       });
-      assert.equal(swapCapability.plan.tool, "answer_agent_question");
-      assert.equal(swapCapability.plan.arguments.questionKind, "swap_capabilities");
+      assert.equal(launchFeedPlan.plan.tool, "list_launch_feed");
 
-      const followUpHowTo = planAgentAction({
+      const spendComputePlan = planAgentAction({
         handle: "@sara",
-        text: "how to use this?",
-        conversation: [
-          { role: "user", content: "what tokens can you swap?" },
-          { role: "agent", content: "Right now I can try these live swaps: USDC to EURC on Arc." }
-        ]
+        text: "spend $1 compute on llm"
       });
-      assert.equal(followUpHowTo.plan.tool, "answer_agent_question");
-      assert.equal(followUpHowTo.plan.arguments.questionKind, "how_to");
-      assert.equal(followUpHowTo.plan.arguments.topic, "swap");
+      assert.equal(spendComputePlan.plan.tool, "spend_agent_compute");
+      assert.equal(spendComputePlan.plan.arguments.handle, "@sara");
 
-      const explicitAutomationList = planAgentAction({
-        handle: "@sara",
-        text: "show my automations"
+      const launchArchitecture = await callMcpTool("get_launchpad_architecture", {});
+      assert.equal(launchArchitecture.ok, true);
+      assert.equal(launchArchitecture.architecture.chain.id, "arc-testnet");
+
+      const launchPlan = await callMcpTool("plan_token_launch", {
+        creatorHandle: "@sara",
+        symbol: "ARCC",
+        liquiditySeedUsd: 100,
+        liquidityLockDays: 90
       });
-      assert.equal(explicitAutomationList.plan.tool, "list_automations");
+      assert.equal(launchPlan.ok, true);
+      assert.equal(launchPlan.status, "plan_only");
+      assert.equal(launchPlan.token.symbol, "ARCC");
+
+      const naturalLaunch = planAgentAction({
+        handle: "@sara",
+        text: "launch ARCC with $100 liquidity lock for 90 days"
+      });
+      assert.equal(naturalLaunch.plan.tool, "plan_token_launch");
+      assert.equal(naturalLaunch.plan.arguments.symbol, "ARCC");
+      assert.equal(naturalLaunch.plan.arguments.creatorHandle, "@sara");
+      assert.equal(naturalLaunch.signer.backendSignerAllowed, false);
+    }
+  ],
+  [
+    "executes token launch lifecycle through MCP and agent tools",
+    async () => {
+      await fundWallet({
+        handle: "@launchsmith",
+        amount: 200,
+        source: "test_launch_liquidity",
+        settlementRail: "arc-testnet"
+      });
+
+      const created = await callMcpTool("create_token_launch", {
+        creatorHandle: "@launchsmith",
+        name: "Launch Smith Token",
+        symbol: "LST",
+        totalSupply: 500000,
+        liquiditySeedUsd: 25,
+        liquidityLockDays: 45,
+        grants: ["deploy_token", "seed_liquidity", "open_trading"],
+        idempotencyKey: "test_launch_create_001"
+      });
+      assert.equal(created.ok, true);
+      assert.equal(created.launch.status, "draft");
+      assert.equal(created.launch.token.symbol, "LST");
+
+      const listed = await callMcpTool("list_token_launches", {
+        creatorHandle: "@launchsmith"
+      });
+      assert.ok(listed.launches.find((launch) => launch.id === created.launch.id));
+
+      const naturalDeployPlan = planAgentAction({
+        handle: "@launchsmith",
+        text: `deploy ${created.launch.id}`
+      });
+      assert.equal(naturalDeployPlan.plan.tool, "deploy_launch_token");
+
+      const deployed = await callMcpTool("deploy_launch_token", {
+        launchId: created.launch.id,
+        handle: "@launchsmith",
+        idempotencyKey: "test_launch_deploy_001"
+      });
+      assert.equal(deployed.ok, true);
+      assert.equal(deployed.launch.status, "token_deployed");
+      assert.ok(deployed.tokenAddress.startsWith("0x"));
+
+      const seeded = await callMcpTool("seed_launch_liquidity", {
+        launchId: created.launch.id,
+        handle: "@launchsmith",
+        amountUsd: 25,
+        idempotencyKey: "test_launch_seed_001"
+      });
+      assert.equal(seeded.ok, true);
+      assert.equal(seeded.launch.status, "liquidity_seeded");
+      assert.ok(seeded.lockId.startsWith("lock_"));
+
+      const live = await callMcpTool("open_launch_trading", {
+        launchId: created.launch.id,
+        handle: "@launchsmith",
+        idempotencyKey: "test_launch_live_001"
+      });
+      assert.equal(live.ok, true);
+      assert.equal(live.launch.status, "live");
+      assert.equal(live.market.pair, "LST/USDC");
+
+      const fetched = await callMcpTool("get_token_launch", {
+        launchId: created.launch.id
+      });
+      assert.equal(fetched.launch.status, "live");
+
+      const monitor = await callMcpTool("monitor_launch", {
+        launchId: created.launch.id
+      });
+      assert.equal(monitor.ok, true);
+      assert.equal(monitor.monitor.routeHealth, "local_pool_ready");
+      assert.equal(monitor.monitor.lockStatus, "locked");
+
+      const accrued = await callMcpTool("accrue_launch_fees", {
+        launchId: created.launch.id,
+        handle: "@launchsmith",
+        volumeUsd: 1000,
+        source: "test_trade_volume",
+        idempotencyKey: "test_launch_fees_001"
+      });
+      assert.equal(accrued.ok, true);
+      assert.equal(accrued.fees.grossFeesUsd, 10);
+      assert.equal(accrued.fees.claimableUsd, 8);
+
+      const launchFees = await callMcpTool("get_launch_fees", {
+        launchId: created.launch.id
+      });
+      assert.equal(launchFees.ok, true);
+      assert.equal(launchFees.fees.totalVolumeUsd, 1000);
+      assert.equal(launchFees.fees.claimableUsd, 8);
+
+      const claimed = await callMcpTool("claim_launch_fees", {
+        launchId: created.launch.id,
+        handle: "@launchsmith",
+        destination: "compute_credits",
+        idempotencyKey: "test_launch_claim_001"
+      });
+      assert.equal(claimed.ok, true);
+      assert.equal(claimed.fees.claimableUsd, 0);
+      assert.equal(claimed.fees.computeCreditsUsd, 8);
+
+      const treasury = await callMcpTool("get_agent_treasury", {
+        handle: "@launchsmith"
+      });
+      assert.equal(treasury.ok, true);
+      assert.equal(treasury.treasury.computeCreditsUsd, 8);
+      assert.equal(treasury.treasury.runwayDays > 0, true);
+
+      const spent = await callMcpTool("spend_agent_compute", {
+        handle: "@launchsmith",
+        launchId: created.launch.id,
+        amountUsd: 2,
+        purpose: "llm_usage",
+        idempotencyKey: "test_launch_compute_001"
+      });
+      assert.equal(spent.ok, true);
+      assert.equal(spent.treasury.computeCreditsUsd, 6);
+
+      const feed = await callMcpTool("list_launch_feed", {
+        limit: 10
+      });
+      assert.equal(feed.ok, true);
+      assert.ok(feed.launches.find((launch) => launch.id === created.launch.id));
+
+      const receipt = await callMcpTool("get_launch_receipt", {
+        launchId: created.launch.id,
+        host: "example.test",
+        protocol: "https"
+      });
+      assert.equal(receipt.ok, true);
+      assert.match(receipt.receipt.publicUrl, /https:\/\/example\.test\/launchpad\/launch_/);
+      assert.equal(receipt.receipt.timeline.length >= 3, true);
+
+      const naturalReceipt = await callMcpTool("run_agent_action", {
+        handle: "@launchsmith",
+        text: `show receipt ${created.launch.id}`,
+        source: "test-launch-agent"
+      });
+      assert.equal(naturalReceipt.ok, true);
+      assert.equal(naturalReceipt.planned.plan.tool, "get_launch_receipt");
+      assert.equal(naturalReceipt.result.receipt.launch.status, "live");
+
+      const naturalTreasury = await callMcpTool("run_agent_action", {
+        handle: "@launchsmith",
+        text: "show my agent treasury",
+        source: "test-launch-agent"
+      });
+      assert.equal(naturalTreasury.ok, true);
+      assert.equal(naturalTreasury.planned.plan.tool, "get_agent_treasury");
+      assert.equal(naturalTreasury.result.treasury.computeCreditsUsd, 6);
+
+      const naturalFeesPlan = planAgentAction({
+        handle: "@launchsmith",
+        text: `show fees ${created.launch.id}`
+      });
+      assert.equal(naturalFeesPlan.plan.tool, "get_launch_fees");
     }
   ],
   [
@@ -2558,22 +2050,16 @@ const tests = [
       assert.equal(balance.planned.plan.tool, "get_balance");
       assert.equal(balance.result.wallet.handle, "@sara");
 
-      const automationHelp = await callMcpTool("run_agent_action", {
+      const launch = await runAgentAction({
         handle: "@sara",
-        text: "what automations can you run?"
+        text: "launch ARCC with $100 liquidity lock for 90 days",
+        source: "test-agent-run",
+        fast: true
       });
-      assert.equal(automationHelp.ok, true);
-      assert.equal(automationHelp.planned.plan.tool, "answer_agent_question");
-      assert.match(automationHelp.result.answer, /only create one when you give me a clear schedule/i);
-      assert.equal(Array.isArray(automationHelp.result.automations), true);
-
-      const swapHelp = await callMcpTool("run_agent_action", {
-        handle: "@sara",
-        text: "what tokens can you swap?"
-      });
-      assert.equal(swapHelp.ok, true);
-      assert.equal(swapHelp.planned.plan.tool, "answer_agent_question");
-      assert.match(swapHelp.result.answer, /live swaps|do not see any live swap/i);
+      assert.equal(launch.ok, true);
+      assert.equal(launch.planned.plan.tool, "plan_token_launch");
+      assert.equal(launch.result.status, "plan_only");
+      assert.equal(launch.result.token.symbol, "ARCC");
 
       const airdrop = await callMcpTool("run_agent_action", {
         handle: "@sara",
@@ -2594,54 +2080,14 @@ const tests = [
       assert.equal(readiness.planned.plan.tool, "appkit_readiness");
       assert.equal(readiness.result.backendSignerAllowed, false);
 
-      const closePerp = await callMcpTool("run_agent_action", {
+      const copyProposal = await callMcpTool("propose_copy_trade", {
         handle: "@sara",
-        text: "close arc perp position #42",
-        source: "test-agent-run"
+        traderHandle: "@macro_mira",
+        capitalUsd: 25,
+        riskProfile: "balanced"
       });
-      assert.equal(closePerp.ok, false);
-      assert.equal(closePerp.planned.plan.tool, "close_arc_perp_user_position");
-      assert.equal(closePerp.execution.status, "user_wallet_signing_required");
-      assert.equal(closePerp.execution.ok, false);
-      assert.equal(closePerp.signer.backendSignerAllowed, false);
-      assert.match(closePerp.execution.reason, /user wallet|Circle user wallet|Set ARC_PERPS/i);
-      assert.match(closePerp.narrative.summary, /wallet is not ready to sign|Nothing was changed/i);
-      assert.doesNotMatch(closePerp.narrative.summary, /backend signer|close-position path/i);
-
-      ledger.perpProposals.push({
-        id: "perp_memory_close_001",
-        handle: "@sara",
-        symbol: "BTC",
-        side: "long",
-        collateralUsd: 1,
-        leverage: 2,
-        settlementRail: "arc-testnet",
-        status: "submitted",
-        positionId: 77,
-        txHash: "0xabc",
-        createdAt: new Date().toISOString()
-      });
-      const closeLatestPerp = await callMcpTool("run_agent_action", {
-        handle: "@sara",
-        text: "close my perp position",
-        source: "test-agent-run"
-      });
-      assert.equal(closeLatestPerp.ok, false);
-      assert.equal(closeLatestPerp.planned.plan.tool, "close_arc_perp_user_position");
-      assert.equal(closeLatestPerp.planned.plan.arguments.symbol, undefined);
-      assert.equal(closeLatestPerp.result.status, "user_wallet_signing_required");
-      assert.equal(closeLatestPerp.result.target?.positionId, 77);
-      assert.doesNotMatch(closeLatestPerp.execution.reason || "", /\bCLOSE\b/);
-
-      const perpProposal = await runAgentAction({
-        handle: "@sara",
-        text: "long BTC with $1 2x",
-        source: "test-agent-run",
-        idempotencyKey: "test_agent_perp_approval_memory"
-      });
-      assert.equal(perpProposal.ok, true);
-      assert.equal(perpProposal.planned.plan.tool, "propose_perp_trade");
-      assert.equal(perpProposal.result.proposal.status, "requires_confirmation");
+      assert.equal(copyProposal.ok, true);
+      assert.equal(copyProposal.proposal.status, "requires_confirmation");
 
       const approvalMemory = planAgentAction({
         handle: "@sara",
@@ -2669,15 +2115,6 @@ const tests = [
       assert.equal(bridgeStatus.plan.arguments.actionId, "__latest__");
       assert.equal(bridgeStatus.plan.arguments.type, "bridge");
 
-      const bridgeWhatHappened = planAgentAction({
-        handle: "@sara",
-        text: "what happened with my bridge?",
-        source: "test-agent-run"
-      });
-      assert.equal(bridgeWhatHappened.plan.tool, "get_defi_action_receipt");
-      assert.equal(bridgeWhatHappened.plan.arguments.actionId, "__latest__");
-      assert.equal(bridgeWhatHappened.plan.arguments.type, "bridge");
-
       const unclear = await callMcpTool("run_agent_action", {
         handle: "@sara",
         text: "do something smart with my bags"
@@ -2689,56 +2126,6 @@ const tests = [
       assert.equal(unclear.narrative.mode, "clarifying");
       assert.match(unclear.narrative.summary, /one more detail/i);
       assert.equal(unclear.agentState.handle, "@sara");
-    }
-  ],
-  [
-    "builds user-facing execution truth without backend noise",
-    async () => {
-      const truth = buildExecutionTruth({
-        kind: "defi_action",
-        actionType: "swap",
-        status: "quote_unavailable",
-        reason: "Provider details: AppKit: Server error (500); LI.FI fallback: no quotes",
-        txHash: "0x<redacted_private_key>",
-        nextAction: "choose_supported_route",
-        route: "1 USDC to cirBTC on Arc"
-      });
-      assert.equal(truth.phase, "failed");
-      assert.equal(truth.label, "Swap");
-      assert.equal(truth.txHash, null);
-      assert.match(truth.message, /could not complete swap/i);
-      assert.doesNotMatch(truth.reason || "", /AppKit|LI\.FI|Provider details/i);
-      assert.equal(truth.nextAction, "Try a live route.");
-
-      const submitted = truthFromAgentPayload({
-        ok: true,
-        status: "submitted",
-        planned: {
-          handle: "@sara",
-          intent: { action: "quote_swap", amount: 1, fromToken: "USDC", toToken: "EURC", settlementRail: "arc-testnet" },
-          plan: { tool: "quote_defi_route" }
-        },
-        result: {
-          action: {
-            id: "defi_truth_001",
-            type: "swap",
-            status: "submitted",
-            request: { amount: 1, fromToken: "USDC", toToken: "EURC", settlementRail: "arc-testnet" },
-            txHash: "0x2c62f00d00000000000000000000000000000000000000000000000000000000"
-          }
-        },
-        execution: {
-          tool: "quote_defi_route",
-          status: "submitted",
-          txHash: "0x2c62f00d00000000000000000000000000000000000000000000000000000000",
-          ids: { actionId: "defi_truth_001" }
-        }
-      });
-      assert.equal(submitted.phase, "submitted");
-      assert.equal(submitted.label, "Swap");
-      assert.match(submitted.message, /submitted on-chain/i);
-      assert.equal(submitted.target, "1 USDC to EURC on Arc");
-      assert.match(submitted.txHash, /^0x/);
     }
   ],
   [
@@ -2803,18 +2190,6 @@ const tests = [
       assert.equal(redactSensitive({
         text: "private-ish 0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       }).text.includes("0x<redacted_private_key>"), true);
-      const mcpText = redactSensitive({
-        text: JSON.stringify({
-          txHash: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-          nested: {
-            transactionHash: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-          },
-          note: "private-ish 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-        })
-      }).text;
-      assert.ok(mcpText.includes("0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"));
-      assert.ok(mcpText.includes("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"));
-      assert.ok(mcpText.includes("0x<redacted_private_key>"));
     }
   ],
   [
@@ -2937,14 +2312,15 @@ const tests = [
     "routes memory questions to agent memory and exposes recent trading context",
     async () => {
       await callMcpTool("create_wallet", { handle: "@memorytrader" });
+      await fundWallet({ handle: "@memorytrader", amount: 5, settlementRail: "arc-testnet" });
       const proposed = await runAgentAction({
         handle: "@memorytrader",
-        text: "long BTC with $1 2x",
+        text: "swap $1 USDC to EURC on arc",
         source: "test-memory",
         fast: true
       });
-      assert.equal(proposed.planned.plan.tool, "propose_perp_trade");
-      assert.equal(proposed.result.proposal.status, "requires_confirmation");
+      assert.equal(proposed.planned.plan.tool, "quote_defi_route");
+      assert.ok(proposed.result.action.id);
 
       const planned = planAgentAction({
         handle: "@memorytrader",
@@ -2955,12 +2331,12 @@ const tests = [
 
       const memory = buildAgentMemoryReport({ handle: "@memorytrader" });
       assert.equal(memory.ok, true);
-      assert.ok(memory.recent.trades.find((trade) => trade.id === proposed.result.proposal.id));
-      assert.equal(memory.memory.lastTrade.id, proposed.result.proposal.id);
+      assert.ok(memory.recent.trades.find((trade) => trade.id === proposed.result.action.id));
+      assert.equal(memory.memory.lastTrade.id, proposed.result.action.id);
 
       const mcpMemory = await callMcpTool("get_agent_memory", { handle: "@memorytrader" });
       assert.equal(mcpMemory.ok, true);
-      assert.ok(mcpMemory.recent.trades.find((trade) => trade.id === proposed.result.proposal.id));
+      assert.ok(mcpMemory.recent.trades.find((trade) => trade.id === proposed.result.action.id));
     }
   ],
   [

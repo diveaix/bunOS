@@ -27,15 +27,6 @@ const protocols = [
     chains: ["polygon"],
     execution: "confirmation_required",
     risk: "high"
-  },
-  {
-    id: "hyperliquid",
-    name: "Hyperliquid",
-    category: "perps",
-    capabilities: ["markets", "positions", "place_order"],
-    chains: ["hypercore", "hyperevm"],
-    execution: "confirmation_required",
-    risk: "very_high"
   }
 ];
 

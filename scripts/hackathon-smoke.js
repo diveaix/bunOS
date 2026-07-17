@@ -30,8 +30,7 @@ await record("wallet_capabilities", async () => {
     backendSignerAllowed: capabilities.backendSignerAllowed,
     canSendUsdc: capabilities.capabilities.sendUsdc,
     bridgeExecution: capabilities.rails[0]?.bridgeStatus || capabilities.capabilities.bridgeUsdc,
-    swapExecution: capabilities.rails[0]?.swapStatus || capabilities.capabilities.swap,
-    perpsExecution: capabilities.rails[0]?.perpsStatus || capabilities.capabilities.perps
+    swapExecution: capabilities.rails[0]?.swapStatus || capabilities.capabilities.swap
   };
 });
 
@@ -68,12 +67,12 @@ await record("agent_swap_quote", async () => {
   return compactAgentRun(result);
 });
 
-await record("x_perps_command", async () => {
+await record("x_send_command", async () => {
   const result = await processXPaymentEvent({
     actorHandle: handle,
-    text: "@bunOS long BTC with 5 USDC at 2x",
-    postId: `${runId}_perp`,
-    eventId: `${runId}:perp`,
+    text: "@bunOS send $1 USDC to @bob",
+    postId: `${runId}_send`,
+    eventId: `${runId}:send_x`,
     settlementRail: rail,
     source: "hackathon-smoke"
   });
@@ -85,8 +84,6 @@ await record("x_perps_command", async () => {
   return {
     commandId: result.command.id,
     commandStatus: result.command.status,
-    proposalId: result.proposal?.id || null,
-    proposalStatus: result.proposal?.status || null,
     approvalId: result.approval?.id || null,
     publicUrl: receipt.publicUrl,
     reply: receipt.reply

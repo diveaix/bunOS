@@ -16,14 +16,14 @@ const traderProfiles = [
     recentSignal: "Risk-on rotation, ETH beta preferred over majors."
   },
   {
-    handle: "@perp_ren",
-    style: "perps",
+    handle: "@trend_ren",
+    style: "momentum",
     sharpe: 1.35,
     maxDrawdown: 0.18,
     hitRate: 0.54,
     signalQuality: 0.76,
     staleSignalRate: 0.16,
-    recentSignal: "BTC funding elevated, wait for reset before long."
+    recentSignal: "BTC momentum is stretched; wait for a cleaner spot entry."
   },
   {
     handle: "@stable_sia",
@@ -96,7 +96,7 @@ export function proposeCopyTrade({
     signer: userWalletSigningRequired({
       operation: "copy_trade_allocation",
       settlementRail,
-      reason: "Live copy-trade execution requires user-owned swap/perp adapters."
+      reason: "Live copy-trade execution requires user-owned swap adapters."
     }),
     rationale: [
       `Score ${scoreTrader(trader, riskProfile).toFixed(2)} from Sharpe ${trader.sharpe}.`,
@@ -157,7 +157,7 @@ export function confirmCopyTradeProposal({ proposalId } = {}) {
   proposal.execution = {
     mode: "dry-run",
     backendSignerAllowed: false,
-    reason: "Live copy execution requires configured user-owned swap/perp adapters and user approval policy."
+    reason: "Live copy execution requires configured user-owned swap adapters and user approval policy."
   };
   recordEvent("copy_trade_confirmed", {
     handle: proposal.handle,

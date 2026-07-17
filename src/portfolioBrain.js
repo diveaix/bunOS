@@ -41,7 +41,6 @@ export function buildPortfolioSnapshot({ handle = "@sara", settlementRail } = {}
     round(assets.filter((asset) => asset.rail === rail).reduce((sum, asset) => sum + asset.valueUsd, 0))
   ]));
   const exposure = exposureSummary({ assetsByToken, totalValueUsd });
-  const perps = perpsExposure({ handle: user.handle, totalValueUsd });
   const pending = pendingActions({ handle: user.handle });
   const strategy = strategyDrift({ user, assetsByToken, totalValueUsd, settlementRail });
   const lastTrade = user.agentMemory?.lastTrade || null;
@@ -59,7 +58,6 @@ export function buildPortfolioSnapshot({ handle = "@sara", settlementRail } = {}
     assets,
     assetsByToken,
     exposure,
-    perps,
     idleCapital: {
       stableUsd: exposure.stableUsd,
       dominantStable: dominantStable(assetsByToken),
@@ -68,7 +66,7 @@ export function buildPortfolioSnapshot({ handle = "@sara", settlementRail } = {}
     pending,
     strategy,
     lastTrade,
-    risk: riskSummary({ exposure, perps, pending, strategy })
+    risk: riskSummary({ exposure, pending, strategy })
   };
 }
 
@@ -86,15 +84,6 @@ function buildPortfolioRecommendations({ user, snapshot }) {
       "high",
       `${snapshot.pending.count} action(s) are still pending. Let them settle before stacking more risk.`,
       "refresh_execution_monitor"
-    ));
-  }
-
-  if (snapshot.perps.activeNotionalUsd > snapshot.totalValueUsd * 0.5 && snapshot.totalValueUsd > 0) {
-    recommendations.push(recommendation(
-      "reduce_perps_exposure",
-      "high",
-      "Perps notional is large relative to wallet value. Avoid adding leverage until exposure falls.",
-      "assess_liquidation_risk"
     ));
   }
 
@@ -194,30 +183,6 @@ function exposureSummary({ assetsByToken, totalValueUsd }) {
   };
 }
 
-function perpsExposure({ handle, totalValueUsd }) {
-  const proposals = ledger.perpProposals
-    .filter((proposal) => proposal.handle === normalizeHandle(handle))
-    .slice()
-    .reverse();
-  const active = proposals.filter((proposal) => ["confirmed", "submitted", "settled"].includes(String(proposal.status || "").toLowerCase()));
-  const pending = proposals.filter((proposal) => ["requires_confirmation", "confirmed"].includes(String(proposal.status || "").toLowerCase()));
-  const activeNotionalUsd = round(active.reduce((sum, proposal) => sum + Number(proposal.notionalUsd || 0), 0));
-  return {
-    activeCount: active.length,
-    pendingCount: pending.length,
-    activeNotionalUsd,
-    notionalToWallet: totalValueUsd > 0 ? round(activeNotionalUsd / totalValueUsd, 6) : 0,
-    recent: proposals.slice(0, 5).map((proposal) => ({
-      id: proposal.id,
-      symbol: proposal.symbol,
-      side: proposal.side,
-      status: proposal.status,
-      notionalUsd: proposal.notionalUsd,
-      riskScore: proposal.risk?.riskScore || null
-    }))
-  };
-}
-
 function pendingActions({ handle }) {
   const normalized = normalizeHandle(handle);
   const defi = ledger.defiActions.filter((action) => action.handle === normalized && PENDING_STATUSES.has(String(action.status || "").toLowerCase()));
@@ -279,10 +244,9 @@ function strategyDrift({ user, assetsByToken, totalValueUsd, settlementRail }) {
   };
 }
 
-function riskSummary({ exposure, perps, pending, strategy }) {
+function riskSummary({ exposure, pending, strategy }) {
   const warnings = [];
   if (exposure.volatileWeight > 0.45) warnings.push("High volatile exposure.");
-  if (perps.notionalToWallet > 0.5) warnings.push("Perps notional is high relative to wallet value.");
   if (pending.count) warnings.push(`${pending.count} pending action(s) need follow-through.`);
   if (strategy.status === "drifted") warnings.push("Portfolio has drifted from its active strategy.");
   return {

@@ -21,7 +21,6 @@ export default function Wallet() {
   const [agentHealth, setAgentHealth] = useState(null);
   const [agentEvents, setAgentEvents] = useState([]);
   const [automations, setAutomations] = useState([]);
-  const [routeCapabilities, setRouteCapabilities] = useState({ live: [], unavailable: [] });
   const [cockpitLoading, setCockpitLoading] = useState(false);
   const [cockpitError, setCockpitError] = useState("");
   const [modal, setModal] = useState(null);
@@ -34,24 +33,18 @@ export default function Wallet() {
   const loadActivity = useCallback(async () => {
     if (!currentHandle) return;
     try {
-      const [ledger, approvalData, defiData, airdropData, primitiveData, routeData] = await Promise.all([
+      const [ledger, approvalData, defiData, airdropData, primitiveData] = await Promise.all([
         fetchJson("/api/state"),
         fetchJson(`/api/approvals?handle=${encodeURIComponent(currentHandle)}&limit=25`),
         fetchJson(`/api/defi/actions?handle=${encodeURIComponent(currentHandle)}&limit=25`),
         fetchJson(`/api/airdrops?handle=${encodeURIComponent(currentHandle)}&limit=25`),
         fetchJson("/api/arc/trading-primitives"),
-        fetchJson("/api/defi/routes"),
       ]);
       setPayments(ledger.payments || []);
       setApprovals(approvalData.approvals || []);
       setDefiActions(defiData.actions || []);
       setAirdrops(airdropData.airdrops || []);
       setPrimitives(primitiveData.primitives || []);
-      const routeRows = routeData.routes || [];
-      setRouteCapabilities({
-        live: routeRows.filter((route) => route.status === "live"),
-        unavailable: routeRows.filter((route) => route.status !== "live"),
-      });
     } catch {}
   }, [currentHandle]);
 
@@ -293,10 +286,6 @@ export default function Wallet() {
   const railOptions = rails.map((r) => (
     <option key={r.id} value={r.id}>{r.label}</option>
   ));
-  const liveSwapRoutes = routeCapabilities.live.filter((route) => route.type === "swap" && route.fromRail === selectedRail);
-  const unavailableSwapRoutes = routeCapabilities.unavailable
-    .filter((route) => route.type === "swap" && route.fromRail === selectedRail)
-    .slice(0, 4);
 
   const connectCopy = config.x?.authMode === "real"
     ? "Connect with real X OAuth. Circle wallets are provisioned after authorization."
@@ -572,37 +561,10 @@ export default function Wallet() {
       <Modal id="modalSwap" open={modal === "swap"} onClose={() => setModal(null)} title="Swap tokens">
         <form onSubmit={handleSwap} className="modal-form" style={{ padding: 0 }}>
           <label><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" defaultValue="1" /></label>
-          {liveSwapRoutes.length ? (
-            <label><span>Live route</span>
-              <select
-                name="routePair"
-                defaultValue={`${liveSwapRoutes[0].fromToken}|${liveSwapRoutes[0].toToken}`}
-                onChange={(event) => {
-                  const [fromToken, toToken] = String(event.target.value).split("|");
-                  const form = event.currentTarget.form;
-                  if (form) {
-                    form.elements.fromToken.value = fromToken || "USDC";
-                    form.elements.toToken.value = toToken || "EURC";
-                  }
-                }}
-              >
-                {liveSwapRoutes.map((route) => (
-                    <option key={route.id} value={`${route.fromToken}|${route.toToken}`}>
-                      {`${route.fromToken} -> ${route.toToken}`}
-                    </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <label><span>Pay token</span><input name="fromToken" type="text" defaultValue={liveSwapRoutes[0]?.fromToken || "USDC"} placeholder="USDC or 0x..." /></label>
-          <label><span>Receive token</span><input name="toToken" type="text" defaultValue={liveSwapRoutes[0]?.toToken || "EURC"} placeholder="EURC or 0x..." /></label>
+          <label><span>Pay token</span><input name="fromToken" type="text" defaultValue="USDC" placeholder="USDC, EURC, cirBTC, WETH, or 0x..." /></label>
+          <label><span>Receive token</span><input name="toToken" type="text" defaultValue="EURC" placeholder="USDC, EURC, cirBTC, WETH, or 0x..." /></label>
           <label><span>Max slippage</span><input name="slippage" type="number" min="0" max="0.05" step="0.001" defaultValue="0.005" /></label>
           <label><span>Network</span><select name="fromRail">{railOptions}</select></label>
-          {unavailableSwapRoutes.length ? (
-            <div className="route-note">
-              Not available right now: {unavailableSwapRoutes.map((route) => `${route.fromToken}->${route.toToken}`).join(", ")}
-            </div>
-          ) : null}
           <button type="submit" className="primary-action full-width">Get swap quote</button>
         </form>
       </Modal>
@@ -829,7 +791,7 @@ function railTokenTotal(wallet, railId) {
 }
 
 function actionLabel(action) {
-  const labels = { bridge: "Bridge quote", swap: "Swap quote", polymarket_search: "Market search", hyperliquid_markets: "Perp discovery" };
+  const labels = { bridge: "Bridge quote", swap: "Swap quote", polymarket_search: "Market search" };
   return labels[action.type] || action.type;
 }
 

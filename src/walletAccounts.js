@@ -49,10 +49,8 @@ export function getWalletCapabilities(handle) {
       swapSigner: defiExecutionConfigured
         ? circleUserSigner({ operation: "swap", settlementRail: rail.id, executionStatus: "configured" })
         : userWalletSigningRequired({ operation: "swap", settlementRail: rail.id }),
-      perpsSigner: userWalletSigningRequired({ operation: "open_perp_position", settlementRail: rail.id }),
       bridgeStatus: defiExecutionConfigured ? "circle_contract_execution_configured" : "user_wallet_signing_required",
-      swapStatus: defiExecutionConfigured ? "circle_contract_execution_configured" : "user_wallet_signing_required",
-      perpsStatus: config.arcPerps.executionEnabled ? "circle_contract_execution_after_confirmation" : "user_wallet_signing_required"
+      swapStatus: defiExecutionConfigured ? "circle_contract_execution_configured" : "user_wallet_signing_required"
     };
   });
 
@@ -71,7 +69,6 @@ export function getWalletCapabilities(handle) {
       requestTestnetUsdc: wallet.onboarded,
       bridgeUsdc: defiExecutionConfigured ? "circle_contract_execution_after_confirmation" : "quote_only_until_user_signing_adapter",
       swap: defiExecutionConfigured ? "circle_contract_execution_after_confirmation" : "quote_only_until_user_signing_adapter",
-      perps: config.arcPerps.executionEnabled ? "circle_contract_execution_after_confirmation" : "proposal_only_until_user_signing_adapter",
       appKit: "disabled_until_user_owned_adapter"
     },
     rails

@@ -23,23 +23,45 @@ export default function Layout() {
         </Link>
 
         <nav className="top-nav" aria-label="Main navigation">
+          <NavLink to="/launchpad" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 20V9" />
+              <path d="M12 20V4" />
+              <path d="M20 20v-7" />
+              <path d="M2 20h20" />
+              <path d="M8 9l4-5 4 5" />
+            </svg>
+            Launchpad
+          </NavLink>
+          <NavLink to="/terminal" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+            <span className="terminal-nav-glyph" aria-hidden="true">&gt;_</span>
+            Terminal
+          </NavLink>
+          <NavLink to="/agents" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 8V4" />
+              <path d="M8 4h8" />
+              <rect x="5" y="8" width="14" height="10" rx="3" />
+              <path d="M9 13h.01" />
+              <path d="M15 13h.01" />
+              <path d="M9 18v2" />
+              <path d="M15 18v2" />
+            </svg>
+            Agents
+          </NavLink>
+          <NavLink to="/mcp-guide" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+            </svg>
+            MCP
+          </NavLink>
           <NavLink to="/wallet" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
               <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
               <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
             </svg>
-            Assets
-          </NavLink>
-          <NavLink to="/terminal" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
-            <span className="terminal-nav-glyph" aria-hidden="true">&gt;_</span>
-            Terminal
-          </NavLink>
-          <NavLink to="/mcp-guide" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
-            </svg>
-            MCP Guide
+            Wallet
           </NavLink>
           <NavLink to="/api-keys" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
             <svg viewBox="0 0 24 24" aria-hidden="true">

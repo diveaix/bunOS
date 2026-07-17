@@ -1,16 +1,8 @@
 import { config } from "./config.js";
 import { normalizeHandle } from "./identity.js";
-import { buildPendingIntent } from "./agentWorkingMemory.js";
 
 const ALLOWED_ACTIONS = new Set([
   "send_payment",
-  "answer_agent_question",
-  "cancel_agent_task",
-  "create_workflow",
-  "resume_agent_workflow",
-  "get_agent_workflow",
-  "list_agent_workflows",
-  "cancel_agent_workflow",
   "create_social_bounty",
   "create_airdrop",
   "award_airdrop",
@@ -18,8 +10,8 @@ const ALLOWED_ACTIONS = new Set([
   "get_airdrop_receipt",
   "quote_bridge",
   "quote_swap",
-  "propose_perp_trade",
   "get_balance",
+  "get_agent_memory",
   "analyze_portfolio",
   "sync_circle_balances",
   "request_testnet_usdc",
@@ -28,17 +20,6 @@ const ALLOWED_ACTIONS = new Set([
   "get_receipt",
   "propose_copy_trade",
   "list_copy_trade_proposals",
-  "list_perp_intelligence",
-  "assess_liquidation_risk",
-  "list_perp_proposals",
-  "arc_perps_readiness",
-  "arc_perps_status",
-  "quote_arc_perp_position",
-  "read_arc_perps_oracle_price",
-  "get_arc_perps_position",
-  "list_arc_perps_positions",
-  "close_all_arc_perp_user_positions",
-  "close_arc_perp_user_position",
   "appkit_readiness",
   "list_appkit_capabilities",
   "appkit_estimate_bridge",
@@ -48,13 +29,11 @@ const ALLOWED_ACTIONS = new Set([
   "appkit_unified_balance",
   "resolve_x_handle",
   "list_defi_tools",
-  "list_route_capabilities",
   "list_arc_trading_primitives",
   "list_defi_actions",
   "reconcile_defi_action",
   "get_defi_action_receipt",
   "get_market_feed_snapshot",
-  "list_perp_markets",
   "create_mandate",
   "list_mandates",
   "update_mandate",
@@ -63,10 +42,10 @@ const ALLOWED_ACTIONS = new Set([
   "list_automations",
   "run_automation",
   "run_due_automations",
-  "pause_automations",
   "pause_automation",
   "resume_automation",
   "delete_automation",
+  "answer_agent_question",
   "clarify"
 ]);
 
@@ -82,7 +61,7 @@ export function getAgentModelReadiness() {
   };
 }
 
-export async function planIntentWithModel({ text, defaultSettlementRail = "arc-testnet", context = {} } = {}) {
+export async function planIntentWithModel({ text, defaultSettlementRail = "arc-testnet" } = {}) {
   const readiness = getAgentModelReadiness();
   if (!readiness.ok) return null;
 
@@ -95,7 +74,7 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
   try {
     response = await callModelJson({
       system,
-      user: JSON.stringify({ text, defaultSettlementRail, context }),
+      user: JSON.stringify({ text, defaultSettlementRail }),
       schema: intentSchema(),
       signal: controller.signal
     });
@@ -110,7 +89,7 @@ export async function planIntentWithModel({ text, defaultSettlementRail = "arc-t
 
   const data = await response.json();
   if (!response.ok) throw new Error(modelErrorMessage(data));
-  return normalizeModelIntent(JSON.parse(extractModelText(data)), defaultSettlementRail);
+  return sanitizeModelIntent(JSON.parse(extractModelText(data)), defaultSettlementRail);
 }
 
 export async function composeExecutionReplyWithModel({
@@ -198,10 +177,6 @@ function intentSchema() {
       fromToken: { type: ["string", "null"] },
       toToken: { type: ["string", "null"] },
       settlementRail: { type: ["string", "null"] },
-      symbol: { type: ["string", "null"] },
-      side: { type: ["string", "null"] },
-      collateralUsd: { type: ["number", "null"] },
-      leverage: { type: ["number", "null"] },
       traderHandle: { type: ["string", "null"] },
       capitalUsd: { type: ["number", "null"] },
       riskProfile: { type: ["string", "null"] },
@@ -210,9 +185,6 @@ function intentSchema() {
       actionId: { type: ["string", "null"] },
       mandateId: { type: ["string", "null"] },
       automationId: { type: ["string", "null"] },
-      workflowId: { type: ["string", "null"] },
-      goal: { type: ["string", "null"] },
-      steps: { type: ["array", "null"], items: { type: "object" } },
       intervalMinutes: { type: ["number", "null"] },
       everyMinutes: { type: ["number", "null"] },
       intervalSeconds: { type: ["number", "null"] },
@@ -220,16 +192,11 @@ function intentSchema() {
       intervalMs: { type: ["number", "null"] },
       maxRuns: { type: ["number", "null"] },
       kind: { type: ["string", "null"] },
-      type: { type: ["string", "null"] },
-      status: { type: ["string", "null"] },
-      includeHidden: { type: ["boolean", "null"] },
       text: { type: ["string", "null"] },
-      positionId: { type: ["number", "null"] },
-      marginUsd: { type: ["number", "null"] },
       limit: { type: ["number", "null"] },
-      question: { type: ["string", "null"] },
       questionKind: { type: ["string", "null"] },
-      topic: { type: ["string", "null"] }
+      topic: { type: ["string", "null"] },
+      question: { type: ["string", "null"] }
     },
     required: [
       "action",
@@ -245,10 +212,6 @@ function intentSchema() {
       "fromToken",
       "toToken",
       "settlementRail",
-      "symbol",
-      "side",
-      "collateralUsd",
-      "leverage",
       "traderHandle",
       "capitalUsd",
       "riskProfile",
@@ -257,9 +220,6 @@ function intentSchema() {
       "actionId",
       "mandateId",
       "automationId",
-      "workflowId",
-      "goal",
-      "steps",
       "intervalMinutes",
       "everyMinutes",
       "intervalSeconds",
@@ -267,16 +227,11 @@ function intentSchema() {
       "intervalMs",
       "maxRuns",
       "kind",
-      "type",
-      "status",
-      "includeHidden",
       "text",
-      "positionId",
-      "marginUsd",
       "limit",
-      "question",
       "questionKind",
-      "topic"
+      "topic",
+      "question"
     ],
     propertyOrdering: [
       "action",
@@ -292,10 +247,6 @@ function intentSchema() {
       "fromToken",
       "toToken",
       "settlementRail",
-      "symbol",
-      "side",
-      "collateralUsd",
-      "leverage",
       "traderHandle",
       "capitalUsd",
       "riskProfile",
@@ -304,9 +255,6 @@ function intentSchema() {
       "actionId",
       "mandateId",
       "automationId",
-      "workflowId",
-      "goal",
-      "steps",
       "intervalMinutes",
       "everyMinutes",
       "intervalSeconds",
@@ -314,16 +262,11 @@ function intentSchema() {
       "intervalMs",
       "maxRuns",
       "kind",
-      "type",
-      "status",
-      "includeHidden",
       "text",
-      "positionId",
-      "marginUsd",
       "limit",
-      "question",
       "questionKind",
-      "topic"
+      "topic",
+      "question"
     ]
   };
 }
@@ -432,29 +375,23 @@ function intentPlannerPrompt() {
   return [
     "You are the bunOS intent planner.",
     "Return only JSON. Do not execute transactions.",
-    "You receive a compact agent context packet with wallet state, live routes, blocked routes, open positions, active automations, recent memory, conversation topic, and safety policies.",
-    "Use that context before choosing a tool. Live routes are tradable candidates. Blocked routes are not tradable. Do not invent routes, balances, positions, automations, or tx hashes.",
-    "If the user asks a capability/how-to/status question, answer or read state; do not create trades or automations.",
-    "If the user says 'do it again', repeat the last trade from context only when amount, token/rail, and action are known; otherwise clarify.",
-    "If the user says 'why did that fail' or 'what happened', inspect memory/receipts instead of starting a new action.",
-    "If the user says 'close all/every active perp/trade/position', use close_all_arc_perp_user_positions. If the user says 'close it' and context has exactly one open perp position, use close_arc_perp_user_position with that positionId; otherwise clarify.",
-    "Use context.references for pronouns such as it/that/again. If references.requiresClarification is true, return clarify instead of guessing a candidate.",
-    "Use context.workingMemory as the active task state. Its objectiveGraph shows the current goal, lifecycle step, and grounded evidence. A short follow-up may fill missing fields. A clear new request supersedes the unfinished task. 'Never mind', 'forget that', or 'start over' means cancel_agent_task.",
-    "Use context.facts as the ranked evidence layer. Prefer authoritative and observed facts over configured, user-stated, remembered, or inferred facts.",
-    "Follow each fact's decisionUse. execution_authority may prove current state; planning_hint may only tell you what to check; historical_only explains prior outcomes; unusable must be refreshed.",
-    "Use context.contextIntegrity to see whether enough current evidence exists for the requested decision.",
-    "If context.contextIntegrity.blockingContradictions is greater than zero and the user wants money movement, do not execute or invent a workaround. Return a read/clarify action that refreshes the conflicting state.",
-    "Never use a stale fact to claim current balance, route availability, approval state, position state, or execution success. Ask for a refresh or call the appropriate read tool.",
-    "A configured route fact proves capability only. A fresh route_probe fact proves a recent quote. A remembered failure explains history but does not prove the route is still failing.",
-    "Do not invent facts that are absent from context.facts. When evidence conflicts, prefer the higher-authority fresher fact and ask for clarification if the conflict affects money movement.",
-    "When the user clearly requests two to four ordered actions, return create_workflow with one normalized intent per step. Do not flatten multiple actions into one text field.",
-    "Never create nested workflows. Do not add steps the user did not request. Preserve order and dependencies.",
-    "If the user mentions automation, only create one when they provide an action plus interval/schedule. Questions about automations should use answer_agent_question or list_automations.",
+    "You are the first conversational router. Read the user's actual intent before choosing a tool.",
     `Allowed actions: ${Array.from(ALLOWED_ACTIONS).join(", ")}.`,
     "Supported rails: arc-testnet, base-sepolia. Use arc-testnet as default.",
     "Payments and bounties are USDC only. Swaps and bridges can use fromToken/toToken symbols or EVM token addresses. If unclear, return clarify with a question.",
     "Do not return create_wallet; the terminal does not create wallets.",
-    "Schema examples:",
+    "Questions are read-only. If the user asks what you can do, what routes exist, why something paused/failed, status, balance, or how to use the app, return answer_agent_question or the relevant read-only listing tool.",
+    "Only return create_automation when the user clearly asks to create/schedule/repeat/run a future recurring task and includes the recurring task. Do not create automations for questions like 'why was automation paused?' or 'what automations can you run?'.",
+    "Tool map:",
+    "- answer_agent_question: conversational questions, capabilities, route explanations, automation why/status/help.",
+    "- get_balance/appkit_unified_balance: wallet and token balances.",
+    "- quote_swap/quote_bridge: live route check plus execution path for swaps/bridges.",
+    "- create_automation/list_automations/pause_automation/resume_automation/delete_automation/run_automation: scheduled tasks only.",
+    "- get_agent_memory: recent trades, open actions, last trade, what happened.",
+    "JSON examples:",
+    "{\"action\":\"answer_agent_question\",\"questionKind\":\"capabilities\",\"topic\":\"general\",\"question\":\"what can you do?\"}",
+    "{\"action\":\"answer_agent_question\",\"questionKind\":\"routes\",\"topic\":\"routes\",\"question\":\"what routes are available?\"}",
+    "{\"action\":\"answer_agent_question\",\"questionKind\":\"automation_status\",\"topic\":\"automation\",\"question\":\"why was the automation paused?\"}",
     "{\"action\":\"send_payment\",\"amount\":5,\"asset\":\"USDC\",\"recipientHandle\":\"@alice\"}",
     "{\"action\":\"quote_bridge\",\"amount\":1,\"asset\":\"USDC\",\"fromRail\":\"arc-testnet\",\"toRail\":\"base-sepolia\"}",
     "{\"action\":\"create_airdrop\",\"amount\":1,\"asset\":\"USDC\",\"recipients\":[\"@alice\",\"@bob\"],\"settlementRail\":\"arc-testnet\"}",
@@ -466,26 +403,14 @@ function intentPlannerPrompt() {
     "{\"action\":\"quote_swap\",\"amount\":0.001,\"fromToken\":\"USDC\",\"toToken\":\"cirBTC\",\"settlementRail\":\"arc-testnet\"}",
     "Messy user phrases still map to tools: 'turn 1 USDC into EURC' => quote_swap, 'get me EURC using 1 USDC' => quote_swap, 'move 1 USDC over to Base' => quote_bridge.",
     "If the user says buy/get/turn/change one token using another token, treat it as a swap unless they mention a different destination rail.",
-    "{\"action\":\"propose_perp_trade\",\"symbol\":\"BTC\",\"side\":\"long\",\"collateralUsd\":1,\"leverage\":2}",
-    "{\"action\":\"close_arc_perp_user_position\",\"positionId\":12}",
-    "{\"action\":\"close_all_arc_perp_user_positions\"}",
     "{\"action\":\"get_balance\"}",
     "{\"action\":\"analyze_portfolio\"}",
     "{\"action\":\"get_market_feed_snapshot\",\"settlementRail\":\"arc-testnet\"}",
     "{\"action\":\"create_mandate\",\"text\":\"never bridge if fee is over 3%\"}",
     "{\"action\":\"list_mandates\"}",
-    "{\"action\":\"create_automation\",\"text\":\"sync balances every 10 minutes\",\"intervalMinutes\":10}",
+    "{\"action\":\"create_automation\",\"text\":\"sync balances\",\"intervalMinutes\":10}",
     "{\"action\":\"create_automation\",\"text\":\"swap 1 USDC to EURC\",\"intervalSeconds\":10,\"maxRuns\":4}",
-    "{\"action\":\"create_workflow\",\"goal\":\"Check my balance, then swap 1 USDC to EURC\",\"steps\":[{\"action\":\"get_balance\"},{\"action\":\"quote_swap\",\"amount\":1,\"fromToken\":\"USDC\",\"toToken\":\"EURC\",\"settlementRail\":\"arc-testnet\"}]}",
-    "{\"action\":\"resume_agent_workflow\",\"workflowId\":\"workflow_abc\"}",
-    "{\"action\":\"list_agent_workflows\"}",
     "{\"action\":\"list_automations\"}",
-    "{\"action\":\"answer_agent_question\",\"questionKind\":\"automation_capabilities\",\"topic\":\"automation\",\"question\":\"what automations can you run?\"}",
-    "{\"action\":\"answer_agent_question\",\"questionKind\":\"swap_capabilities\",\"topic\":\"swap\",\"question\":\"what tokens can you swap?\"}",
-    "{\"action\":\"answer_agent_question\",\"questionKind\":\"how_to\",\"topic\":\"swap\",\"question\":\"how to use this?\"}",
-    "{\"action\":\"cancel_agent_task\"}",
-    "{\"action\":\"list_route_capabilities\",\"status\":\"live\",\"type\":\"swap\"}",
-    "{\"action\":\"pause_automations\",\"status\":\"active\"}",
     "{\"action\":\"pause_automation\",\"automationId\":\"auto_0001\"}",
     "{\"action\":\"propose_copy_trade\",\"traderHandle\":\"@alice\",\"capitalUsd\":25,\"settlementRail\":\"arc-testnet\"}",
     "{\"action\":\"get_defi_action_receipt\",\"actionId\":\"defi_0001\"}",
@@ -493,26 +418,13 @@ function intentPlannerPrompt() {
   ].join("\n");
 }
 
-export function normalizeModelIntent(intent, defaultSettlementRail = "arc-testnet") {
+function sanitizeModelIntent(intent, defaultSettlementRail) {
   if (!intent || !ALLOWED_ACTIONS.has(intent.action)) {
-    return clarify("I can send, bridge, swap, or prepare a perp proposal. What do you want to do?");
+    return clarify("I can send, bridge, swap, automate actions, or answer wallet questions. What do you want to do?");
   }
 
   if (intent.action === "send_payment") {
-    const missing = [
-      !positive(intent.amount) ? "amount" : null,
-      !intent.recipientHandle ? "recipientHandle" : null
-    ].filter(Boolean);
-    if (missing.length) {
-      return clarify(
-        "How much USDC should I send, and to which X handle?",
-        buildPendingIntent("send_payment", {
-          amount: positive(intent.amount) ? Number(intent.amount) : null,
-          asset: "USDC",
-          recipientHandle: intent.recipientHandle ? normalizeHandle(intent.recipientHandle) : null
-        }, missing)
-      );
-    }
+    if (!positive(intent.amount) || !intent.recipientHandle) return clarify("How much USDC should I send, and to which X handle?");
     return {
       action: "send_payment",
       amount: Number(intent.amount),
@@ -572,24 +484,7 @@ export function normalizeModelIntent(intent, defaultSettlementRail = "arc-testne
     const toRail = normalizeRail(intent.toRail);
     const fromToken = normalizeSwapToken(intent.fromToken || intent.asset) || "USDC";
     const toToken = normalizeSwapToken(intent.toToken) || fromToken;
-    const missing = [
-      !positive(intent.amount) ? "amount" : null,
-      !fromRail ? "fromRail" : null,
-      !toRail || fromRail === toRail ? "toRail" : null
-    ].filter(Boolean);
-    if (missing.length) {
-      return clarify(
-        "How much should I bridge, which token, and to which rail?",
-        buildPendingIntent("quote_bridge", {
-          amount: positive(intent.amount) ? Number(intent.amount) : null,
-          asset: fromToken,
-          fromToken,
-          toToken,
-          fromRail,
-          toRail: fromRail === toRail ? null : toRail
-        }, missing)
-      );
-    }
+    if (!positive(intent.amount) || !toRail || fromRail === toRail) return clarify("How much should I bridge, which token, and to which rail?");
     return {
       action: "quote_bridge",
       amount: Number(intent.amount),
@@ -605,22 +500,7 @@ export function normalizeModelIntent(intent, defaultSettlementRail = "arc-testne
     const fromToken = normalizeSwapToken(intent.fromToken) || "USDC";
     const toToken = normalizeSwapToken(intent.toToken);
     const settlementRail = normalizeRail(intent.settlementRail) || defaultSettlementRail;
-    const missing = [
-      !positive(intent.amount) ? "amount" : null,
-      !fromToken ? "fromToken" : null,
-      !toToken || fromToken === toToken ? "toToken" : null
-    ].filter(Boolean);
-    if (missing.length) {
-      return clarify(
-        "Which amount and token pair should I swap?",
-        buildPendingIntent("quote_swap", {
-          amount: positive(intent.amount) ? Number(intent.amount) : null,
-          fromToken,
-          toToken: fromToken === toToken ? null : toToken,
-          settlementRail
-        }, missing)
-      );
-    }
+    if (!positive(intent.amount) || !toToken || fromToken === toToken) return clarify("Which token pair should I swap?");
     if (!isSupportedSwapPair({ settlementRail, fromToken, toToken })) {
       return clarify("Tell me a valid swap pair and rail. Try: swap $20 EURC to USDC on arc, or use token contract addresses for less common assets.");
     }
@@ -630,72 +510,6 @@ export function normalizeModelIntent(intent, defaultSettlementRail = "arc-testne
       fromToken,
       toToken,
       settlementRail
-    };
-  }
-
-  if (intent.action === "propose_perp_trade") {
-    const side = String(intent.side || "").toLowerCase();
-    const symbol = String(intent.symbol || "").toUpperCase();
-    const missing = [
-      !symbol ? "symbol" : null,
-      !["long", "short"].includes(side) ? "side" : null,
-      !positive(intent.collateralUsd) ? "collateralUsd" : null,
-      !positive(intent.leverage) ? "leverage" : null
-    ].filter(Boolean);
-    if (missing.length) {
-      return clarify(
-        "Tell me the perp symbol, side, collateral, and leverage.",
-        buildPendingIntent("propose_perp_trade", {
-          symbol: symbol || null,
-          side: ["long", "short"].includes(side) ? side : null,
-          collateralUsd: positive(intent.collateralUsd) ? Number(intent.collateralUsd) : null,
-          leverage: positive(intent.leverage) ? Number(intent.leverage) : null
-        }, missing)
-      );
-    }
-    return {
-      action: "propose_perp_trade",
-      symbol,
-      side,
-      collateralUsd: Number(intent.collateralUsd),
-      leverage: Number(intent.leverage)
-    };
-  }
-
-  if (intent.action === "answer_agent_question") {
-    return {
-      action: "tool_call",
-      tool: "answer_agent_question",
-      arguments: stripNullish({
-        questionKind: intent.questionKind || intent.kind || "agent_capabilities",
-        topic: intent.topic || null,
-        question: intent.question || null,
-        defaultSettlementRail
-      })
-    };
-  }
-
-  if (intent.action === "create_workflow") {
-    if (!Array.isArray(intent.steps) || intent.steps.length < 2 || intent.steps.length > 4) {
-      return clarify("Give me a multi-step goal with between two and four clear actions.");
-    }
-    const steps = intent.steps.map((step) => normalizeModelIntent(step, defaultSettlementRail));
-    if (steps.some((step) => (
-      !step
-      || step.action === "clarify"
-      || step.action === "create_workflow"
-      || (step.action === "tool_call" && String(step.tool || "").includes("agent_workflow"))
-    ))) {
-      return clarify("One workflow step is incomplete. Tell me the missing amount, asset, recipient, rail, or trade settings.");
-    }
-    return {
-      action: "tool_call",
-      tool: "create_agent_workflow",
-      arguments: {
-        goal: String(intent.goal || intent.text || "Complete the requested multi-step action.").slice(0, 500),
-        steps,
-        defaultSettlementRail
-      }
     };
   }
 
@@ -718,19 +532,13 @@ function positive(value) {
   return Number.isFinite(Number(value)) && Number(value) > 0;
 }
 
-function clarify(question, pending = null) {
-  return {
-    action: "clarify",
-    question,
-    ...(pending ? { pending } : {})
-  };
+function clarify(question) {
+  return { action: "clarify", question };
 }
 
 function normalizeSwapToken(value) {
   const raw = String(value || "").trim();
   if (/^0x[a-fA-F0-9]{40}$/.test(raw)) return raw;
-  const alias = MODEL_TOKEN_ALIASES.get(raw.toLowerCase());
-  if (alias) return alias;
   const token = raw.toUpperCase();
   if (!token || ["ARC", "BASE", "FROM", "IN", "ON", "TO"].includes(token)) return null;
   if (token === "ETH") return "WETH";
@@ -738,39 +546,11 @@ function normalizeSwapToken(value) {
   return token;
 }
 
-const MODEL_TOKEN_ALIASES = new Map([
-  ["euro", "EURC"],
-  ["eur", "EURC"],
-  ["eurocoin", "EURC"],
-  ["euro coin", "EURC"],
-  ["euro stable", "EURC"],
-  ["euro stablecoin", "EURC"],
-  ["dollar", "USDC"],
-  ["dollars", "USDC"],
-  ["usd", "USDC"],
-  ["usd coin", "USDC"],
-  ["stable dollar", "USDC"],
-  ["circle dollar", "USDC"],
-  ["bitcoin", "cirBTC"],
-  ["btc", "cirBTC"],
-  ["circle btc", "cirBTC"],
-  ["circle bitcoin", "cirBTC"],
-  ["wrapped eth", "WETH"],
-  ["wrapped ethereum", "WETH"],
-  ["ethereum", "WETH"]
-]);
-
 function isSupportedSwapPair({ settlementRail, fromToken, toToken }) {
   return Boolean(settlementRail && fromToken && toToken && fromToken !== toToken);
 }
 
 const MODEL_TOOL_ACTIONS = new Set([
-  "answer_agent_question",
-  "cancel_agent_task",
-  "resume_agent_workflow",
-  "get_agent_workflow",
-  "list_agent_workflows",
-  "cancel_agent_workflow",
   "get_balance",
   "analyze_portfolio",
   "sync_circle_balances",
@@ -782,17 +562,6 @@ const MODEL_TOOL_ACTIONS = new Set([
   "get_airdrop_receipt",
   "propose_copy_trade",
   "list_copy_trade_proposals",
-  "list_perp_intelligence",
-  "assess_liquidation_risk",
-  "list_perp_proposals",
-  "arc_perps_readiness",
-  "arc_perps_status",
-  "quote_arc_perp_position",
-  "read_arc_perps_oracle_price",
-  "get_arc_perps_position",
-  "list_arc_perps_positions",
-  "close_all_arc_perp_user_positions",
-  "close_arc_perp_user_position",
   "appkit_readiness",
   "list_appkit_capabilities",
   "appkit_estimate_bridge",
@@ -802,13 +571,11 @@ const MODEL_TOOL_ACTIONS = new Set([
   "appkit_unified_balance",
   "resolve_x_handle",
   "list_defi_tools",
-  "list_route_capabilities",
   "list_arc_trading_primitives",
   "list_defi_actions",
   "reconcile_defi_action",
   "get_defi_action_receipt",
   "get_market_feed_snapshot",
-  "list_perp_markets",
   "create_mandate",
   "list_mandates",
   "update_mandate",
@@ -817,10 +584,11 @@ const MODEL_TOOL_ACTIONS = new Set([
   "list_automations",
   "run_automation",
   "run_due_automations",
-  "pause_automations",
   "pause_automation",
   "resume_automation",
-  "delete_automation"
+  "delete_automation",
+  "answer_agent_question",
+  "get_agent_memory"
 ]);
 
 function sanitizeToolIntent(intent, defaultSettlementRail) {
@@ -839,7 +607,6 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
   if (intent.actionId) args.actionId = String(intent.actionId);
   if (intent.mandateId) args.mandateId = String(intent.mandateId);
   if (intent.automationId) args.automationId = String(intent.automationId);
-  if (intent.workflowId) args.workflowId = String(intent.workflowId);
   if (positive(intent.intervalMinutes)) args.intervalMinutes = Number(intent.intervalMinutes);
   if (positive(intent.everyMinutes)) args.everyMinutes = Number(intent.everyMinutes);
   if (positive(intent.intervalSeconds)) args.intervalSeconds = Number(intent.intervalSeconds);
@@ -847,16 +614,10 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
   if (positive(intent.intervalMs)) args.intervalMs = Number(intent.intervalMs);
   if (positive(intent.maxRuns)) args.maxRuns = Number(intent.maxRuns);
   if (intent.kind) args.kind = String(intent.kind);
-  if (intent.type) args.type = String(intent.type);
-  if (intent.status) args.status = String(intent.status);
-  if (typeof intent.includeHidden === "boolean") args.includeHidden = intent.includeHidden;
   if (intent.text) args.text = String(intent.text);
-  if (positive(intent.positionId)) args.positionId = Number(intent.positionId);
-  if (positive(intent.marginUsd)) args.marginUsd = Number(intent.marginUsd);
-  if (intent.symbol) args.symbol = String(intent.symbol).toUpperCase();
-  if (["long", "short"].includes(String(intent.side || "").toLowerCase())) args.side = String(intent.side).toLowerCase();
-  if (positive(intent.collateralUsd)) args.collateralUsd = Number(intent.collateralUsd);
-  if (positive(intent.leverage)) args.leverage = Number(intent.leverage);
+  if (intent.question) args.question = String(intent.question);
+  if (intent.questionKind) args.questionKind = String(intent.questionKind);
+  if (intent.topic) args.topic = String(intent.topic);
   if (intent.fromToken) args.fromToken = normalizeSwapToken(intent.fromToken);
   if (intent.toToken) args.toToken = normalizeSwapToken(intent.toToken);
   if (intent.fromRail) args.fromRail = normalizeRail(intent.fromRail) || rail;
@@ -868,22 +629,10 @@ function sanitizeToolIntent(intent, defaultSettlementRail) {
   if (["reconcile_defi_action", "get_defi_action_receipt"].includes(tool) && !args.actionId) return clarify("Which DeFi action ID should I use?");
   if (tool === "create_mandate" && !args.text) return clarify("What standing trading rule should I save?");
   if (["update_mandate", "delete_mandate"].includes(tool) && !args.mandateId) return clarify("Which mandate ID should I change?");
-  if (tool === "create_automation" && (!args.text || (!positive(args.intervalSeconds) && !positive(args.intervalMinutes) && !positive(args.intervalMs)))) {
-    const missing = [
-      !args.text ? "text" : null,
-      !positive(args.intervalSeconds) && !positive(args.intervalMinutes) && !positive(args.intervalMs) ? "schedule" : null
-    ].filter(Boolean);
-    return clarify(
-      "What should the automation do, and how often should it run?",
-      buildPendingIntent("create_automation", args, missing)
-    );
-  }
+  if (tool === "create_automation" && !args.text && !args.kind) return clarify("What recurring automation should I create?");
+  if (tool === "answer_agent_question" && !args.question) args.question = "What can you do?";
   if (["run_automation", "pause_automation", "resume_automation", "delete_automation"].includes(tool) && !args.automationId) return clarify("Which automation ID should I use?");
-  if (["resume_agent_workflow", "get_agent_workflow", "cancel_agent_workflow"].includes(tool) && !args.workflowId) return clarify("Which workflow ID should I use?");
   if (tool === "propose_copy_trade" && (!args.traderHandle || !positive(args.capitalUsd))) return clarify("Which trader should I copy, and with how much capital?");
-  if (["assess_liquidation_risk", "quote_arc_perp_position"].includes(tool) && (!args.symbol || !args.side || !positive(args.leverage))) {
-    return clarify("Tell me the symbol, side, collateral or margin, and leverage.");
-  }
 
   return {
     action: "tool_call",
@@ -950,13 +699,6 @@ function publicArgs(args = {}) {
     "toRail",
     "settlementRail",
     "recipientHandle",
-    "symbol",
-    "side",
-    "collateralUsd",
-    "leverage",
-    "type",
-    "status",
-    "includeHidden",
     "intervalMs",
     "intervalMinutes",
     "maxRuns",

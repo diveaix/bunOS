@@ -1,0 +1,524 @@
+.agents-page {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 36px 0 78px;
+}
+
+.agents-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+  gap: 22px;
+  align-items: stretch;
+  margin-bottom: 36px;
+}
+
+.agents-hero-copy,
+.agents-status-panel,
+.agents-path-step,
+.agents-mode-card,
+.agents-card,
+.agents-skill-card,
+.agents-code,
+.agents-rule,
+.agents-endpoint {
+  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+}
+
+.agents-hero-copy {
+  min-height: 380px;
+  padding: clamp(28px, 5vw, 52px);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.agents-kicker,
+.agents-section-head span,
+.agents-status-item span,
+.agents-path-step span,
+.agents-mode-card > span,
+.agents-skill-head > span,
+.agents-method,
+.agents-code-head span {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agents-kicker {
+  width: fit-content;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(96,165,250,0.26);
+  border-radius: var(--radius-xs);
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+
+.agents-hero h1 {
+  max-width: 780px;
+  margin: 18px 0 16px;
+  font-size: clamp(40px, 6.5vw, 82px);
+  line-height: 0.91;
+  letter-spacing: 0;
+}
+
+.agents-hero p,
+.agents-section-copy,
+.agents-card p,
+.agents-mode-card p,
+.agents-rule p,
+.agents-path-step p,
+.agents-skill-card p,
+.agents-endpoint p {
+  color: var(--ink-muted);
+  line-height: 1.65;
+}
+
+.agents-hero p {
+  max-width: 640px;
+  margin: 0;
+  font-size: 15px;
+}
+
+.agents-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 30px;
+}
+
+.agents-status-panel {
+  min-height: 380px;
+  padding: 16px;
+  border-radius: var(--radius);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-content: stretch;
+}
+
+.agents-status-item {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  display: grid;
+  align-content: space-between;
+}
+
+.agents-status-item span {
+  color: var(--ink-muted);
+}
+
+.agents-status-item strong {
+  margin-top: 9px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.agents-section {
+  margin-top: 46px;
+}
+
+.agents-section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.agents-section-head span {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-xs);
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+}
+
+.agents-section-head h2 {
+  margin: 0;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1;
+}
+
+.agents-section h3 {
+  margin: 0;
+}
+
+.agents-section a,
+.agents-card a,
+.agents-mode-card a {
+  color: var(--accent-light);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.agents-section-copy {
+  max-width: 760px;
+  margin: -6px 0 18px;
+}
+
+.agents-path,
+.agents-mode-grid,
+.agents-skill-grid,
+.agents-rule-grid,
+.agents-two-column,
+.agents-code-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.agents-path {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.agents-path-step,
+.agents-mode-card,
+.agents-card,
+.agents-skill-card,
+.agents-rule {
+  border-radius: var(--radius-sm);
+}
+
+.agents-path-step {
+  min-height: 168px;
+  padding: 16px;
+}
+
+.agents-path-step span {
+  color: var(--accent-light);
+}
+
+.agents-path-step strong {
+  display: block;
+  margin-top: 18px;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.agents-path-step p,
+.agents-mode-card p,
+.agents-card p,
+.agents-rule p,
+.agents-skill-card p {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.agents-mode-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.agents-mode-card {
+  min-height: 198px;
+  padding: 18px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.agents-mode-card > span {
+  color: var(--blue);
+}
+
+.agents-mode-card strong {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.agents-mode-card a {
+  width: fit-content;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.agents-two-column {
+  grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
+  align-items: start;
+}
+
+.agents-code-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  margin-top: 14px;
+}
+
+.agents-card {
+  padding: 18px;
+}
+
+.agents-card h3 {
+  font-size: 20px;
+}
+
+.agents-ordered {
+  display: grid;
+  gap: 9px;
+  margin: 14px 0 0;
+  padding-left: 20px;
+  color: var(--ink-muted);
+  line-height: 1.65;
+}
+
+.agents-ordered li {
+  padding-left: 3px;
+}
+
+.agents-ordered code {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.agents-skill-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agents-skill-card {
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.agents-skill-head > span {
+  color: var(--green);
+}
+
+.agents-skill-head h3 {
+  margin-top: 9px;
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.05;
+}
+
+.agents-skill-detail {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+}
+
+.agents-skill-detail strong {
+  color: var(--accent-light);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.agents-skill-detail p {
+  margin: 5px 0 0;
+}
+
+.agents-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.agents-chip-list code {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.agents-flow-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.agents-code {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+.agents-code-head {
+  min-height: 44px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255,255,255,0.03);
+}
+
+.agents-code-head span {
+  color: var(--ink-muted);
+}
+
+.agents-code-head button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.agents-code-head button:hover {
+  border-color: var(--accent);
+  color: var(--accent-light);
+}
+
+.agents-code pre {
+  margin: 0;
+  padding: 16px;
+  overflow-x: auto;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+.agents-endpoint-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agents-endpoint {
+  min-width: 0;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  grid-template-columns: 64px minmax(220px, 0.62fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.agents-method {
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+}
+
+.agents-method.get {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.agents-method.post {
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+
+.agents-endpoint code {
+  color: var(--accent-light);
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.agents-endpoint p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.agents-rule-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.agents-rule {
+  min-height: 142px;
+  padding: 16px;
+}
+
+.agents-rule strong {
+  display: block;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+@media (max-width: 1040px) {
+  .agents-path,
+  .agents-mode-grid,
+  .agents-rule-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agents-endpoint {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .agents-endpoint p {
+    grid-column: 2;
+  }
+}
+
+@media (max-width: 860px) {
+  .agents-hero,
+  .agents-two-column,
+  .agents-code-grid,
+  .agents-skill-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agents-hero-copy,
+  .agents-status-panel {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .agents-page {
+    padding: 26px 0 56px;
+  }
+
+  .agents-hero h1 {
+    font-size: clamp(38px, 13vw, 58px);
+  }
+
+  .agents-status-panel,
+  .agents-path,
+  .agents-mode-grid,
+  .agents-rule-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agents-hero-actions {
+    flex-direction: column;
+  }
+
+  .agents-hero-actions a {
+    width: 100%;
+  }
+
+  .agents-endpoint {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .agents-endpoint p {
+    grid-column: auto;
+  }
+}

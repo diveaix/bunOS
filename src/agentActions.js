@@ -2,7 +2,6 @@ import { completeApproval, getApproval } from "./approvals.js";
 import { confirmAirdrop } from "./airdrops.js";
 import { confirmDefiAction } from "./defiOrchestrator.js";
 import { confirmPayment } from "./orchestrator.js";
-import { confirmPerpProposal } from "./perpsAgent.js";
 import { confirmCopyTradeProposal } from "./socialTradingAgent.js";
 import { runJob } from "./jobs.js";
 import {
@@ -53,8 +52,6 @@ export async function confirmAction({ approvalId, handle } = {}) {
       result = await confirmDefiAction({ actionId: approval.targetId, handle: approval.handle });
     } else if (approval.kind === "copy_trade") {
       result = confirmCopyTradeProposal({ proposalId: approval.targetId });
-    } else if (approval.kind === "perp_trade") {
-      result = confirmPerpProposal({ proposalId: approval.targetId });
     } else if (approval.kind === "airdrop") {
       result = await confirmAirdrop({ airdropId: approval.targetId });
     } else {
@@ -83,19 +80,16 @@ function normalizeHandleLocal(handle) {
 function summarizeApprovalExecution({ approval, result = {} } = {}) {
   const worker = result.worker || {};
   const workerResult = worker.result || {};
-  const proposal = workerResult.proposal || result.proposal || {};
   const action = workerResult.action || result.action || {};
   const payment = workerResult.payment || result.payment || {};
   const execution = workerResult.execution
-    || proposal.execution
     || action.execution
     || payment.transfer
     || {};
   const job = worker.job || result.job || {};
-  const txHash = execution.txHash || proposal.txHash || action.txHash || payment.transfer?.txHash || workerResult.txHash || null;
+  const txHash = execution.txHash || action.txHash || payment.transfer?.txHash || workerResult.txHash || null;
   const explorerUrl = execution.explorerUrl || action.explorerUrl || payment.transfer?.explorerUrl || workerResult.explorerUrl || null;
   const status = execution.status
-    || proposal.status
     || action.status
     || payment.status
     || workerResult.status
@@ -107,8 +101,6 @@ function summarizeApprovalExecution({ approval, result = {} } = {}) {
     || workerResult.reason
     || execution.reason
     || action.failureReason
-    || proposal.failureReason
-    || proposal.execution?.reason
     || job.lastError
     || result.reason
     || null;
@@ -119,7 +111,6 @@ function summarizeApprovalExecution({ approval, result = {} } = {}) {
     txHash,
     explorerUrl,
     reason,
-    proposalId: proposal.id || (approval?.kind === "perp_trade" ? approval.targetId : null),
     actionId: action.id || null,
     paymentId: payment.id || null,
     jobStatus: job.status || null,

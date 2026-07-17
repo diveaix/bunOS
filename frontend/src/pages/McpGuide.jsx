@@ -88,7 +88,7 @@ export default function McpGuide() {
 
         {/* Step 5 - Tools Reference */}
         <Section num="5" title="Available MCP tools">
-          <p>bunOS exposes <strong>{toolCount}</strong> MCP tools across wallets, payments, DeFi, AppKit, perps, and agent planning. Here are the key categories:</p>
+          <p>bunOS exposes <strong>{toolCount}</strong> MCP tools across wallets, payments, DeFi, AppKit, launchpad workflows, and agent planning. Here are the key categories:</p>
 
           <ToolCategory title="Agent" tools={[
             ["plan_agent_action", "Parse natural language into a tool call plan"],
@@ -138,12 +138,6 @@ export default function McpGuide() {
             ["appkit_estimate_swap", "Estimate a same-chain AppKit swap"],
             ["appkit_swap", "Execute a user-approved swap when enabled"],
           ]} />
-          <ToolCategory title="Perps & Trading" tools={[
-            ["propose_perp_trade", "Create a perp trade proposal"],
-            ["assess_liquidation_risk", "Assess position liquidation risk"],
-            ["quote_arc_perp_position", "Quote an Arc-settled perp position"],
-            ["list_perp_intelligence", "Market intelligence with risk data"],
-          ]} />
           <ToolCategory title="Approvals" tools={[
             ["list_approvals", "List pending or completed approvals"],
             ["confirm_action", "Confirm a pending approval"],
@@ -155,7 +149,7 @@ export default function McpGuide() {
         {/* Step 6 - Example prompts */}
         <Section num="6" title="Example prompts for your AI">
           <p>Once connected, try asking your AI agent:</p>
-          <CodeBlock label="Example prompts">{`"Create a wallet for @alice and check her balance"\n\n"Send $10 USDC from @sara to @alice"\n\n"Bridge $5 USDC from Arc testnet to Base Sepolia for @sara"\n\n"Quote a swap of $20 USDC to ETH on arc-testnet"\n\n"Drop $1 USDC to @alice and @bob from @sara"\n\n"Drop $0.50 USDC to first 10 replies for @sara"\n\n"List Arc trading primitives"\n\n"Show me all pending approvals for @sara"\n\n"Sync @sara balances every 10 minutes"\n\n"Automate swap $1 EURC to USDC every hour for @sara"\n\n"Propose a 2x long BTC perp trade with $20 collateral"\n\n"Check if ArcPerps contracts are deployed"`}</CodeBlock>
+          <CodeBlock label="Example prompts">{`"Create a wallet for @alice and check her balance"\n\n"Send $10 USDC from @sara to @alice"\n\n"Bridge $5 USDC from Arc testnet to Base Sepolia for @sara"\n\n"Quote a swap of $20 USDC to ETH on arc-testnet"\n\n"Drop $1 USDC to @alice and @bob from @sara"\n\n"Drop $0.50 USDC to first 10 replies for @sara"\n\n"List Arc trading primitives"\n\n"Show me all pending approvals for @sara"\n\n"Sync @sara balances every 10 minutes"\n\n"Automate swap $1 EURC to USDC every hour for @sara"\n\n"Analyze @sara portfolio risk"\n\n"Show the latest token launch receipt"`}</CodeBlock>
         </Section>
 
         <hr />
@@ -169,7 +163,7 @@ export default function McpGuide() {
           </div>
           <div className="info-card warn">
             <span className="info-icon">i</span>
-            <p><strong>Confirmation required.</strong> High-risk actions (large payments, bridges, swaps, perp trades) create pending approvals that must be explicitly confirmed before execution.</p>
+            <p><strong>Confirmation required.</strong> High-risk actions (large payments, bridges, swaps, and launchpad actions) create pending approvals that must be explicitly confirmed before execution.</p>
           </div>
           <div className="info-card tip">
             <span className="info-icon">i</span>

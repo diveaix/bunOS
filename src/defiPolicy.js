@@ -1,7 +1,7 @@
 import { config } from "./config.js";
 import { userDefiPolicy } from "./tradeRisk.js";
 
-const highRiskActions = new Set(["polymarket_order", "hyperliquid_order"]);
+const highRiskActions = new Set(["polymarket_order"]);
 
 export function evaluateDefiPolicy({ user, action, simulation = null }) {
   if (!user?.onboarded) {

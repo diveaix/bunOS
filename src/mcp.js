@@ -1,23 +1,6 @@
 import { createPaymentIntent, createSocialBounty } from "./orchestrator.js";
 import { confirmAction } from "./agentActions.js";
-import {
-  listAgentTools,
-  planAgentActionWithModel,
-  resumeAgentWorkflowsFromMonitor,
-  runAgentAction
-} from "./agentPlanner.js";
-import {
-  closeAllArcPerpPositionsWithUserWallet,
-  getArcPerpsPosition,
-  getArcPerpsReadiness,
-  getArcPerpsStatus,
-  listArcPerpsPositions,
-  openArcPerpPositionWithUserWallet,
-  quoteArcPerpPosition,
-  readArcPerpsOraclePrice,
-  closeArcPerpPositionWithUserWallet,
-  syncArcPerpsOracleFromHyperliquid
-} from "./arcPerpsEngine.js";
+import { listAgentTools, planAgentActionWithModel, runAgentAction } from "./agentPlanner.js";
 import { listApprovals } from "./approvals.js";
 import { getPaymentReceipt } from "./queries.js";
 import {
@@ -31,11 +14,7 @@ import {
   confirmDefiAction,
   getDefiActionReceipt,
   listDefiActions,
-  listDefiRouteCapabilities,
   listDefiTools,
-  listPerpMarkets,
-  probeDefiRouteCapabilities,
-  probeDefiRouteCapability,
   quoteDefiRoute
 } from "./defiOrchestrator.js";
 import { enqueueJob, runJob } from "./jobs.js";
@@ -57,12 +36,6 @@ import {
 import { refreshExecutionMonitor } from "./executionMonitor.js";
 import { analyzePortfolio } from "./portfolioBrain.js";
 import { listArcTradingPrimitives } from "./arcTradingPrimitives.js";
-import {
-  assessLiquidationRisk,
-  listPerpIntelligence,
-  listPerpProposals,
-  proposePerpTrade
-} from "./perpsAgent.js";
 import {
   listCopyTradeProposals,
   proposeCopyTrade
@@ -96,6 +69,25 @@ import {
   listMandates,
   updateMandate
 } from "./mandates.js";
+import {
+  accrueLaunchFees,
+  claimLaunchFees,
+  createTokenLaunch,
+  deployLaunchToken,
+  getAgentTreasury,
+  getLaunchFees,
+  getLaunchpadArchitecture,
+  getLaunchReceipt,
+  getTokenLaunch,
+  listLaunchFeed,
+  listTokenLaunches,
+  monitorLaunch,
+  openLaunchTrading,
+  planTokenLaunch,
+  seedLaunchLiquidity,
+  spendAgentCompute,
+  updateLaunchAgentPolicy
+} from "./launchpadArchitecture.js";
 
 export const mcpTools = [
   {
@@ -130,7 +122,7 @@ export const mcpTools = [
   },
   {
     name: "get_agent_memory",
-    description: "Read the agent's wallet memory: recent trades, perps, pending approvals, active automations, failures, and last known action.",
+    description: "Read the agent's wallet memory: recent trades, pending approvals, active automations, failures, and last known action.",
     inputSchema: {
       type: "object",
       properties: {
@@ -149,8 +141,242 @@ export const mcpTools = [
     }
   },
   {
+    name: "get_launchpad_architecture",
+    description: "Read the bunOS token launchpad architecture: Arc token lifecycle, USDC liquidity model, contracts, API/SDK shape, and autonomous-agent policy.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "plan_token_launch",
+    description: "Create a plan-only Arc token launch proposal with supply, USDC seed liquidity, liquidity lock, launch lifecycle, and agent policy. Does not deploy a token.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creatorHandle: { type: "string" },
+        handle: { type: "string" },
+        name: { type: "string" },
+        tokenName: { type: "string" },
+        symbol: { type: "string" },
+        totalSupply: { type: "number" },
+        liquiditySeedUsd: { type: "number" },
+        seedUsd: { type: "number" },
+        liquidityLockDays: { type: "number" },
+        lockDays: { type: "number" },
+        maxSlippage: { type: "number" },
+        maxBudgetUsd: { type: "number" },
+        poolType: { type: "string" },
+        agentMode: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "create_token_launch",
+    description: "Create a persistent token launch draft on Arc with token metadata, USDC liquidity budget, lock settings, and agent policy grants.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creatorHandle: { type: "string" },
+        handle: { type: "string" },
+        name: { type: "string" },
+        symbol: { type: "string" },
+        totalSupply: { type: "number" },
+        liquiditySeedUsd: { type: "number" },
+        liquidityLockDays: { type: "number" },
+        grants: { type: "array", items: { type: "string" } },
+        idempotencyKey: { type: "string" }
+      }
+    }
+  },
+  {
+    name: "deploy_launch_token",
+    description: "Deploy the launch token record through the deterministic local Arc launch factory adapter. Returns token address and receipt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" },
+        handle: { type: "string" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "seed_launch_liquidity",
+    description: "Seed TOKEN/USDC launch-owned liquidity from the creator's Arc USDC balance, create a local pool receipt, and lock liquidity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" },
+        handle: { type: "string" },
+        amountUsd: { type: "number" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "open_launch_trading",
+    description: "Open trading for a launch after token deployment and locked liquidity are complete.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" },
+        handle: { type: "string" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "update_launch_agent_policy",
+    description: "Update per-launch autonomous agent grants, budget, slippage, or liquidity lock policy.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" },
+        handle: { type: "string" },
+        grants: { type: "array", items: { type: "string" } },
+        maxBudgetUsd: { type: "number" },
+        maxSlippage: { type: "number" },
+        liquidityLockDays: { type: "number" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "get_token_launch",
+    description: "Read one token launch record by id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "list_token_launches",
+    description: "List token launches, optionally filtered by creator or status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creatorHandle: { type: "string" },
+        handle: { type: "string" },
+        status: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "get_launch_receipt",
+    description: "Read a public launch receipt with token deployment, liquidity, lock, go-live, and policy status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" },
+        host: { type: "string" },
+        protocol: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "monitor_launch",
+    description: "Run a launch health check for liquidity lock, pool readiness, route health, status, and next action.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "get_launch_fees",
+    description: "Read launch trading-fee accrual, claimable USDC, compute credits, spend, and runway for one token launch.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "accrue_launch_fees",
+    description: "Record deterministic local TOKEN/USDC trading-fee accrual for a live launch. This simulates the future Arc pool fee reader.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" },
+        handle: { type: "string" },
+        volumeUsd: { type: "number" },
+        feeUsd: { type: "number" },
+        source: { type: "string" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "claim_launch_fees",
+    description: "Claim launch fees into agent compute credits or the creator wallet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        launchId: { type: "string" },
+        handle: { type: "string" },
+        amountUsd: { type: "number" },
+        destination: { type: "string", enum: ["compute_credits", "wallet"] },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["launchId"]
+    }
+  },
+  {
+    name: "get_agent_treasury",
+    description: "Read the aggregate self-funding treasury for an agent: claimable fees, compute credits, spend, and runway.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
+    name: "spend_agent_compute",
+    description: "Spend agent compute credits from one launch or the aggregate agent treasury.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string" },
+        launchId: { type: "string" },
+        amountUsd: { type: "number" },
+        purpose: { type: "string" },
+        idempotencyKey: { type: "string" }
+      },
+      required: ["amountUsd"]
+    }
+  },
+  {
+    name: "list_launch_feed",
+    description: "List public Arc token launches for discovery with liquidity lock, fee, treasury, and runway metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creatorHandle: { type: "string" },
+        handle: { type: "string" },
+        status: { type: "string" },
+        limit: { type: "number" }
+      }
+    }
+  },
+  {
     name: "list_arc_trading_primitives",
-    description: "List the real Arc trading primitives exposed by bunOS: swaps, bridges, perps, airdrops, bounties, and automations, including provider readiness and signer policy.",
+    description: "List the real Arc trading primitives exposed by bunOS: swaps, bridges, airdrops, bounties, and automations, including provider readiness and signer policy.",
     inputSchema: {
       type: "object",
       properties: {}
@@ -332,7 +558,7 @@ export const mcpTools = [
   },
   {
     name: "get_market_feed_snapshot",
-    description: "Refresh external token/perps market feeds and return prices, freshness, liquidity, and regime labels. Read-only; unavailable feeds are marked stale/unavailable.",
+    description: "Refresh external token market feeds and return prices, freshness, liquidity, and regime labels. Read-only; unavailable feeds are marked stale/unavailable.",
     inputSchema: {
       type: "object",
       properties: {
@@ -344,7 +570,7 @@ export const mcpTools = [
   },
   {
     name: "create_mandate",
-    description: "Save a persistent standing trading rule for a user's agent. Mandates are enforced before swaps, bridges, and perp proposals.",
+    description: "Save a persistent standing trading rule for a user's agent. Mandates are enforced before swaps and bridges.",
     inputSchema: {
       type: "object",
       properties: {
@@ -488,7 +714,7 @@ export const mcpTools = [
   },
   {
     name: "analyze_portfolio",
-    description: "Analyze a user's portfolio across rails, tokens, perps exposure, pending actions, strategy drift, and recommended next action. Read-only.",
+    description: "Analyze a user's portfolio across rails, tokens, pending actions, strategy drift, and recommended next action. Read-only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -594,7 +820,7 @@ export const mcpTools = [
   },
   {
     name: "list_approvals",
-    description: "List pending or completed approvals for payment, DeFi, social trading, and perps actions.",
+    description: "List pending or completed approvals for payment, DeFi, social trading, and launch actions.",
     inputSchema: {
       type: "object",
       properties: {
@@ -607,7 +833,7 @@ export const mcpTools = [
   },
   {
     name: "confirm_action",
-    description: "Confirm a pending approval and execute the appropriate payment, DeFi handoff, copy proposal, or perp proposal.",
+    description: "Confirm a pending approval and execute the appropriate payment, DeFi handoff, or copy proposal.",
     inputSchema: {
       type: "object",
       properties: {
@@ -652,182 +878,6 @@ export const mcpTools = [
         handle: { type: "string" },
         status: { type: "string" },
         limit: { type: "number" }
-      }
-    }
-  },
-  {
-    name: "list_perp_intelligence",
-    description: "List perp market intelligence with funding bias, risk regime, and suggested leverage caps.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        limit: { type: "number" }
-      }
-    }
-  },
-  {
-    name: "assess_liquidation_risk",
-    description: "Assess liquidation risk for a proposed leveraged perp position.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        symbol: { type: "string" },
-        side: { type: "string", enum: ["long", "short"] },
-        collateralUsd: { type: "number" },
-        leverage: { type: "number" },
-        entryPrice: { type: "number" }
-      },
-      required: ["handle", "symbol", "side", "collateralUsd", "leverage"]
-    }
-  },
-  {
-    name: "propose_perp_trade",
-    description: "Create a confirmation-gated perp trade proposal with liquidation and stop-loss analysis.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        symbol: { type: "string" },
-        side: { type: "string", enum: ["long", "short"] },
-        collateralUsd: { type: "number" },
-        leverage: { type: "number" },
-        entryPrice: { type: "number" },
-        settlementRail: { type: "string" }
-      },
-      required: ["handle", "symbol", "side", "collateralUsd", "leverage"]
-    }
-  },
-  {
-    name: "list_perp_proposals",
-    description: "List perp trade proposals and their approval state.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        status: { type: "string" },
-        limit: { type: "number" }
-      }
-    }
-  },
-  {
-    name: "arc_perps_readiness",
-    description: "Check whether ArcPerps Lite contracts are configured. User execution is proposal-gated; backend signer execution is not exposed.",
-    inputSchema: {
-      type: "object",
-      properties: {}
-    }
-  },
-  {
-    name: "arc_perps_status",
-    description: "Read ArcPerps Lite vault, optional user address allowance/margin, liquidity, and risk status.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ownerAddress: { type: "string" }
-      }
-    }
-  },
-  {
-    name: "quote_arc_perp_position",
-    description: "Quote an Arc-settled perp position using deployed oracle price or a supplied mark price.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        symbol: { type: "string" },
-        side: { type: "string", enum: ["long", "short"] },
-        marginUsd: { type: "number" },
-        leverage: { type: "number" },
-        markPrice: { type: "number" }
-      },
-      required: ["symbol", "side", "marginUsd", "leverage"]
-    }
-  },
-  {
-    name: "read_arc_perps_oracle_price",
-    description: "Read a deployed ArcPerps oracle price for a symbol.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        symbol: { type: "string" }
-      },
-      required: ["symbol"]
-    }
-  },
-  {
-    name: "get_arc_perps_position",
-    description: "Read an ArcPerps position by id with mark price, liquidation price, and current PnL when deployed.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        positionId: { type: "number" }
-      },
-      required: ["positionId"]
-    }
-  },
-  {
-    name: "list_arc_perps_positions",
-    description: "List recent ArcPerps positions from the deployed vault.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ownerAddress: { type: "string" },
-        limit: { type: "number" }
-      }
-    }
-  },
-  {
-    name: "open_arc_perp_user_position",
-    description: "Open an ArcPerps position through the user's Circle Arc wallet. Never uses ARC_SETTLEMENT_PRIVATE_KEY for user funds.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        symbol: { type: "string" },
-        side: { type: "string", enum: ["long", "short"] },
-        marginUsd: { type: "number" },
-        leverage: { type: "number" },
-        idempotencyKey: { type: "string" }
-      },
-      required: ["handle", "symbol", "side", "marginUsd", "leverage"]
-    }
-  },
-  {
-    name: "close_arc_perp_user_position",
-    description: "Close an ArcPerps position through the user's Circle Arc wallet. Never uses ARC_SETTLEMENT_PRIVATE_KEY for user funds.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        positionId: { type: "number" },
-        idempotencyKey: { type: "string" }
-      },
-      required: ["handle", "positionId"]
-    }
-  },
-  {
-    name: "close_all_arc_perp_user_positions",
-    description: "Close every open ArcPerps position owned by the user's Circle Arc wallet. Never uses ARC_SETTLEMENT_PRIVATE_KEY for user funds.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        symbol: { type: "string" },
-        side: { type: "string", enum: ["long", "short"] },
-        maxPositions: { type: "number" },
-        idempotencyKey: { type: "string" }
-      },
-      required: ["handle"]
-    }
-  },
-  {
-    name: "sync_arc_perps_oracle",
-    description: "Sync ArcPerps oracle prices from live Hyperliquid market data using the protocol admin signer. This does not move user funds.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        symbols: { type: "array", items: { type: "string" } }
       }
     }
   },
@@ -1007,50 +1057,6 @@ export const mcpTools = [
     }
   },
   {
-    name: "list_route_capabilities",
-    description: "List live and unavailable swap/bridge route capabilities. Agents should check this before asking for a swap or bridge.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        type: { type: "string" },
-        fromRail: { type: "string" },
-        toRail: { type: "string" },
-        status: { type: "string" },
-        includeHidden: { type: "boolean" },
-        limit: { type: "number" }
-      }
-    }
-  },
-  {
-    name: "probe_route_capability",
-    description: "Run a live AppKit quote probe for one route and update the route capability registry.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        type: { type: "string", enum: ["swap", "bridge"] },
-        fromRail: { type: "string" },
-        toRail: { type: "string" },
-        fromToken: { type: "string" },
-        toToken: { type: "string" },
-        amount: { type: "number" }
-      },
-      required: ["type", "fromRail", "toRail", "fromToken", "toToken"]
-    }
-  },
-  {
-    name: "probe_route_capabilities",
-    description: "Probe the default route registry and update live/unavailable statuses.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        amount: { type: "number" },
-        limit: { type: "number" }
-      }
-    }
-  },
-  {
     name: "quote_defi_route",
     description: "Create a policy-checked bridge or swap quote. This does not execute the transaction.",
     inputSchema: {
@@ -1117,28 +1123,17 @@ export const mcpTools = [
   },
   {
     name: "refresh_execution_monitor",
-    description: "Refresh a payment, DeFi action, or perp proposal lifecycle and return settled/failed/monitoring status with tx hash when available.",
+    description: "Refresh a payment or DeFi action lifecycle and return settled/failed/monitoring status with tx hash when available.",
     inputSchema: {
       type: "object",
       properties: {
-        kind: { type: "string", enum: ["payment", "defi_action", "perp_proposal"] },
+        kind: { type: "string", enum: ["payment", "defi_action"] },
         id: { type: "string" },
         runWorker: { type: "boolean" },
         host: { type: "string" },
         protocol: { type: "string" }
       },
       required: ["kind", "id"]
-    }
-  },
-  {
-    name: "list_perp_markets",
-    description: "List Hyperliquid market data. Read-only; no order placement.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        handle: { type: "string" },
-        limit: { type: "number" }
-      }
     }
   }
 ];
@@ -1154,6 +1149,80 @@ export async function callMcpTool(tool, args) {
 
   if (tool === "list_agent_tools") {
     return listAgentTools();
+  }
+
+  if (tool === "get_launchpad_architecture") {
+    return getLaunchpadArchitecture();
+  }
+
+  if (tool === "plan_token_launch") {
+    return planTokenLaunch(args);
+  }
+
+  if (tool === "create_token_launch") {
+    return createTokenLaunch(args);
+  }
+
+  if (tool === "deploy_launch_token") {
+    return deployLaunchToken(args);
+  }
+
+  if (tool === "seed_launch_liquidity") {
+    return seedLaunchLiquidity(args);
+  }
+
+  if (tool === "open_launch_trading") {
+    return openLaunchTrading(args);
+  }
+
+  if (tool === "update_launch_agent_policy") {
+    return updateLaunchAgentPolicy(args);
+  }
+
+  if (tool === "get_token_launch") {
+    return getTokenLaunch(args);
+  }
+
+  if (tool === "list_token_launches") {
+    return listTokenLaunches({
+      ...args,
+      creatorHandle: args.creatorHandle || args.handle
+    });
+  }
+
+  if (tool === "get_launch_receipt") {
+    return getLaunchReceipt(args);
+  }
+
+  if (tool === "monitor_launch") {
+    return monitorLaunch(args);
+  }
+
+  if (tool === "get_launch_fees") {
+    return getLaunchFees(args);
+  }
+
+  if (tool === "accrue_launch_fees") {
+    return accrueLaunchFees(args);
+  }
+
+  if (tool === "claim_launch_fees") {
+    return claimLaunchFees(args);
+  }
+
+  if (tool === "get_agent_treasury") {
+    return getAgentTreasury(args);
+  }
+
+  if (tool === "spend_agent_compute") {
+    return spendAgentCompute(args);
+  }
+
+  if (tool === "list_launch_feed") {
+    return listLaunchFeed({
+      ...args,
+      creatorHandle: args.creatorHandle || args.handle
+    });
   }
 
   if (tool === "get_agent_memory") {
@@ -1387,75 +1456,6 @@ export async function callMcpTool(tool, args) {
     return listCopyTradeProposals(args);
   }
 
-  if (tool === "list_perp_intelligence") {
-    return await listPerpIntelligence(args);
-  }
-
-  if (tool === "assess_liquidation_risk") {
-    return assessLiquidationRisk(args);
-  }
-
-  if (tool === "propose_perp_trade") {
-    return proposePerpTrade(args);
-  }
-
-  if (tool === "list_perp_proposals") {
-    return listPerpProposals(args);
-  }
-
-  if (tool === "arc_perps_readiness") {
-    return getArcPerpsReadiness();
-  }
-
-  if (tool === "arc_perps_status") {
-    return await getArcPerpsStatus(args);
-  }
-
-  if (tool === "quote_arc_perp_position") {
-    return await quoteArcPerpPosition(args);
-  }
-
-  if (tool === "read_arc_perps_oracle_price") {
-    return await readArcPerpsOraclePrice(args);
-  }
-
-  if ([
-    "set_arc_perps_oracle_price",
-    "set_arc_perps_market",
-    "approve_arc_perps_usdc",
-    "deposit_arc_perps_margin",
-    "withdraw_arc_perps_margin",
-    "provide_arc_perps_liquidity",
-    "open_arc_perp_position",
-    "close_arc_perp_position"
-  ].includes(tool)) {
-    return backendSignerDisabled(tool);
-  }
-
-  if (tool === "get_arc_perps_position") {
-    return await getArcPerpsPosition(args);
-  }
-
-  if (tool === "list_arc_perps_positions") {
-    return await listArcPerpsPositions(args);
-  }
-
-  if (tool === "open_arc_perp_user_position") {
-    return await openArcPerpPositionWithUserWallet(args);
-  }
-
-  if (tool === "close_arc_perp_user_position") {
-    return await closeArcPerpPositionWithUserWallet(args);
-  }
-
-  if (tool === "close_all_arc_perp_user_positions") {
-    return await closeAllArcPerpPositionsWithUserWallet(args);
-  }
-
-  if (tool === "sync_arc_perps_oracle") {
-    return await syncArcPerpsOracleFromHyperliquid(args);
-  }
-
   if (tool === "appkit_readiness") {
     return await getAppKitReadiness();
   }
@@ -1517,18 +1517,6 @@ export async function callMcpTool(tool, args) {
     return listDefiTools();
   }
 
-  if (tool === "list_route_capabilities") {
-    return listDefiRouteCapabilities(args);
-  }
-
-  if (tool === "probe_route_capability") {
-    return await probeDefiRouteCapability(args);
-  }
-
-  if (tool === "probe_route_capabilities") {
-    return await probeDefiRouteCapabilities(args);
-  }
-
   if (tool === "quote_defi_route") {
     return await quoteDefiRoute(args);
   }
@@ -1547,17 +1535,7 @@ export async function callMcpTool(tool, args) {
       payload: { actionId: args.actionId },
       idempotencyKey: `reconcile_defi_action:${args.actionId}:mcp:${Date.now()}`
     });
-    const ran = await runJob({ jobId: job.id });
-    const continuation = await resumeAgentWorkflowsFromMonitor({
-      kind: "defi_action",
-      id: args.actionId,
-      handle: args.handle,
-      source: "mcp_reconcile"
-    });
-    return {
-      ...ran,
-      workflowContinuation: continuation
-    };
+    return await runJob({ jobId: job.id });
   }
 
   if (tool === "get_defi_action_receipt") {
@@ -1569,35 +1547,11 @@ export async function callMcpTool(tool, args) {
   }
 
   if (tool === "refresh_execution_monitor") {
-    const refreshed = await refreshExecutionMonitor({
+    return await refreshExecutionMonitor({
       ...args,
       runWorker: args.runWorker !== false
     });
-    const continuation = await resumeAgentWorkflowsFromMonitor({
-      kind: args.kind,
-      id: args.id,
-      handle: args.handle,
-      source: "mcp_execution_monitor"
-    });
-    return {
-      ...refreshed,
-      workflowContinuation: continuation
-    };
-  }
-
-  if (tool === "list_perp_markets") {
-    return await listPerpMarkets(args);
   }
 
   throw new Error(`Unknown MCP tool: ${tool}`);
-}
-
-function backendSignerDisabled(tool) {
-  return {
-    ok: false,
-    tool,
-    status: "user_wallet_signing_required",
-    backendSignerAllowed: false,
-    message: "This signer-backed tool was removed from the MCP/agent execution surface. Build a user-owned Circle/AppKit signing path before enabling live execution."
-  };
 }

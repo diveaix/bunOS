@@ -1,6 +1,5 @@
 import { ledger, users } from "./fixtures.js";
 import { nextEventId } from "./ids.js";
-import { executeArcPerpProposalWithUserWallet, getArcPerpsReadiness } from "./arcPerpsEngine.js";
 import { submitDefiActionExecution, syncDefiActionExecutionStatus } from "./defiExecution.js";
 import { submitPaymentTransfer } from "./transferProvider.js";
 import { userWalletSigningRequired } from "./signerPolicy.js";
@@ -57,30 +56,6 @@ export function listJobs({ status, type, limit = 50 } = {}) {
   return { ok: true, jobs };
 }
 
-export function getJobQueueHealth({
-  recentWindowMs = 6 * 60 * 60_000,
-  overdueAfterMs = 5 * 60_000,
-  now = Date.now()
-} = {}) {
-  const recentSince = now - Math.max(60_000, Number(recentWindowMs) || 6 * 60 * 60_000);
-  const overdueBefore = now - Math.max(60_000, Number(overdueAfterMs) || 5 * 60_000);
-  const queued = ledger.jobs.filter((job) => job.status === "queued");
-  const running = ledger.jobs.filter((job) => job.status === "running");
-  const failed = ledger.jobs.filter((job) => job.status === "failed");
-  const recentFailed = failed.filter((job) => jobTimestamp(job) >= recentSince);
-  const overdue = queued.filter((job) => new Date(job.runAfter || job.createdAt || 0).getTime() <= overdueBefore);
-
-  return {
-    ok: recentFailed.length === 0 && overdue.length === 0,
-    queued: queued.length,
-    running: running.length,
-    overdue: overdue.length,
-    recentFailed: recentFailed.length,
-    historicalFailed: failed.length,
-    recentWindowMs: Math.max(60_000, Number(recentWindowMs) || 6 * 60 * 60_000)
-  };
-}
-
 export async function runDueJobs({ limit = 20 } = {}) {
   const now = Date.now();
   const due = ledger.jobs
@@ -93,10 +68,6 @@ export async function runDueJobs({ limit = 20 } = {}) {
   }
 
   return { ok: true, ran: results };
-}
-
-function jobTimestamp(job) {
-  return new Date(job.updatedAt || job.finishedAt || job.startedAt || job.createdAt || 0).getTime();
 }
 
 export async function runJob({ jobId }) {
@@ -151,10 +122,6 @@ export async function runJob({ jobId }) {
 }
 
 function markJobTargetFailure(job, error) {
-  if (job.type === "execute_perp_proposal") {
-    markPerpJobTargetFailure(job, error);
-    return;
-  }
   if (job.type !== "execute_defi_action") return;
   const action = ledger.defiActions.find((item) => item.id === job.payload?.actionId);
   if (!action) return;
@@ -179,30 +146,6 @@ function markJobTargetFailure(job, error) {
     };
   } else {
     action.nextAction = "retry_execution_worker";
-  }
-}
-
-function markPerpJobTargetFailure(job, error) {
-  const proposal = ledger.perpProposals.find((item) => item.id === job.payload?.proposalId);
-  if (!proposal) return;
-
-  proposal.execution = {
-    ...(proposal.execution || {}),
-    ok: false,
-    status: job.status === "failed" ? "failed" : "retrying",
-    mode: proposal.execution?.mode || "circle_user_wallet_contract_execution",
-    backendSignerAllowed: false,
-    reason: error.message,
-    jobId: job.id,
-    attempts: job.attempts
-  };
-  proposal.failureReason = error.message;
-  proposal.lastExecutionAttemptAt = job.updatedAt;
-  if (job.status === "failed") {
-    proposal.status = "execution_failed";
-    proposal.failedAt = job.updatedAt;
-  } else {
-    proposal.status = "confirmed";
   }
 }
 
@@ -233,10 +176,6 @@ async function executeJob(job) {
 
   if (job.type === "reconcile_defi_action") {
     return reconcileDefiActionJob(job.payload);
-  }
-
-  if (job.type === "execute_perp_proposal") {
-    return await executePerpProposalJob(job.payload);
   }
 
   throw new Error(`Unknown job type: ${job.type}`);
@@ -441,72 +380,6 @@ async function syncBalancesForDefiAction(action, reason) {
     });
     return null;
   }
-}
-
-async function executePerpProposalJob({ proposalId }) {
-  const proposal = ledger.perpProposals.find((item) => item.id === proposalId);
-  if (!proposal) {
-    throw new Error("Perp proposal not found");
-  }
-
-  if (proposal.status !== "confirmed") {
-    return { ok: true, skipped: true, proposalId, status: proposal.status };
-  }
-
-  if (proposal.settlementRail !== "arc-testnet") {
-    proposal.status = "execution_not_enabled";
-    proposal.execution = {
-      mode: "skipped",
-      reason: `ArcPerps execution only supports arc-testnet, received ${proposal.settlementRail}`
-    };
-    return { ok: true, skipped: true, proposalId, status: proposal.status };
-  }
-
-  const readiness = getArcPerpsReadiness();
-  if (!readiness.userWalletExecutionReady) {
-    proposal.status = "user_wallet_signing_required";
-    proposal.execution = {
-      mode: "locked",
-      backendSignerAllowed: false,
-      reason: readiness.ok
-        ? "Perp proposals are ready for Circle user-wallet execution, but ARC_PERPS_EXECUTION_ENABLED is not enabled."
-        : `ArcPerps is missing: ${readiness.missing.filter((item) => item !== "ARC_SETTLEMENT_PRIVATE_KEY").join(", ") || "Circle user wallet execution"}`
-    };
-    proposal.signer ||= userWalletSigningRequired({
-      operation: "open_perp_position",
-      settlementRail: proposal.settlementRail,
-      reason: proposal.execution.reason
-    });
-    ledger.events.push({
-      id: nextEventId(),
-      at: new Date().toISOString(),
-      type: "perp_proposal_user_wallet_required",
-      proposalId: proposal.id,
-      handle: proposal.handle,
-      reason: proposal.execution.reason
-    });
-
-    return { ok: true, skipped: true, proposalId, status: proposal.status, execution: proposal.execution };
-  }
-
-  const execution = await executeArcPerpProposalWithUserWallet({ proposal });
-  proposal.execution = execution;
-  proposal.status = execution.ok ? "submitted" : execution.status || "execution_failed";
-  if (execution.positionId) proposal.positionId = execution.positionId;
-  if (execution.txHash) proposal.txHash = execution.txHash;
-  proposal.executedAt = new Date().toISOString();
-  ledger.events.push({
-    id: nextEventId(),
-    at: proposal.executedAt,
-    type: execution.ok ? "perp_position_open_submitted" : "perp_position_open_blocked",
-    proposalId: proposal.id,
-    handle: proposal.handle,
-    positionId: proposal.positionId || null,
-    txHash: proposal.txHash || null,
-    reason: execution.reason || null
-  });
-
-  return { ok: true, skipped: !execution.ok, proposalId, status: proposal.status, execution };
 }
 
 function settleWalletMovementForJob(payment) {

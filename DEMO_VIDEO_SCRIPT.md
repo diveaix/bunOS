@@ -1,118 +1,41 @@
-# Bunos Demo Video Script
+# Demo Video Script
 
-Target length: 2 to 3 minutes
+## 0:00 - Product
 
-## 0:00 - Hook
+"bunOS is an Arc-native launchpad and terminal for autonomous agents. The wallet is still here, but it is now the settlement layer behind token launches, USDC liquidity, approvals, and receipts."
 
-Narration:
+Show the app landing page, then move directly into the Launchpad page.
 
-"Crypto apps still make users think in wallets, chains, bridges, approvals, and protocol tabs. Bunos flips that around. It gives every X user an AI-powered wallet and trading agent, so they can move money and access DeFi through simple language."
+## 0:20 - Launchpad
 
-Screen:
+"A creator or agent can draft a launch with a handle, token name, symbol, total supply, liquidity seed, lock duration, and slippage control."
 
-- Open the Bunos dashboard.
-- Show the wallet empty state before login.
-- Click Connect / create wallet.
+Show the launch creation form, preview, and launch list.
 
-## 0:20 - Real Login And Wallet Creation
+## 0:50 - Terminal
 
-Narration:
+"The terminal lets operators ask for outcomes in natural language. The same backend handles wallet actions, launch preparation, swaps, bridges, airdrops, and automation setup."
 
-"This is not a mock login flow. We use real X OAuth. When the user connects their X account, Bunos provisions a Circle wallet for that identity across supported settlement rails."
+Run a short command and show the resulting receipt or action state.
 
-Screen:
+## 1:20 - Agents
 
-- Start X OAuth.
-- Return to the dashboard.
-- Show wallet created.
-- Show Arc Testnet and Base Sepolia rails.
-- Show receive address.
+"Agents get a dedicated discovery page. It explains API keys, authorization, MCP setup, SDK setup, and task-specific skills so an autonomous client can use the product without a human sitting in the dashboard."
 
-Note:
+Show the Agents page, API key guidance, MCP configuration, SDK sample, and skill cards.
 
-If X OAuth is still being fixed during recording, say:
+## 1:50 - Wallet
 
-"For the hackathon recording, X OAuth is wired and live, and this step shows the production callback flow. Once X accepts the app credentials, the same callback provisions the Circle wallet automatically."
+"The wallet is the funding and settlement layer. Users can connect an X handle, provision wallets, fund testnet USDC, send payments, bridge, and inspect receipts."
 
-## 0:45 - Real Balances
+Show balances, activity, approvals, and receipt states.
 
-Narration:
+## 2:20 - Architecture
 
-"The dashboard only shows real wallet state. Seeded demo balances are blocked in production mode, so if there is no wallet or no funds, Bunos says that honestly."
+"Under the hood, bunOS exposes launchpad contracts, a Node backend, Circle wallet integration, an MCP server, an SDK, policy gates, background jobs, and persistent receipts."
 
-Screen:
+Show the architecture or README sections for contracts, MCP, SDK, and verification.
 
-- Click Refresh.
-- Show balances by rail.
-- Show USDC, EURC, or other Circle balances if present.
+## 2:50 - Close
 
-## 1:05 - Send Money By Handle
-
-Narration:
-
-"Instead of pasting addresses, users send to X handles. Bunos resolves the identity, checks policy, and routes payment through the user wallet."
-
-Screen:
-
-- Open Send.
-- Send a small USDC amount to an X handle.
-- Show activity/receipt/status.
-
-## 1:25 - AI Terminal
-
-Narration:
-
-"The same capabilities are exposed through an AI terminal. The user can ask for balances, send USDC, quote swaps, bridge assets, or prepare trading actions in natural language."
-
-Screen:
-
-- Open Terminal.
-- Type: `check my wallet balances`
-- Type: `swap 1 USDC to EURC on arc`
-- Type: `bridge 1 USDC from arc to base`
-- Show tool result and transaction/status details.
-
-## 1:55 - MCP Server
-
-Narration:
-
-"Bunos also ships as an MCP server, so any compatible AI agent can use the same wallet and DeFi tools. The MCP layer exposes wallet, send, swap, bridge, balances, receipts, and trading proposal tools."
-
-Screen:
-
-- Open MCP Guide.
-- Show hosted endpoint:
-  `https://backend-production-efc9.up.railway.app/mcp`
-- Show tools list.
-
-## 2:15 - Perps And Agentic DeFi
-
-Narration:
-
-"The project is designed beyond payments. Bunos supports agentic DeFi workflows: swaps, bridges, copy-trading proposals, and a lightweight Arc perps settlement engine. Money-moving actions are tied to user wallets, not a backend signer wallet."
-
-Screen:
-
-- Show terminal command:
-  `propose a 2x BTC long with tight liquidation protection`
-- Show proposal/status.
-- Show that backend signer is not used for user funds.
-
-## 2:40 - Close
-
-Narration:
-
-"Bunos brings the financial stack to where users already coordinate: X and AI chat. X gives identity and intent, Circle gives programmable wallets and USDC rails, Arc becomes the settlement layer, and MCP makes the whole system available to agents."
-
-Screen:
-
-- Dashboard overview.
-- Terminal.
-- MCP guide.
-- Final title card:
-  "Bunos - AI wallet and DeFi agent for X"
-
-## Backup One-Minute Version
-
-"Bunos is an AI wallet and DeFi agent for X. Users connect with real X OAuth, and Bunos provisions Circle wallets for their X identity. From the dashboard, they can fund, receive, send USDC, bridge between Arc and Base, and swap supported tokens. The terminal turns the same actions into natural language commands, so a user can type things like 'check my balance', 'send 5 USDC to @alice', or 'swap 1 USDC to EURC on Arc'. Under the hood, Bunos exposes the same capabilities through an MCP server, meaning external AI agents can access wallet, payment, swap, bridge, and trading proposal tools. User funds route through per-user Circle wallets, not a shared backend signer. Arc acts as the settlement layer, Circle powers wallet and USDC infrastructure, and X becomes the social command surface."
-
+"The result is a launchpad that humans can use directly and agents can operate autonomously through controlled tools, scoped API keys, approvals, and receipts."

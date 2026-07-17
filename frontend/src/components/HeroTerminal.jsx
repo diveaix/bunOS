@@ -1,23 +1,22 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── Demo scenarios ─────────────────────────────────
 const DEMOS = [
   {
     id: "swap",
     label: "Swap",
     command: "swap $20 EURC to USDC",
     steps: [
-      { text: "Routing EURC → USDC on Arc…", delay: 600 },
-      { text: "Quote: 20.00 EURC → 21.74 USDC", delay: 800 },
-      { text: "Slippage: 0.12% · Fee: $0.04", delay: 500 },
-      { text: "Executing swap…", delay: 900 },
+      { text: "Routing EURC to USDC on Arc...", delay: 600 },
+      { text: "Quote: 20.00 EURC to 21.74 USDC", delay: 800 },
+      { text: "Slippage: 0.12% - Fee: $0.04", delay: 500 },
+      { text: "Executing swap...", delay: 900 },
     ],
     result: {
       status: "success",
       lines: [
         { label: "Received", value: "21.74 USDC" },
         { label: "Rate", value: "1 EURC = 1.087 USDC" },
-        { label: "Tx", value: "0x8f3a…c291", accent: true },
+        { label: "Tx", value: "0x8f3a...c291", accent: true },
       ],
     },
   },
@@ -26,36 +25,36 @@ const DEMOS = [
     label: "Bridge",
     command: "bridge $50 USDC from Arc to Base",
     steps: [
-      { text: "Checking balance… 184.25 USDC available", delay: 700 },
+      { text: "Checking balance... 184.25 USDC available", delay: 700 },
       { text: "Estimating bridge fee: ~$0.18", delay: 600 },
-      { text: "Initiating cross-chain transfer…", delay: 1000 },
-      { text: "Waiting for confirmation…", delay: 800 },
+      { text: "Initiating cross-chain transfer...", delay: 1000 },
+      { text: "Waiting for confirmation...", delay: 800 },
     ],
     result: {
       status: "success",
       lines: [
         { label: "Bridged", value: "50.00 USDC" },
         { label: "Destination", value: "Base Sepolia" },
-        { label: "Tx", value: "0x4e1b…a7f3", accent: true },
+        { label: "Tx", value: "0x4e1b...a7f3", accent: true },
       ],
     },
   },
   {
-    id: "perps",
-    label: "Perps",
-    command: "open BTC long 2x with $5",
+    id: "launch",
+    label: "Launch",
+    command: "launch ARCC with $25 liquidity",
     steps: [
-      { text: "Fetching BTC oracle price…", delay: 600 },
-      { text: "Price: $104,287.50 · 2x leverage", delay: 700 },
-      { text: "Margin: $5.00 · Notional: $10.00", delay: 500 },
-      { text: "Submitting position…", delay: 900 },
+      { text: "Validating token metadata...", delay: 600 },
+      { text: "Supply: 1,000,000 ARCC", delay: 700 },
+      { text: "Liquidity seed: $25.00 USDC", delay: 500 },
+      { text: "Submitting launch...", delay: 900 },
     ],
     result: {
       status: "success",
       lines: [
-        { label: "Position", value: "BTC Long 2x" },
-        { label: "Entry", value: "$104,287.50" },
-        { label: "Liq. price", value: "$52,403.00" },
+        { label: "Token", value: "ARCC" },
+        { label: "Launch", value: "launch_0002" },
+        { label: "Status", value: "Live" },
       ],
     },
   },
@@ -64,10 +63,10 @@ const DEMOS = [
     label: "Automate",
     command: "every day swap $1 USDC to WETH",
     steps: [
-      { text: "Creating daily automation…", delay: 600 },
-      { text: "Action: swap $1 USDC → WETH", delay: 500 },
+      { text: "Creating daily automation...", delay: 600 },
+      { text: "Action: swap $1 USDC to WETH", delay: 500 },
       { text: "Schedule: every 24h, starting now", delay: 600 },
-      { text: "First run executing…", delay: 800 },
+      { text: "First run executing...", delay: 800 },
     ],
     result: {
       status: "success",
@@ -87,7 +86,7 @@ export default function HeroTerminal() {
   const [typedText, setTypedText] = useState("");
   const [visibleSteps, setVisibleSteps] = useState([]);
   const [showResult, setShowResult] = useState(false);
-  const [phase, setPhase] = useState("idle"); // idle | typing | steps | result
+  const [phase, setPhase] = useState("idle");
   const timeoutsRef = useRef([]);
   const autoRef = useRef(null);
 
@@ -106,14 +105,12 @@ export default function HeroTerminal() {
       setShowResult(false);
       setPhase("typing");
 
-      // Type out the command
       const cmd = demo.command;
       for (let i = 0; i <= cmd.length; i++) {
         const t = setTimeout(() => setTypedText(cmd.slice(0, i)), i * TYPING_SPEED);
         timeoutsRef.current.push(t);
       }
 
-      // After typing, show steps one by one
       let elapsed = cmd.length * TYPING_SPEED + 400;
       const tStart = setTimeout(() => setPhase("steps"), elapsed);
       timeoutsRef.current.push(tStart);
@@ -126,7 +123,6 @@ export default function HeroTerminal() {
         timeoutsRef.current.push(t);
       });
 
-      // Show result
       elapsed += 500;
       const tResult = setTimeout(() => {
         setShowResult(true);
@@ -134,7 +130,6 @@ export default function HeroTerminal() {
       }, elapsed);
       timeoutsRef.current.push(tResult);
 
-      // Auto-advance to next tab
       elapsed += 4000;
       autoRef.current = setTimeout(() => {
         const next = (idx + 1) % DEMOS.length;
@@ -144,7 +139,6 @@ export default function HeroTerminal() {
     [clearAllTimeouts]
   );
 
-  // Run demo when tab changes
   useEffect(() => {
     runDemo(activeTab);
     return clearAllTimeouts;
@@ -154,7 +148,6 @@ export default function HeroTerminal() {
 
   return (
     <div className="hero-terminal" data-reveal="right">
-      {/* Tab bar */}
       <div className="ht-tabs">
         {DEMOS.map((d, i) => (
           <button
@@ -174,7 +167,6 @@ export default function HeroTerminal() {
         />
       </div>
 
-      {/* Terminal chrome */}
       <div className="ht-chrome">
         <span />
         <span />
@@ -182,9 +174,7 @@ export default function HeroTerminal() {
         <span className="ht-chrome-title">bunOS terminal</span>
       </div>
 
-      {/* Terminal body */}
       <div className="ht-body">
-        {/* User command */}
         <div className="ht-msg ht-user">
           <div className="ht-avatar ht-avatar-user">You</div>
           <div className="ht-bubble">
@@ -195,12 +185,10 @@ export default function HeroTerminal() {
           </div>
         </div>
 
-        {/* Agent response */}
         {phase !== "typing" && phase !== "idle" && (
           <div className="ht-msg ht-agent">
             <div className="ht-avatar ht-avatar-agent">B</div>
             <div className="ht-bubble ht-agent-bubble">
-              {/* Steps */}
               <div className="ht-steps">
                 {demo.steps.map((step, i) => (
                   <div
@@ -217,7 +205,6 @@ export default function HeroTerminal() {
                 ))}
               </div>
 
-              {/* Result card */}
               {showResult && (
                 <div className={`ht-result ${demo.result.status}`}>
                   <div className="ht-result-badge">

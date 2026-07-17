@@ -97,7 +97,7 @@ export default function Landing() {
 
   // ─── Rotating hero word ────────────────────────────────
   useEffect(() => {
-    const WORDS = ['talk to.', 'command.', 'program.', 'automate.', 'instruct.'];
+    const WORDS = ['launch.', 'fund.', 'trade.', 'operate.', 'automate.'];
     let idx = 0;
     const el = rotateRef.current;
     if (!el) return;
@@ -408,9 +408,9 @@ export default function Landing() {
             <a className="nav-link" href="#mcp">MCP</a>
             <a className="nav-link" href="#safety">Safety</a>
             <Link className="nav-link" to="/terminal">Terminal</Link>
-            <Link className="nav-cta" to="/wallet">
+            <Link className="nav-cta" to="/launchpad">
               <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" /></svg>
-              Launch wallet
+              Open launchpad
             </Link>
           </div>
         </div>
@@ -427,11 +427,11 @@ export default function Landing() {
           </div>
 
           <div className="hero-copy" data-reveal="blur">
-            <h1>Money you can <span className="hero-rotate-wrap"><span className="hero-rotate-word" ref={rotateRef}>talk to.</span></span></h1>
+            <h1>Tokens you can <span className="hero-rotate-wrap"><span className="hero-rotate-word" ref={rotateRef}>launch.</span></span></h1>
             <div className="hero-actions">
-              <Link className="button primary" to="/wallet">
+              <Link className="button primary" to="/launchpad">
                 <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" /></svg>
-                Launch wallet
+                Open launchpad
               </Link>
               <Link className="button secondary" to="/terminal">
                 <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></svg>
@@ -453,19 +453,19 @@ export default function Landing() {
           <div className="shell stack-inner">
             <div className="stack-col" data-reveal data-reveal-delay="1">
               <div className="stack-icon-frame"><GrainIcon src="/identity.svg" size={150} color="accent" /></div>
-              <div className="stack-item"><span>01 Identity</span><strong>X handle becomes the account layer.</strong></div>
+              <div className="stack-item"><span>01 Launchpad</span><strong>Create token plans, launch receipts, and market state.</strong></div>
             </div>
             <div className="stack-col" data-reveal data-reveal-delay="2">
               <div className="stack-icon-frame"><GrainIcon src="/wallet.svg" size={150} color="accent" /></div>
-              <div className="stack-item"><span>02 Wallet</span><strong>Circle wallets hold user-owned balances.</strong></div>
+              <div className="stack-item"><span>02 Liquidity</span><strong>USDC funds token launches and initial pools.</strong></div>
             </div>
             <div className="stack-col" data-reveal data-reveal-delay="3">
               <div className="stack-icon-frame"><GrainIcon src="/ai-agent.svg" size={150} color="accent" /></div>
-              <div className="stack-item"><span>03 Agent</span><strong>Terminal and MCP call the same tools.</strong></div>
+              <div className="stack-item"><span>03 Agents</span><strong>MCP and SDK access launch and market tools.</strong></div>
             </div>
             <div className="stack-col" data-reveal data-reveal-delay="4">
               <div className="stack-icon-frame"><GrainIcon src="/settlement.svg" size={100} color="accent" /></div>
-              <div className="stack-item"><span>04 Settlement</span><strong>Arc carries swaps, bridges, trades, and payouts.</strong></div>
+              <div className="stack-item"><span>04 Wallet</span><strong>User-owned balances stay behind every action.</strong></div>
             </div>
           </div>
         </section>
@@ -475,7 +475,7 @@ export default function Landing() {
           <div className="section-head">
             <span className="section-index" data-reveal>Build</span>
             <div className="section-title" data-reveal="blur">
-              <h2>A wallet stack for agent builders.</h2>
+              <h2>A launchpad stack for agent builders.</h2>
             </div>
           </div>
 
@@ -493,24 +493,24 @@ export default function Landing() {
   }
 }
 
-`}<span className="code-blue">{`// same wallet, same tools`}</span>{`
-`}<span className="code-white">{`run_agent_action`}</span>{`({
-  prompt: `}<span className="code-green">{`"bridge $5 USDC from Arc to Base"`}</span>{`
+`}<span className="code-blue">{`// same policy, same tools`}</span>{`
+`}<span className="code-white">{`planTokenLaunch`}</span>{`({
+  prompt: `}<span className="code-green">{`"launch ARCC with $100 USDC liquidity"`}</span>{`
 })`}<span className="code-cursor" /></code></pre>
             </div>
 
             <div className="module-stack">
               <article className="module-panel" data-reveal data-reveal-delay="1">
                 <span className="mini-label">MCP tools</span>
-                <strong>Create wallet, send, swap, bridge, trade.</strong>
-                <p>Clients connect through one URL and inherit the user wallet bound to the API key.</p>
-                <div className="module-meta"><span>/mcp</span><span>/sse</span><span>API keys</span></div>
+                <strong>Plan launches, seed liquidity, monitor markets.</strong>
+                <p>Clients connect through one URL and inherit the policy bound to the API key.</p>
+                <div className="module-meta"><span>/mcp</span><span>SDK</span><span>API keys</span></div>
               </article>
               <article className="module-panel" data-reveal data-reveal-delay="2">
                 <span className="mini-label">App surface</span>
-                <strong>Buttons for users, terminal for operators.</strong>
-                <p>The wallet UI and agent terminal are different doors into the same backend tools.</p>
-                <div className="module-meta"><span>Wallet</span><span>Terminal</span><span>Receipts</span></div>
+                <strong>Launchpad for humans, terminal for operators.</strong>
+                <p>The wallet is the funding layer; the launchpad and terminal are the control surfaces.</p>
+                <div className="module-meta"><span>Launchpad</span><span>Terminal</span><span>Receipts</span></div>
               </article>
             </div>
           </div>
@@ -521,40 +521,40 @@ export default function Landing() {
           <div className="section-head">
             <span className="section-index" data-reveal>Use</span>
             <div className="section-title" data-reveal="blur">
-              <h2>Ask for the outcome. bunOS handles the rails.</h2>
+              <h2>Launch the token. bunOS handles the rails.</h2>
             </div>
           </div>
 
           <div className="capability-list">
             <article className="capability-row" data-reveal data-reveal-delay="1">
-              <span>Payments</span>
-              <strong>Pay an X handle.</strong>
-              <p>Send USDC to onboarded users or create a claimable payment for someone who has not connected yet.</p>
+              <span>Launch</span>
+              <strong>Create an Arc token plan.</strong>
+              <p>Define metadata, supply, liquidity seed, lock duration, and agent policy before execution.</p>
             </article>
             <article className="capability-row" data-reveal data-reveal-delay="2">
-              <span>Tokens</span>
-              <strong>Swap supported Arc assets.</strong>
-              <p>Route USDC, EURC, cirBTC, WETH, and other supported tokens through the same agent surface.</p>
+              <span>Liquidity</span>
+              <strong>Seed TOKEN/USDC pools.</strong>
+              <p>Use USDC funding, quote price impact, lock launch liquidity, and expose receipts.</p>
             </article>
             <article className="capability-row" data-reveal data-reveal-delay="3">
-              <span>Bridge</span>
-              <strong>Move value across rails.</strong>
-              <p>Use Arc and Base Sepolia for cross-chain movement while keeping receipts and execution status visible.</p>
+              <span>Agents</span>
+              <strong>Authorize autonomous launch work.</strong>
+              <p>Grant scoped execution for token deploy, liquidity seed, go-live, and monitoring.</p>
             </article>
             <article className="capability-row" data-reveal data-reveal-delay="4">
-              <span>Perps</span>
-              <strong>Trade from a prompt.</strong>
-              <p>Create ArcPerps testnet positions from natural language without pretending failures succeeded.</p>
+              <span>Terminal</span>
+              <strong>Operate from a prompt.</strong>
+              <p>Plan launches, inspect pool state, check approvals, and run launch operations in natural language.</p>
             </article>
             <article className="capability-row" data-reveal data-reveal-delay="5">
               <span>Distribution</span>
-              <strong>Move funds to groups or communities.</strong>
-              <p>Create recipient lists, social reward flows, and payout trails without turning the interface into a campaign dashboard.</p>
+              <strong>Reward communities.</strong>
+              <p>Use existing airdrop and bounty rails to distribute tokens or USDC around a launch.</p>
             </article>
             <article className="capability-row" data-reveal data-reveal-delay="6">
               <span>Automation</span>
-              <strong>Schedule recurring wallet work.</strong>
-              <p>Run due jobs for balance syncs, repeated agent actions, and operational checks through the same tool layer.</p>
+              <strong>Schedule launch monitoring.</strong>
+              <p>Run recurring checks for liquidity, route quality, treasury balances, and launch health.</p>
             </article>
           </div>
         </section>
@@ -578,7 +578,7 @@ export default function Landing() {
                 <span>Receipts</span><strong>Every serious action needs a status trail.</strong><p>Pending, submitted, failed, or completed. No fake success screens.</p>
               </div>
               <div className="safety-panel secondary" data-reveal data-reveal-delay="2">
-                <span>Risk</span><strong>Large actions can be policy gated.</strong><p>Payments, swaps, bridges, and perps can be checked before execution.</p>
+                <span>Risk</span><strong>Large actions can be policy gated.</strong><p>Payments, swaps, bridges, and launchpad actions can be checked before execution.</p>
               </div>
             </div>
           </div>
@@ -589,14 +589,14 @@ export default function Landing() {
           <div className="section-head">
             <span className="section-index" data-reveal>MCP</span>
             <div className="section-title" data-reveal="blur">
-              <h2>Connect any agent to the same wallet.</h2>
+              <h2>Connect any agent to launch and operate tokens.</h2>
             </div>
           </div>
 
           <div className="mcp-layout">
             <article className="mcp-panel" data-reveal="left">
               <h3>One URL. User scoped tools.</h3>
-              <p>Create an API key after signing in with X, paste the MCP config into Claude, Cursor, Windsurf, or another MCP client, then call the same wallet tools the terminal uses.</p>
+              <p>Create an API key after signing in with X, paste the MCP config into Claude, Cursor, Windsurf, or another MCP client, then call launchpad, terminal, and wallet tools under the same policy.</p>
               <div className="url-box"><span>MCP URL</span><code>https://bunos.xyz/mcp</code></div>
               <div className="hero-actions">
                 <Link className="button primary" to="/api-keys">Create API key</Link>
@@ -606,11 +606,11 @@ export default function Landing() {
             <article className="mcp-panel" data-reveal="right">
               <span className="mini-label">Example prompts</span>
               <div className="prompt-list">
-                <div className="prompt-row" data-reveal data-reveal-delay="1"><code>send $10 USDC to @alice</code><span>pay</span></div>
-                <div className="prompt-row" data-reveal data-reveal-delay="2"><code>swap $20 EURC to USDC</code><span>swap</span></div>
-                <div className="prompt-row" data-reveal data-reveal-delay="3"><code>bridge $5 from Arc to Base</code><span>bridge</span></div>
-                <div className="prompt-row" data-reveal data-reveal-delay="4"><code>drop $1 to first 10 replies</code><span>reward</span></div>
-                <div className="prompt-row" data-reveal data-reveal-delay="5"><code>open BTC long 2x with $5</code><span>perps</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="1"><code>plan ARCC with $100 liquidity</code><span>launch</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="2"><code>show launch liquidity risks</code><span>risk</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="3"><code>seed TOKEN/USDC on Arc</code><span>pool</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="4"><code>monitor holders every hour</code><span>agent</span></div>
+                <div className="prompt-row" data-reveal data-reveal-delay="5"><code>drop rewards to first 10 replies</code><span>reward</span></div>
               </div>
             </article>
           </div>
@@ -619,17 +619,17 @@ export default function Landing() {
         {/* CTA */}
         <section className="shell final-cta">
           <div className="cta-split" data-reveal="scale">
-            <Link className="cta-half cta-wallet" to="/wallet">
+            <Link className="cta-half cta-wallet" to="/launchpad">
               <div className="cta-half-text">
-                <span className="cta-half-label">Launch wallet</span>
-                <span className="cta-half-desc">Send, swap, bridge, and earn — all from one place.</span>
+                <span className="cta-half-label">Open launchpad</span>
+                <span className="cta-half-desc">Plan tokens, liquidity, policy, and launch receipts.</span>
               </div>
               <svg className="cta-arrow" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17 17 7" /><path d="M7 7h10v10" /></svg>
             </Link>
             <Link className="cta-half cta-terminal" to="/terminal">
               <div className="cta-half-text">
                 <span className="cta-half-label">Use terminal</span>
-                <span className="cta-half-desc">Talk to your wallet in plain English.</span>
+                <span className="cta-half-desc">Operate launches, agents, and wallet actions in plain English.</span>
               </div>
               <svg className="cta-arrow" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17 17 7" /><path d="M7 7h10v10" /></svg>
             </Link>
