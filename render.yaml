@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: nimbus-agent-hub          # -> https://nimbus-agent-hub.onrender.com
+    runtime: node
+    plan: starter                   # persistent disk requires a paid plan
+    buildCommand: npm ci && npm run compile:contracts
+    startCommand: node --no-warnings src/server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: SQLITE_FILE
+        value: /data/arcpay.sqlite
+      - key: PUBLIC_APP_BASE_URL
+        value: https://nimbus-agent-hub.onrender.com
+      - key: APP_BASE_URL
+        value: https://nimbus-agent-hub.onrender.com
+      - key: X_REDIRECT_URI
+        value: https://nimbus-agent-hub.onrender.com/auth/x/callback
+      - key: PROVIDER_MODE
+        value: real
+      - key: TRANSFER_PROVIDER
+        value: circle
+      - key: CIRCLE_WALLETS_ENABLED
+        value: "1"
+      - key: DEFI_LIVE_ADAPTERS
+        value: "1"
+      - key: DEFI_EXECUTION_ENABLED
+        value: "1"
+      - key: APPKIT_EXECUTION_ENABLED
+        value: "1"
+      - key: APPKIT_UNIFIED_BALANCE_ENABLED
+        value: "1"
+      - key: DEFAULT_SETTLEMENT_RAIL
+        value: arc-testnet
+      - key: SUPPORTED_SETTLEMENT_RAILS
+        value: arc-testnet,base-sepolia
+      # Secrets (Circle, Gemini, X OAuth, ArcPerps, LI.FI, webhooks):
+      # add these in the Render dashboard -> Environment (copy from local .env).
